@@ -34,5 +34,5 @@
   "[tsx]": {
     "editor.defaultFormatter": "biomejs.biome"
   },
-  "cSpell.words": ["oxlint", "Pressable"]
+  "cSpell.words": ["ospm", "oxlint", "Pressable"]
 }
