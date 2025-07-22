@@ -1,6 +1,7 @@
+// biome-ignore lint/correctness/noUnusedImports: false positive
+import React, { type JSX, useCallback, useEffect, useState } from 'react';
 import { signal, batch } from '@preact/signals-react';
 import { useSignals } from '@preact/signals-react/runtime';
-import React, { type JSX, useCallback } from 'react';
 
 // This component should trigger ESLint warning for multiple signal updates without batching
 export function TestMultipleSignalUpdates(): JSX.Element {
@@ -80,7 +81,7 @@ export function TestNestedSignalUpdates(): JSX.Element {
 
   const countSignal = signal(0);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: <explanation>
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   const handleClick = useCallback(() => {
     // Should trigger warning - multiple signal updates without batching
     userSignal.value = { ...userSignal.value, name: 'Doe' };
@@ -106,6 +107,7 @@ export function TestSingleSignalUpdate(): JSX.Element {
   useSignals();
   const countSignal = signal(0);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   const handleClick = useCallback(() => {
     // Correct - single signal update doesn't need batching
     countSignal.value += 1;
@@ -128,7 +130,8 @@ export function TestMultipleUpdatesInEffect(): JSX.Element {
   const nameSignal = signal('John');
 
   // Should trigger warning - multiple signal updates in useEffect without batching
-  React.useEffect(() => {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
+  useEffect(() => {
     countSignal.value = 10;
     nameSignal.value = 'Doe';
   }, []);
@@ -147,6 +150,7 @@ export function TestBatchInCallback(): JSX.Element {
   const countSignal = signal(0);
   const nameSignal = signal('John');
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   const updateSignals = useCallback(() => {
     // Correct - using batch in a callback
     batch(() => {
@@ -158,7 +162,9 @@ export function TestBatchInCallback(): JSX.Element {
   return (
     <div>
       <div>Count: {countSignal}</div>
+
       <div>Name: {nameSignal}</div>
+
       <button type='button' onClick={updateSignals}>
         Update
       </button>
@@ -171,6 +177,7 @@ export function TestSignalUpdatesInLoop(): JSX.Element {
   useSignals();
   const itemsSignal = signal([1, 2, 3]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   const doubleItems = useCallback(() => {
     // Should trigger warning - multiple signal updates in loop without batching
     for (let i = 0; i < itemsSignal.value.length; i++) {
@@ -181,6 +188,7 @@ export function TestSignalUpdatesInLoop(): JSX.Element {
   return (
     <div>
       <div>Items: {itemsSignal.value.join(', ')}</div>
+
       <button type='button' onClick={doubleItems}>
         Double Items
       </button>
@@ -191,8 +199,10 @@ export function TestSignalUpdatesInLoop(): JSX.Element {
 // This component should NOT trigger warning - single signal update with array mutation
 export function TestSingleArrayUpdate(): JSX.Element {
   useSignals();
+
   const itemsSignal = signal([1, 2, 3]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   const addItem = useCallback(() => {
     // Correct - single signal update with array mutation
     itemsSignal.value = [...itemsSignal.value, itemsSignal.value.length + 1];
@@ -201,6 +211,7 @@ export function TestSingleArrayUpdate(): JSX.Element {
   return (
     <div>
       <div>Items: {itemsSignal.value.join(', ')}</div>
+
       <button type='button' onClick={addItem}>
         Add Item
       </button>
@@ -211,10 +222,12 @@ export function TestSingleArrayUpdate(): JSX.Element {
 // This component should trigger warning for multiple signal updates in a conditional
 export function TestConditionalSignalUpdates(): JSX.Element {
   useSignals();
+
   const countSignal = signal(0);
   const nameSignal = signal('John');
-  const [isAdmin, setIsAdmin] = React.useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   const updateUser = useCallback(() => {
     if (isAdmin) {
       // Should trigger warning - multiple signal updates without batching
@@ -246,8 +259,9 @@ export function TestBatchInConditional(): JSX.Element {
   useSignals();
   const countSignal = signal(0);
   const nameSignal = signal('John');
-  const [isAdmin, setIsAdmin] = React.useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   const updateUser = useCallback(() => {
     if (isAdmin) {
       // Correct - using batch within conditional
@@ -262,14 +276,22 @@ export function TestBatchInConditional(): JSX.Element {
     }
   }, [isAdmin]);
 
+  const toggleAdmin = useCallback(() => {
+    setIsAdmin((prev) => !prev);
+  }, []);
+
   return (
     <div>
       <div>Count: {countSignal}</div>
+
       <div>Name: {nameSignal}</div>
+
       <div>Is Admin: {isAdmin.toString()}</div>
-      <button type='button' onClick={() => setIsAdmin(!isAdmin)}>
+
+      <button type='button' onClick={toggleAdmin}>
         Toggle Admin
       </button>
+
       <button type='button' onClick={updateUser}>
         Update User
       </button>

@@ -11,7 +11,7 @@ export function TestDirectSignalUsage(): JSX.Element {
   const nameSignal = signal('John');
   const isActiveSignal = signal(false);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: <explanation>
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   const handleClick = useCallback(() => {
     // Should trigger warning - direct signal usage in non-JSX context
     const currentCount = countSignal; // Should be countSignal.value
