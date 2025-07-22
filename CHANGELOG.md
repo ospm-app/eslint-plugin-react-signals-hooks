@@ -42,3 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - N/A (Initial release)
 
 [1.0.0]: https://github.com/ospm-app/eslint-plugin-react-signals-hooks/releases/tag/v1.0.0
+
+## [1.0.1] - 2025-07-22
+
+### Fixed Install command
+
+- `pnpm install --save-dev @ospm/eslint-plugin-react-signals-hooks`
