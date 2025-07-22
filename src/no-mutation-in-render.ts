@@ -43,6 +43,7 @@ export const noMutationInRenderRule = {
 
     return {
       FunctionDeclaration(node: FunctionDeclaration & Rule.NodeParentExtension): void {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (node.id?.name && /^[A-Z]/.test(node.id.name)) {
           inRenderContext = true;
           renderDepth++;
@@ -51,7 +52,9 @@ export const noMutationInRenderRule = {
       ArrowFunctionExpression(node: ArrowFunctionExpression & Rule.NodeParentExtension): void {
         // Check if this is the main component arrow function
         if (
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           node.parent?.type === 'VariableDeclarator' &&
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           node.parent.id?.type === 'Identifier' &&
           /^[A-Z]/.test(node.parent.id.name)
         ) {
@@ -165,6 +168,7 @@ export const noMutationInRenderRule = {
         }
       },
       'FunctionDeclaration:exit'(node: FunctionDeclaration & Rule.NodeParentExtension): void {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (node.id?.name && /^[A-Z]/.test(node.id.name)) {
           renderDepth--;
 
@@ -174,7 +178,9 @@ export const noMutationInRenderRule = {
       'ArrowFunctionExpression:exit'(node: ArrowFunctionExpression & Rule.NodeParentExtension) {
         // Check if this is the main component arrow function
         if (
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           node.parent?.type === 'VariableDeclarator' &&
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           node.parent.id?.type === 'Identifier' &&
           /^[A-Z]/.test(node.parent.id.name)
         ) {

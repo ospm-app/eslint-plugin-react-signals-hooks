@@ -58,6 +58,7 @@ export const preferComputedRule = {
                 const sourceCode = context.getSourceCode();
                 const callback = node.arguments[0];
 
+                // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
                 if (callback) {
                   const callbackText = sourceCode.getText(callback);
                   return fixer.replaceText(node, `computed(${callbackText})`);

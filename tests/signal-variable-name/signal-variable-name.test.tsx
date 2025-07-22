@@ -1,4 +1,4 @@
-/** biome-ignore-all lint/correctness/noUnusedVariables: <explanation> */
+/** biome-ignore-all lint/correctness/noUnusedVariables: not the target of the test */
 import { computed, signal } from '@preact/signals-react';
 import { useSignals } from '@preact/signals-react/runtime';
 // biome-ignore lint/correctness/noUnusedImports: false positive
@@ -138,4 +138,13 @@ export function TestTypeAnnotations(): JSX.Element {
   const computed1 = computed<number>(() => counter.value * 2); // Should be 'computed1Signal'
 
   return <div>{counter}</div>;
+}
+
+export function TestUserSignal(): JSX.Element {
+  useSignals();
+
+  // Should not trigger warnings on lowercase use
+  const userSignal = signal('');
+
+  return <div>{userSignal}</div>;
 }

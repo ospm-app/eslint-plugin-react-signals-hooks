@@ -96,10 +96,44 @@ export function TestMethodChaining(): JSX.Element {
   );
 }
 
+export function TestInputElementAttributes(): JSX.Element {
+  useSignals();
+
+  const inputValueSignal = signal('initial value');
+  const placeholderSignal = signal('Enter text here');
+  const maxLengthSignal = signal(10);
+  const minSignal = signal(0);
+  const maxSignal = signal(100);
+  const stepSignal = signal(1);
+
+  return (
+    <div>
+      {/* Input element attributes - should NOT trigger */}
+      <input
+        type='text'
+        value={inputValueSignal.value}
+        placeholder={placeholderSignal.value}
+        maxLength={maxLengthSignal.value}
+      />
+
+      <input type='number' min={minSignal.value} max={maxSignal.value} step={stepSignal.value} />
+
+      <input
+        type='range'
+        min={minSignal.value}
+        max={maxSignal.value}
+        step={stepSignal.value}
+        value={inputValueSignal.value}
+      />
+    </div>
+  );
+}
+
 // These cases SHOULD trigger prefer-signal-in-jsx warnings
 
 export function TestDirectValueAccess(): JSX.Element {
   useSignals();
+
   const messageSignal = signal('Hello');
   const countSignal = signal(42);
 

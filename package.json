@@ -6,10 +6,6 @@
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
   "types": "dist/types/index.d.ts",
-  "packageManager": "pnpm@10.0.0",
-  "engines": {
-    "pnpm": ">=10.0.0"
-  },
   "exports": {
     ".": {
       "import": "./dist/esm/index.js",
@@ -90,25 +86,24 @@
   },
   "homepage": "https://github.com/ospm/eslint-plugin-react-signals-hooks#readme",
   "peerDependencies": {
-    "react": "^18.2.0 || ^19.0.0",
+    "@preact/signals-core": "^1.11.0",
+    "@preact/signals-react": "^3.2.1",
     "@types/react": "^18.2.0 || ^19.0.0",
     "eslint": "^9.0.0",
-    "@preact/signals-react": "^3.2.1",
-    "@preact/signals-core": "^1.11.0"
+    "react": "^18.2.0 || ^19.0.0"
   },
   "devDependencies": {
     "@babel/eslint-parser": "^7.28.0",
-    "@babel/preset-env": "7.28.0",
     "@babel/plugin-syntax-import-assertions": "^7.27.1",
-    "globals": "^16.3.0",
+    "@babel/preset-env": "7.28.0",
     "@biomejs/biome": "2.1.2",
     "@total-typescript/ts-reset": "0.6.1",
+    "@types/eslint": "^9.6.1",
     "@types/estree": "^1.0.8",
-    "@types/eslint": "^8.56.0",
-    "@types/node": "^24.0.15",
-    "@typescript-eslint/utils": "^8.38.0",
+    "@types/node": "^24.1.0",
     "@typescript-eslint/eslint-plugin": "^8.38.0",
     "@typescript-eslint/parser": "^8.38.0",
+    "@typescript-eslint/utils": "^8.38.0",
     "eslint": "^9.31.0",
     "eslint-config-typescript": "^3.0.0",
     "eslint-plugin-cypress": "^5.1.0",
@@ -119,13 +114,15 @@
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "eslint-plugin-n": "^17.21.0",
     "eslint-plugin-optimize-regex": "^1.2.1",
-    "eslint-plugin-oxlint": "^1.7.0",
+    "eslint-plugin-oxlint": "^1.8.0",
     "eslint-plugin-perf-standard": "^1.0.3",
     "eslint-plugin-promise": "^7.2.1",
     "eslint-plugin-xss": "^0.1.12",
-    "oxlint": "1.7.0",
-    "typescript": "^5.8.3",
-    "knip": "^5.62.0"
+    "globals": "^16.3.0",
+    "jsx-runtime": "link:@preact/signals-react/jsx-runtime",
+    "knip": "^5.62.0",
+    "oxlint": "1.8.0",
+    "typescript": "^5.8.3"
   },
   "optionalDependencies": {
     "@types/react": "^19.0.0",

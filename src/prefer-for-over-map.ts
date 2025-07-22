@@ -86,6 +86,7 @@ export const preferForOverMapRule = {
               const sourceCode = context.getSourceCode();
               const mapCallback = node.arguments[0];
 
+              // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
               if (mapCallback) {
                 const callbackText = sourceCode.getText(mapCallback);
 
@@ -156,6 +157,7 @@ export const preferForOverMapRule = {
               const sourceCode = context.getSourceCode();
               const mapCallback = node.arguments[0];
 
+              // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
               if (mapCallback) {
                 const callbackText = sourceCode.getText(mapCallback);
                 return fixer.replaceText(node, `<For each={${signalName}}>{${callbackText}}</For>`);

@@ -42,7 +42,8 @@ export const signalVariableNameRule = {
         return false;
       }
 
-      if (name.startsWith('use')) {
+      // Only forbid 'use' prefix when followed by a capital letter (e.g., 'useSignal' is invalid, but 'userSignal' is valid)
+      if (name.startsWith('use') && name.length > 2 && /^[A-Z]/.test(name[2])) {
         return false;
       }
 
@@ -67,7 +68,7 @@ export const signalVariableNameRule = {
       return fixedName;
     }
 
-    function checkVariableDeclarator(node: VariableDeclarator & Rule.NodeParentExtension) {
+    function checkVariableDeclarator(node: VariableDeclarator & Rule.NodeParentExtension): void {
       if (
         node.id.type === 'Identifier' &&
         node.init &&
@@ -76,6 +77,7 @@ export const signalVariableNameRule = {
       ) {
         const variableName = node.id.name;
 
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         const callName = node.init.callee.name;
 

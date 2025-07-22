@@ -234,7 +234,7 @@ Prefers direct signal usage over `.value` in JSX for better reactivity.
 
 ### 6. `prefer-show-over-ternary` - Show Component
 
-Suggests using Show component for complex conditional rendering with signals.
+Suggests using Show component for complex conditional rendering with signals. This rule only runs in `.jsx` and `.tsx` files.
 
 ```tsx
 // ❌ Complex ternary with signal
