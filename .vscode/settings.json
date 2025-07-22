@@ -1,0 +1,38 @@
+{
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "javascript.preferences.importModuleSpecifier": "relative",
+  "typescript.preferences.importModuleSpecifier": "relative",
+  "eslint.probe": ["javascript", "typescript", "json", "typescriptreact"],
+  "editor.bracketPairColorization.enabled": true,
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "never",
+    "source.fixAll.biome": "never",
+    "source.organizeImports": "never",
+    "source.fixAll.oxc": "never",
+    "source.fixAll.ts": "never",
+    "source.fixAll.tsx": "never",
+    "source.fixAll.js": "never",
+    "source.fixAll.jsx": "never"
+  },
+  "editor.defaultFormatter": "biomejs.biome",
+  "oxc.enable": true,
+  "oxc.lint.run": "onSave",
+  "biome.enabled": true,
+  "eslint.enable": true,
+  "eslint.useFlatConfig": true,
+  "eslint.validate": ["javascript", "typescript", "json", "typescriptreact", "tsx"],
+  "[typescript]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
+  "[tsx]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
+  "cSpell.words": ["oxlint", "Pressable"]
+}

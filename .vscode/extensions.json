@@ -1,0 +1,32 @@
+{
+  "recommendations": [
+    "aaron-bond.better-comments",
+    "anseki.vscode-color",
+    "bungcip.better-toml",
+    "christian-kohler.npm-intellisense",
+    "christian-kohler.path-intellisense",
+    "codezombiech.gitignore",
+    "davidanson.vscode-markdownlint",
+    "dbaeumer.vscode-eslint",
+    "editorconfig.editorconfig",
+    "eg2.vscode-npm-script",
+    "esbenp.prettier-vscode",
+    "fabiospampinato.vscode-open-in-github",
+    "formulahendry.auto-close-tag",
+    "formulahendry.auto-rename-tag",
+    "formulahendry.terminal",
+    "stylelint.vscode-stylelint",
+    "hookyqr.minify",
+    "michelemelluso.gitignore",
+    "mikestead.dotenv",
+    "msjsdiag.debugger-for-chrome",
+    "naumovs.color-highlight",
+    "oderwat.indent-rainbow",
+    "steoates.autoimport",
+    "streetsidesoftware.code-spell-checker",
+    "streetsidesoftware.code-spell-checker-russian",
+    "lokalise.i18n-ally",
+    "redhat.vscode-yaml",
+    "biomejs.biome"
+  ]
+}

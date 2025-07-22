@@ -1,35 +1,38 @@
-// test-autofix.tsx - Test file for autofix functionality
-import { type JSX, useCallback, useEffect } from "react";
-import { counterSignal, nameSignal } from "./signals.ts";
-import { useSignals } from "@preact/signals-react/runtime";
-import { computed } from "@preact/signals-react";
+import { computed } from '@preact/signals-react';
+import { useSignals } from '@preact/signals-react/runtime';
+// biome-ignore lint/correctness/noUnusedImports: false positive
+import React, { type JSX, useCallback, useEffect } from 'react';
+import { Pressable, View } from 'react-native';
+import { counterSignal, nameSignal } from './signals.ts';
 
 export function TestAutoFixUseMemo(): JSX.Element {
-	// This useMemo should be auto-fixed when enableAutoFixForMemoAndCallback is true
-	const expensiveValue = computed(() => {
-		return counterSignal.value * 2 + nameSignal.value.length;
-	}); // Missing counterSignal and nameSignal - should be auto-fixed
+  // This useMemo should be auto-fixed when enableAutoFixForMemoAndCallback is true
+  const expensiveValue = computed(() => {
+    return counterSignal.value * 2 + nameSignal.value.length;
+  }); // Missing counterSignal and nameSignal - should be auto-fixed
 
-	return <div>{expensiveValue}</div>;
+  return <View>{expensiveValue}</View>;
 }
 
 export function TestAutoFixUseCallback() {
-	// This useCallback should be auto-fixed when enableAutoFixForMemoAndCallback is true
-	const handleClick = useCallback(() => {
-		console.log("Counter:", counterSignal.value);
-		console.log("Name:", nameSignal.value);
-	}, [counterSignal, nameSignal]); // Missing counterSignal and nameSignal - should be auto-fixed
+  // This useCallback should be auto-fixed when enableAutoFixForMemoAndCallback is true
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
+  const onPress = useCallback(() => {
+    console.info('Counter:', counterSignal.value);
+    console.info('Name:', nameSignal.value);
+  }, [counterSignal, nameSignal]); // Missing counterSignal and nameSignal - should be auto-fixed
 
-	return <button onClick={handleClick}>Click me</button>;
+  return <Pressable onPress={onPress}>Click me</Pressable>;
 }
 
 export function TestNoAutoFixUseEffect() {
-	// This useEffect should NOT be auto-fixed (only suggested)
-	useSignals();
-	useEffect(() => {
-		console.log("Counter:", counterSignal.value);
-		console.log("Name:", nameSignal.value);
-	}, []); // Missing counterSignal and nameSignal - should only suggest, not auto-fix
+  useSignals();
 
-	return <div>Effect component</div>;
+  useEffect(() => {
+    console.info('Counter:', counterSignal.value);
+    console.info('Name:', nameSignal.value);
+    // This useEffect should NOT be auto-fixed (only suggested)
+  }, []); // Missing counterSignal and nameSignal - should only suggest, not auto-fix
+
+  return <View>Effect component</View>;
 }

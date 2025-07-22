@@ -4,6 +4,7 @@
 		"outDir": "dist/cjs",
 		"declaration": true,
 		"declarationMap": true,
-		"noEmit": false
+		"noEmit": false,
+    "types": ["estree", "node", "eslint", "@typescript-eslint/utils"]
 	}
 }

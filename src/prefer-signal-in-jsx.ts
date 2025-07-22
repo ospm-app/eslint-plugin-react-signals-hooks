@@ -1,4 +1,5 @@
-import type { Rule } from "eslint";
+import type { Rule } from 'eslint';
+import type { MemberExpression } from 'estree';
 
 /**
  * ESLint rule: prefer-signal-in-jsx
@@ -7,114 +8,113 @@ import type { Rule } from "eslint";
  * In JSX contexts, signals can be used directly without .value for better readability.
  */
 export const preferSignalInJsxRule = {
-	meta: {
-		type: "suggestion",
-		docs: {
-			description: "prefer direct signal usage in JSX over .value access",
-			recommended: true,
-		},
-		fixable: "code",
-		schema: [],
-	},
-	create(context: Rule.RuleContext) {
-		let inJSX = false;
-		let jsxDepth = 0;
+  meta: {
+    type: 'suggestion',
+    docs: {
+      description: 'prefer direct signal usage in JSX over .value access',
+      recommended: true,
+    },
+    fixable: 'code',
+    schema: [],
+  },
+  create(context: Rule.RuleContext): Rule.RuleListener {
+    let inJSX = false;
 
-		return {
-			JSXElement() {
-				inJSX = true;
-				jsxDepth++;
-			},
-			JSXFragment() {
-				inJSX = true;
-				jsxDepth++;
-			},
-			"JSXElement:exit"() {
-				jsxDepth--;
-				if (jsxDepth === 0) inJSX = false;
-			},
-			"JSXFragment:exit"() {
-				jsxDepth--;
-				if (jsxDepth === 0) inJSX = false;
-			},
+    let jsxDepth = 0;
 
-			MemberExpression(node) {
-				if (
-					inJSX &&
-					node.property.type === "Identifier" &&
-					node.property.name === "value" &&
-					node.object.type === "Identifier" &&
-					node.object.name.endsWith("Signal")
-				) {
-					// Check if this signal.value is being used in ways that should be excluded
-					let parent = node.parent;
-					let shouldSkip = false;
-					let inJSXExpression = false;
+    return {
+      JSXElement() {
+        inJSX = true;
+        jsxDepth++;
+      },
+      JSXFragment() {
+        inJSX = true;
+        jsxDepth++;
+      },
+      'JSXElement:exit'() {
+        jsxDepth--;
+        if (jsxDepth === 0) inJSX = false;
+      },
+      'JSXFragment:exit'() {
+        jsxDepth--;
+        if (jsxDepth === 0) inJSX = false;
+      },
 
-					// Check if this is part of a method chain or property access that should be excluded
-					if (parent && parent.type === "MemberExpression") {
-						// Always skip any property access after .value
-						shouldSkip = true;
-					}
+      MemberExpression(node: MemberExpression & Rule.NodeParentExtension): void {
+        if (
+          inJSX &&
+          node.property.type === 'Identifier' &&
+          node.property.name === 'value' &&
+          node.object.type === 'Identifier' &&
+          node.object.name.endsWith('Signal')
+        ) {
+          let parent = node.parent;
+          let shouldSkip = false;
+          let inJSXExpression = false;
 
-					// Check if this is part of optional chaining
-					if (parent && parent.type === "ChainExpression") {
-						shouldSkip = true;
-					}
+          if (parent && parent.type === 'MemberExpression') {
+            shouldSkip = true;
+          }
 
-					// Check if this is used in className prop by traversing up the AST
-					let currentNode: any = node;
-					while (currentNode && currentNode.parent && !shouldSkip) {
-						currentNode = currentNode.parent;
-						if (
-							currentNode.type === "JSXAttribute" &&
-							currentNode.name &&
-							currentNode.name.type === "JSXIdentifier" &&
-							(currentNode.name.name === "className" ||
-								currentNode.name.name === "class")
-						) {
-							shouldSkip = true;
-							break;
-						}
-					}
+          if (parent && parent.type === 'ChainExpression') {
+            shouldSkip = true;
+          }
 
-					// Check if this is part of a binary expression (math operations)
-					if (
-						parent &&
-						(parent.type === "BinaryExpression" ||
-							parent.type === "UnaryExpression" ||
-							parent.type === "LogicalExpression")
-					) {
-						shouldSkip = true;
-					}
+          let currentNode: (MemberExpression & Rule.NodeParentExtension) | Rule.Node = node;
 
-					// Check if this is inside a JSX expression container
-					while (parent && !shouldSkip) {
-						// @ts-ignore
-						if (parent.type === "JSXExpressionContainer") {
-							inJSXExpression = true;
-							break;
-						}
+          while (currentNode.parent && !shouldSkip) {
+            currentNode = currentNode.parent;
 
-						// @ts-ignore
-						if (parent.type === "JSXElement" || parent.type === "JSXFragment") {
-							break;
-						}
-						parent = parent.parent;
-					}
+            if (
+              // @ts-expect-error
+              currentNode.type === 'JSXAttribute' &&
+              // @ts-expect-error
+              currentNode.name &&
+              // @ts-expect-error
+              currentNode.name.type === 'JSXIdentifier' &&
+              // @ts-expect-error
+              (currentNode.name.name === 'className' || currentNode.name.name === 'class')
+            ) {
+              shouldSkip = true;
+              break;
+            }
+          }
 
-					if (inJSXExpression && !shouldSkip) {
-						context.report({
-							node,
-							message: `Use '${node.object.name}' directly in JSX instead of '${node.object.name}.value'`,
-							fix(fixer) {
-								// @ts-ignore
-								return fixer.replaceText(node, node.object.name);
-							},
-						});
-					}
-				}
-			},
-		};
-	},
+          if (
+            parent &&
+            ['BinaryExpression', 'UnaryExpression', 'LogicalExpression'].includes(parent.type)
+          ) {
+            shouldSkip = true;
+          }
+
+          while (parent && !shouldSkip) {
+            // @ts-expect-error
+            if (parent.type === 'JSXExpressionContainer') {
+              inJSXExpression = true;
+
+              break;
+            }
+
+            // @ts-expect-error
+            if (parent.type === 'JSXElement' || parent.type === 'JSXFragment') {
+              break;
+            }
+
+            parent = parent.parent;
+          }
+
+          if (inJSXExpression && !shouldSkip) {
+            context.report({
+              node,
+              message: `Use '${node.object.name}' directly in JSX instead of '${node.object.name}.value'`,
+              fix(fixer) {
+                // @ts-expect-error
+                return fixer.replaceText(node, node.object.name);
+              },
+            });
+          }
+        }
+      },
+    };
+  },
 } satisfies Rule.RuleModule;

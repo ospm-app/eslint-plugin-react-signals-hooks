@@ -1,0 +1,21 @@
+{
+  "env": {
+    "browser": true
+  },
+  "globals": {
+    "foo": "readonly"
+  },
+  "settings": {},
+  "plugins": [
+    "import",
+    "jsx-a11y",
+    "react-perf",
+    "promise",
+    "node",
+    "security"
+  ],
+  "rules": {
+    "eqeqeq": "off",
+    "import/no-cycle": "error"
+  }
+}
