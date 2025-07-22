@@ -35,6 +35,7 @@ const recommendedConfig = {
   name: 'react-hooks/recommended',
   plugins: {
     get 'react-hooks'(): ESLint.Plugin {
+      // eslint-disable-next-line @typescript-eslint/no-use-before-define
       return plugin;
     },
   },

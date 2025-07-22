@@ -46,7 +46,15 @@ This plugin provides 9 specialized ESLint rules for React signals:
 ## Installation
 
 ```bash
-npm install --save-dev eslint-plugin-react-signals-hooks
+npm install --save-dev @ospm/eslint-plugin-react-signals-hooks
+```
+
+```bash
+yarn add --dev @ospm/eslint-plugin-react-signals-hooks
+```
+
+```bash
+pnpm install --save-dev @ospm/eslint-plugin-react-signals-hooks
 ```
 
 you have to turn off `react-hooks/exhaustive-deps` rule in your eslint config if you use this plugin.
@@ -65,7 +73,7 @@ you have to turn off `react-hooks/exhaustive-deps` rule in your eslint config if
 
 ```javascript
 // eslint.config.js
-import reactSignalsHooks from 'eslint-plugin-react-signals-hooks';
+import reactSignalsHooks from '@ospm/eslint-plugin-react-signals-hooks';
 
 export default [
   {
