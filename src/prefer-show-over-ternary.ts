@@ -15,10 +15,10 @@ const childProperties = [
   'properties',
 ] as const;
 
-interface NodeWithProperties {
+type NodeWithProperties = {
   [key: string]: unknown;
   type: string;
-}
+};
 
 function isJSXNode(node: Node): boolean {
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -32,7 +32,9 @@ function getComplexity(node: Node, visited = new Set<Node>()): number {
   }
 
   visited.add(node);
+
   let complexity = 0;
+
   const nodeWithProperties = node as NodeWithProperties;
 
   // Check node type safely
@@ -65,6 +67,7 @@ function getComplexity(node: Node, visited = new Set<Node>()): number {
   }
 
   visited.delete(node);
+
   return complexity;
 }
 
@@ -109,30 +112,51 @@ export const preferShowOverTernaryRule = {
     // Skip if file doesn't contain JSX
     const sourceCode = context.getSourceCode();
 
-    function hasJSX(node: BaseNode): boolean {
+    type NodeWithChildren = BaseNode & {
+      children?: Array<BaseNode>;
+    };
+
+    function hasJSX(node: BaseNode | null | undefined, visited = new WeakSet<object>()): boolean {
+      // Check for non-objects or null
+      if (!node || typeof node !== 'object') {
+        return false;
+      }
+
+      // Check if we've already visited this node to prevent infinite recursion
+      if (visited.has(node)) {
+        return false;
+      }
+
+      visited.add(node);
+
+      // Check if this is a JSX node
       if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
         return true;
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if ('children' in node && Array.isArray((node as any).children)) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return (node as any).children.some((child: BaseNode) => hasJSX(child));
+      // Handle children array if it exists
+      const nodeWithChildren = node as NodeWithChildren;
+      if (Array.isArray(nodeWithChildren.children)) {
+        if (nodeWithChildren.children.some((child) => hasJSX(child, visited))) {
+          return true;
+        }
       }
 
-      for (const key of Object.keys(node)) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const value = (node as any)[key];
-
+      // Safely check all properties of the node
+      for (const value of Object.values(node)) {
         if (Array.isArray(value)) {
+          // Check array items
+          for (const item of value) {
+            if (hasJSX(item as BaseNode, visited)) {
+              return true;
+            }
+          }
           // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-          if (value.some((item) => item && typeof item === 'object' && hasJSX(item as BaseNode))) {
+        } else if (value && typeof value === 'object' && 'type' in value) {
+          // Check object properties
+          if (hasJSX(value as BaseNode, visited)) {
             return true;
           }
-
-          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-        } else if (value && typeof value === 'object' && hasJSX(value as BaseNode)) {
-          return true;
         }
       }
 

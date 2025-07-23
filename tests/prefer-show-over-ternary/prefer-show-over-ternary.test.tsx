@@ -6,6 +6,7 @@ import { useSignals } from '@preact/signals-react/runtime';
 // This component should trigger ESLint warnings for complex ternary with signals
 export function TestComplexTernaryWithSignal(): JSX.Element {
   useSignals();
+
   const visibleSignal = signal(true);
 
   // This should trigger a warning - complex ternary with signal condition
@@ -134,7 +135,9 @@ export function TestTernaryWithLogicalSignal(): JSX.Element {
 
           <form>
             <input type='text' placeholder='Username' />
+
             <input type='password' placeholder='Password' />
+
             <button type='submit'>Login</button>
           </form>
         </div>

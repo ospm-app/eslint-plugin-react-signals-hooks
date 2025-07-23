@@ -310,6 +310,7 @@ export function TestValueInsteadOfPeekInEffect(): JSX.Element {
 // This component should NOT trigger warning - using .peek() in effect when appropriate
 export function TestCorrectPeekInEffect2(): JSX.Element {
   useSignals();
+
   const userSignal = signal({ id: 1, name: 'John' });
   const [logs, setLogs] = useState<string[]>([]);
   const [updateTrigger, setUpdateTrigger] = useState(0);

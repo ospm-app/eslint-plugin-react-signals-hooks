@@ -18,8 +18,11 @@ export function TestPropertyAccess(): JSX.Element {
     <div>
       {/* Property access - should NOT trigger */}
       <div>{userSignal.value.isActive ? 'Yes' : 'No'}</div>
+
       <div>{userSignal.value?.isLoggedIn}</div>
+
       <div>{userSignal.value.isLoggedIn}</div>
+
       <div>{userSignal.value.name}</div>
     </div>
   );
@@ -34,6 +37,7 @@ export function TestArrayIndexAccess(): JSX.Element {
     <div>
       {/* Array index access - should NOT trigger */}
       <div>{itemsSignal.value[0]}</div>
+
       <div>{itemsSignal.value[1]}</div>
     </div>
   );
@@ -48,6 +52,7 @@ export function TestClassNameUsage(): JSX.Element {
     <div>
       {/* className usage - should NOT trigger */}
       <div className={themeSignal.value}>Content</div>
+
       <div className={`theme-${themeSignal.value}`}>Content</div>
     </div>
   );
@@ -55,12 +60,14 @@ export function TestClassNameUsage(): JSX.Element {
 
 export function TestJoinMethod(): JSX.Element {
   useSignals();
+
   const itemsSignal = signal(['apple', 'banana', 'cherry']);
 
   return (
     <div>
       {/* .join() method - should NOT trigger */}
       <div>{itemsSignal.value.join(', ')}</div>
+
       <div>{itemsSignal.value.join(' | ')}</div>
     </div>
   );
@@ -68,6 +75,7 @@ export function TestJoinMethod(): JSX.Element {
 
 export function TestMathExpressions(): JSX.Element {
   useSignals();
+
   const taxRateSignal = signal(0.15);
   const priceSignal = signal(100);
 
@@ -75,7 +83,9 @@ export function TestMathExpressions(): JSX.Element {
     <div>
       {/* Math expressions - should NOT trigger */}
       <div>{taxRateSignal.value * 100}%</div>
+
       <div>${priceSignal.value * 1.2}</div>
+
       <div>{priceSignal.value + taxRateSignal.value}</div>
     </div>
   );
@@ -83,6 +93,7 @@ export function TestMathExpressions(): JSX.Element {
 
 export function TestMethodChaining(): JSX.Element {
   useSignals();
+
   const textSignal = signal('  Hello World  ');
   const numbersSignal = signal([1, 2, 3, 4, 5]);
 
@@ -90,7 +101,9 @@ export function TestMethodChaining(): JSX.Element {
     <div>
       {/* Method chaining - should NOT trigger */}
       <div>{textSignal.value.trim().toUpperCase()}</div>
+
       <div>{numbersSignal.value.filter((n) => n > 2).length}</div>
+
       <div>{textSignal.value.substring(0, 5)}</div>
     </div>
   );
@@ -141,6 +154,7 @@ export function TestDirectValueAccess(): JSX.Element {
     <div>
       {/* Direct .value access - SHOULD trigger */}
       <div>{messageSignal.value}</div>
+
       <div>{countSignal.value}</div>
     </div>
   );

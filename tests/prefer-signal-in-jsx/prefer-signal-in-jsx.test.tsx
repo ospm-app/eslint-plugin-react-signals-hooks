@@ -91,7 +91,7 @@ export function TestSignalValueOutsideJSX(): JSX.Element {
   // This should NOT trigger a warning - .value used outside JSX
   const userData = dataSignal.value;
 
-  console.log('User data:', userData);
+  console.info('User data:', userData);
 
   return <div>{dataSignal}</div>;
 }

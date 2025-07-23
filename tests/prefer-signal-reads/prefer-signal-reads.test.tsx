@@ -7,6 +7,7 @@ import { useState } from 'react';
 // This component should trigger ESLint warning for direct signal usage in non-JSX context
 export function TestDirectSignalUsage(): JSX.Element {
   useSignals();
+
   const countSignal = signal(0);
   const nameSignal = signal('John');
   const isActiveSignal = signal(false);
@@ -99,6 +100,7 @@ export function TestSignalInEffect(): JSX.Element {
 // This component should NOT trigger warning - using .value in effect
 export function TestCorrectSignalInEffect(): JSX.Element {
   useSignals();
+
   const countSignal = signal(0);
 
   // Correct - using .value in effect
@@ -184,12 +186,14 @@ export function TestCorrectSignalInComputed(): JSX.Element {
 // This component should trigger warning for direct signal usage in callback
 export function TestSignalInCallback(): JSX.Element {
   useSignals();
+
   const countSignal = signal(0);
   const multiplierSignal = signal(2);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   const calculateTotal = useCallback(() => {
     // Should trigger warning - direct signal usage in callback
+    // @ts-expect-error you can't multiply objects in typescript obviously :)
     return countSignal * multiplierSignal; // Should be .value for both
   }, []);
 
@@ -272,7 +276,7 @@ export function TestSignalInConditional(): JSX.Element {
 
   const [_isAdmin, setIsAdmin] = useState(false);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: <explanation>
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   const getUserStatus = useCallback(() => {
     // Should trigger warning - direct signal usage in conditional
     if (userSignal) {

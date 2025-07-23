@@ -1,4 +1,4 @@
-import { Signal } from '@preact/signals-react';
+import type { Signal } from '@preact/signals-react';
 import { signal, computed } from '@preact/signals-react';
 import { useSignals } from '@preact/signals-react/runtime';
 // biome-ignore lint/correctness/noUnusedImports: false positive

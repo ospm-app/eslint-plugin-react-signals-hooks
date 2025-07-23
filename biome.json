@@ -61,6 +61,7 @@
         "recommended": true,
         "useLiteralKeys": "off",
         "noForEach": "off",
+        "useArrowFunction": "off",
         "useOptionalChain": "warn"
       },
       "security": {

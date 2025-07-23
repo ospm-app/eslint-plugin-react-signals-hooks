@@ -1,7 +1,7 @@
 import { signal } from '@preact/signals-react';
 import { useSignals } from '@preact/signals-react/runtime';
 // biome-ignore lint/correctness/noUnusedImports: false positive
-import React, { useState, useEffect, useCallback, type JSX } from 'react';
+import React, { useState, useEffect, useCallback, type JSX, useLayoutEffect } from 'react';
 
 // This component should trigger a warning - direct signal assignment in useEffect without dependencies
 export function TestDirectSignalAssignmentInEffect(): JSX.Element {
@@ -57,6 +57,7 @@ export function TestSignalAssignmentWithIncorrectDeps(): JSX.Element {
   const [stateA, setStateA] = useState(0);
   const [stateB, setStateB] = useState(0);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   useEffect(() => {
     countSignal.value = stateA + stateB; // Should warn - stateB is missing from deps
   }, [stateA]);
@@ -104,20 +105,29 @@ export function TestSignalAssignmentWithEmptyDeps(): JSX.Element {
   const countSignal = signal(0);
   const [otherState, setOtherState] = useState(0);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   useEffect(() => {
     // Should warn - signal assignment in effect with empty deps array
-    const interval = setInterval(() => {
+    const interval = globalThis.setInterval(() => {
       countSignal.value += 1; // Should warn - direct assignment in effect
     }, 1000);
 
-    return () => clearInterval(interval);
+    return () => {
+      return globalThis.clearInterval(interval);
+    };
+  }, []);
+
+  const onClick = useCallback(() => {
+    setOtherState((c) => c + 1);
   }, []);
 
   return (
     <div>
       <div>Count: {countSignal}</div>
+
       <div>State: {otherState}</div>
-      <button type='button' onClick={() => setOtherState((s) => s + 1)}>
+
+      <button type='button' onClick={onClick}>
         Update State
       </button>
     </div>
@@ -127,24 +137,34 @@ export function TestSignalAssignmentWithEmptyDeps(): JSX.Element {
 // This component should NOT trigger warning - using useSignals for reactive updates
 export function TestUseSignalsForReactiveUpdates(): JSX.Element {
   useSignals();
+
   const countSignal = signal(0);
+
   const [start, setStart] = useState(false);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   useEffect(() => {
     if (!start) return;
 
-    const interval = setInterval(() => {
+    const interval = globalThis.setInterval(() => {
       // OK - using useSignals for reactive updates
       countSignal.value += 1;
     }, 1000);
 
-    return () => clearInterval(interval);
+    return () => {
+      return globalThis.clearInterval(interval);
+    };
   }, [start]);
+
+  const onClick = useCallback(() => {
+    setStart((s) => !s);
+  }, []);
 
   return (
     <div>
       <div>Count: {countSignal}</div>
-      <button type='button' onClick={() => setStart((s) => !s)}>
+
+      <button type='button' onClick={onClick}>
         {start ? 'Stop' : 'Start'} Counter
       </button>
     </div>
@@ -157,14 +177,20 @@ export function TestSignalAssignmentInUseLayoutEffect(): JSX.Element {
   const countSignal = signal(0);
   const [otherState, setOtherState] = useState(0);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   useLayoutEffect(() => {
     countSignal.value = otherState * 2; // Should warn - direct assignment in useLayoutEffect
   }, [otherState]);
 
+  const onClick = useCallback(() => {
+    setOtherState((c) => c + 1);
+  }, []);
+
   return (
     <div>
       <div>Count: {countSignal}</div>
-      <button type='button' onClick={() => setOtherState((c) => c + 1)}>
+
+      <button type='button' onClick={onClick}>
         Increment State
       </button>
     </div>
@@ -174,6 +200,7 @@ export function TestSignalAssignmentInUseLayoutEffect(): JSX.Element {
 // This component should NOT trigger warning - using useSignalsLayoutEffect
 export function TestUseSignalsLayoutEffect(): JSX.Element {
   useSignals();
+
   const countSignal = signal(0);
   const [otherState, setOtherState] = useState(0);
 
@@ -181,10 +208,15 @@ export function TestUseSignalsLayoutEffect(): JSX.Element {
     countSignal.value = otherState * 2; // OK - using useSignalsLayoutEffect
   });
 
+  const onClick = useCallback(() => {
+    setOtherState((c) => c + 1);
+  }, []);
+
   return (
     <div>
       <div>Count: {countSignal}</div>
-      <button type='button' onClick={() => setOtherState((c) => c + 1)}>
+
+      <button type='button' onClick={onClick}>
         Increment State
       </button>
     </div>
@@ -194,23 +226,32 @@ export function TestUseSignalsLayoutEffect(): JSX.Element {
 // This component should trigger a warning - signal assignment in useEffect with cleanup
 export function TestSignalAssignmentWithCleanup(): JSX.Element {
   useSignals();
+
   const countSignal = signal(0);
   const [isRunning, setIsRunning] = useState(false);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   useEffect(() => {
     if (!isRunning) return;
 
-    const interval = setInterval(() => {
+    const interval = globalThis.setInterval(() => {
       countSignal.value += 1; // Should warn - direct assignment in effect
     }, 1000);
 
-    return () => clearInterval(interval);
+    return () => {
+      return globalThis.clearInterval(interval);
+    };
   }, [isRunning]);
+
+  const onClick = useCallback(() => {
+    setIsRunning((r) => !r);
+  }, []);
 
   return (
     <div>
       <div>Count: {countSignal}</div>
-      <button type='button' onClick={() => setIsRunning((r) => !r)}>
+
+      <button type='button' onClick={onClick}>
         {isRunning ? 'Stop' : 'Start'}
       </button>
     </div>
@@ -220,24 +261,34 @@ export function TestSignalAssignmentWithCleanup(): JSX.Element {
 // This component should NOT trigger warning - using useSignals with cleanup
 export function TestUseSignalsWithCleanup(): JSX.Element {
   useSignals();
+
   const countSignal = signal(0);
   const [isRunning, setIsRunning] = useState(false);
 
   useSignalsEffect(() => {
-    if (!isRunning) return;
+    if (!isRunning) {
+      return;
+    }
 
-    const interval = setInterval(() => {
+    const interval = globalThis.setInterval(() => {
       // OK - using useSignalsEffect
       countSignal.value += 1;
     }, 1000);
 
-    return () => clearInterval(interval);
+    return () => {
+      return globalThis.clearInterval(interval);
+    };
   });
+
+  const onClick = useCallback(() => {
+    setIsRunning((r) => !r);
+  }, []);
 
   return (
     <div>
       <div>Count: {countSignal}</div>
-      <button type='button' onClick={() => setIsRunning((r) => !r)}>
+
+      <button type='button' onClick={onClick}>
         {isRunning ? 'Stop' : 'Start'}
       </button>
     </div>
@@ -251,14 +302,17 @@ function useSignalsEffect(effect: () => void | (() => void), deps?: any[]) {
     return () => {
       if (cleanup) cleanup();
     };
+    // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   }, deps);
 }
 
 function useSignalsLayoutEffect(effect: () => void | (() => void), deps?: any[]) {
   useLayoutEffect(() => {
     const cleanup = effect();
+
     return () => {
       if (cleanup) cleanup();
     };
+    // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   }, deps);
 }

@@ -12,7 +12,7 @@ export const signalVariableNameRule = {
     type: 'suggestion',
     docs: {
       description: 'enforce naming conventions for signal and computed variables',
-      recommended: false,
+      recommended: true,
     },
     fixable: 'code',
     schema: [],
