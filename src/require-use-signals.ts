@@ -42,9 +42,9 @@ export const requireUseSignalsRule = {
     Identifier(node: Identifier & Rule.NodeParentExtension): void;
     'Program:exit'(): void;
   } {
-    const options = context.options[0] || {};
+    const options = context.options[0] ?? {};
 
-    const ignoreComponents = new Set(options.ignoreComponents || []);
+    const ignoreComponents = new Set(options.ignoreComponents ?? []);
 
     let hasUseSignals = false;
 
@@ -58,6 +58,7 @@ export const requireUseSignalsRule = {
 
     return {
       FunctionDeclaration(node: FunctionDeclaration & Rule.NodeParentExtension) {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (node.id?.name && /^[A-Z]/.test(node.id.name)) {
           componentName = node.id.name;
           componentNode = node;
@@ -67,7 +68,9 @@ export const requireUseSignalsRule = {
       },
       ArrowFunctionExpression(node: ArrowFunctionExpression & Rule.NodeParentExtension) {
         if (
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           node.parent?.type === 'VariableDeclarator' &&
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           node.parent.id?.type === 'Identifier' &&
           /^[A-Z]/.test(node.parent.id.name)
         ) {
@@ -93,6 +96,7 @@ export const requireUseSignalsRule = {
         }
       },
       Identifier(node: Identifier & Rule.NodeParentExtension) {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (node.name.endsWith('Signal') && node.parent?.type !== 'MemberExpression') {
           hasSignalUsage = true;
         }
@@ -114,11 +118,13 @@ export const requireUseSignalsRule = {
 
               if (
                 componentNode?.type === 'FunctionDeclaration' &&
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
                 componentNode.body?.type === 'BlockStatement'
               ) {
                 insertionPoint = componentNode.body.body[0];
               } else if (
                 componentNode?.type === 'ArrowFunctionExpression' &&
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
                 componentNode.body?.type === 'BlockStatement'
               ) {
                 insertionPoint = componentNode.body.body[0];
@@ -132,6 +138,7 @@ export const requireUseSignalsRule = {
 
               const firstStatement = program.body[0];
 
+              // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
               if (firstStatement) {
                 return fixer.insertTextBefore(
                   firstStatement,

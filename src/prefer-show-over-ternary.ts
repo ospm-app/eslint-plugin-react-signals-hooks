@@ -1,5 +1,5 @@
 import type { Rule } from 'eslint';
-import type { ConditionalExpression, Node } from 'estree';
+import type { ConditionalExpression, Node, BaseNode } from 'estree';
 
 const childProperties = [
   'body',
@@ -15,7 +15,18 @@ const childProperties = [
   'properties',
 ] as const;
 
-function getComplexity(node: Node, visited = new Set()): number {
+type NodeWithProperties = {
+  [key: string]: unknown;
+  type: string;
+};
+
+function isJSXNode(node: Node): boolean {
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-expect-error
+  return 'type' in node && (node.type === 'JSXElement' || node.type === 'JSXFragment');
+}
+
+function getComplexity(node: Node, visited = new Set<Node>()): number {
   if (visited.has(node)) {
     return 0;
   }
@@ -24,33 +35,33 @@ function getComplexity(node: Node, visited = new Set()): number {
 
   let complexity = 0;
 
-  // @ts-expect-error
-  if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
-    complexity++;
-  }
+  const nodeWithProperties = node as NodeWithProperties;
 
-  if (node.type === 'CallExpression') {
+  // Check node type safely
+  if (isJSXNode(node)) {
     complexity++;
-  }
-
-  if (node.type === 'ConditionalExpression') {
+  } else if ('type' in node && node.type === 'CallExpression') {
+    complexity++;
+  } else if ('type' in node && node.type === 'ConditionalExpression') {
     complexity += 2;
   }
 
+  // Process child properties
   for (const key of childProperties) {
-    const value = (node as any)[key];
+    const value = nodeWithProperties[key];
 
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
     if (value && typeof value === 'object') {
       if (Array.isArray(value)) {
         for (const item of value) {
-          // @ts-expect-error
-          if (item && typeof item === 'object' && item.type) {
-            // @ts-expect-error
-            complexity += getComplexity(item, visited);
+          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+          if (item && typeof item === 'object' && 'type' in item) {
+            complexity += getComplexity(item as Node, visited);
           }
         }
-      } else if (value.type) {
-        complexity += getComplexity(value, visited);
+        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+      } else if (value && 'type' in value) {
+        complexity += getComplexity(value as Node, visited);
       }
     }
   }
@@ -88,9 +99,74 @@ export const preferShowOverTernaryRule = {
     ],
   },
   create(context: Rule.RuleContext) {
-    const options = context.options[0] || {};
+    // Skip if not a JSX/TSX file
+    const filename = context.getFilename();
+    if (!filename.endsWith('.tsx') && !filename.endsWith('.jsx')) {
+      return {};
+    }
 
-    const minComplexity = options.minComplexity || 2;
+    const options = context.options[0] ?? {};
+
+    const minComplexity = options.minComplexity ?? 2;
+
+    // Skip if file doesn't contain JSX
+    const sourceCode = context.getSourceCode();
+
+    type NodeWithChildren = BaseNode & {
+      children?: Array<BaseNode>;
+    };
+
+    function hasJSX(node: BaseNode | null | undefined, visited = new WeakSet<object>()): boolean {
+      // Check for non-objects or null
+      if (!node || typeof node !== 'object') {
+        return false;
+      }
+
+      // Check if we've already visited this node to prevent infinite recursion
+      if (visited.has(node)) {
+        return false;
+      }
+
+      visited.add(node);
+
+      // Check if this is a JSX node
+      if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
+        return true;
+      }
+
+      // Handle children array if it exists
+      const nodeWithChildren = node as NodeWithChildren;
+      if (Array.isArray(nodeWithChildren.children)) {
+        if (nodeWithChildren.children.some((child) => hasJSX(child, visited))) {
+          return true;
+        }
+      }
+
+      // Safely check all properties of the node
+      for (const value of Object.values(node)) {
+        if (Array.isArray(value)) {
+          // Check array items
+          for (const item of value) {
+            if (hasJSX(item as BaseNode, visited)) {
+              return true;
+            }
+          }
+          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+        } else if (value && typeof value === 'object' && 'type' in value) {
+          // Check object properties
+          if (hasJSX(value as BaseNode, visited)) {
+            return true;
+          }
+        }
+      }
+
+      return false;
+    }
+
+    // Only run the rule if JSX is found in the file
+    if (!hasJSX(sourceCode.ast)) {
+      return {};
+    }
 
     function hasSignalInTest(node: Node): boolean {
       if (
@@ -161,11 +237,15 @@ export const preferShowOverTernaryRule = {
       ConditionalExpression: checkConditionalExpression,
       JSXExpressionContainer(node: ConditionalExpression & Rule.NodeParentExtension) {
         if (
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-expect-error
+          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
           node.expression &&
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-expect-error
           node.expression.type === 'ConditionalExpression'
         ) {
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-expect-error
           checkConditionalExpression(node.expression);
         }

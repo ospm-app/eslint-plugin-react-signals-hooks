@@ -121,6 +121,8 @@ const tsConfig = {
     'react-signals-hooks/no-mutation-in-render': 'error',
     'react-signals-hooks/prefer-signal-in-jsx': 'warn',
     'react-signals-hooks/prefer-show-over-ternary': 'warn',
+    'react-signals-hooks/warn-on-unnecessary-untracked': 'warn',
+    'react-signals-hooks/no-signal-creation-in-component': 'warn',
     'react-signals-hooks/prefer-for-over-map': 'warn',
     'react-signals-hooks/prefer-signal-effect': 'warn',
     'react-signals-hooks/prefer-computed': 'warn',

@@ -11,6 +11,7 @@ import type {
   Node,
   Pattern,
   PrivateIdentifier,
+  SpreadElement,
   Super,
   VariableDeclarator,
 } from 'estree';
@@ -80,24 +81,31 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
       },
     ],
   },
-  create(context: ExtendedRuleContext) {
+  create(context: ExtendedRuleContext): Rule.RuleListener {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     const rawOptions = context.options?.[0];
 
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
     const additionalHooks = rawOptions?.additionalHooks
       ? new RegExp(rawOptions.additionalHooks)
       : undefined;
 
     const enableDangerousAutofixThisMayCauseInfiniteLoops: boolean =
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
       rawOptions?.enableDangerousAutofixThisMayCauseInfiniteLoops || false;
 
     const experimental_autoDependenciesHooks: ReadonlyArray<string> =
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
       rawOptions && Array.isArray(rawOptions.experimental_autoDependenciesHooks)
         ? rawOptions.experimental_autoDependenciesHooks
         : [];
 
-    const requireExplicitEffectDeps: boolean = rawOptions?.requireExplicitEffectDeps || false;
+    const requireExplicitEffectDeps: boolean =
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+      rawOptions?.requireExplicitEffectDeps || false;
 
     const enableAutoFixForMemoAndCallback: boolean =
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
       rawOptions?.enableAutoFixForMemoAndCallback || false;
 
     const options = {
@@ -108,7 +116,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
       enableAutoFixForMemoAndCallback,
     };
 
-    function reportProblem(problem: Rule.ReportDescriptor) {
+    function reportProblem(problem: Rule.ReportDescriptor): void {
       const hasAutofix = !!(
         problem.fix ||
         (enableDangerousAutofixThisMayCauseInfiniteLoops &&
@@ -133,6 +141,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
       }
 
       if (enableDangerousAutofixThisMayCauseInfiniteLoops) {
+        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
         if (Array.isArray(problem.suggest) && problem.suggest.length > 0 && problem.suggest[0]) {
           problem.fix = problem.suggest[0].fix;
         }
@@ -150,12 +159,13 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
             return context.sourceCode;
           };
 
-    const getScope = (node: Node) => {
+    function getScope(node: Node): Scope.Scope {
       if (typeof context.getScope === 'function') {
         return context.getScope();
       }
+
       return context.sourceCode.getScope(node);
-    };
+    }
 
     const scopeManager = getSourceCode().scopeManager;
 
@@ -174,10 +184,10 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
     function memoizeWithWeakMap(
       fn: (resolved: Scope.Variable) => boolean,
       map: WeakMap<Scope.Variable, boolean>
-    ) {
+    ): (arg: Scope.Variable) => boolean {
       return (arg: Scope.Variable): boolean => {
         if (map.has(arg)) {
-          return !!map.get(arg);
+          return map.get(arg) ?? false;
         }
 
         const result = fn(arg);
@@ -198,7 +208,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
     ): void {
       const objectPropertyAccesses = new Map<string, Set<string>>();
 
-      if (isEffect && node.async) {
+      if (isEffect && node.async === true) {
         reportProblem({
           node,
           message: `Effect callbacks are synchronous to prevent race conditions. Put the async function inside:\n\nuseEffect(() => {\n  async function fetchData() {\n    // You can await here\n    const response = await MyAPI.getData(someId);\n    // ...\n  }\n  fetchData();\n}, [someId]); // Or [] if effect doesn't need props or state\n\nLearn more about data fetching with Hooks: https://react.dev/link/hooks-data-fetching`,
@@ -243,14 +253,17 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         if (!isArray(resolved.defs)) {
           return false;
         }
+
         const def = resolved.defs[0];
 
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (def == null) {
           return false;
         }
 
         const defNode: VariableDeclarator = def.node;
 
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (defNode.type !== 'VariableDeclarator') {
           return false;
         }
@@ -261,12 +274,15 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           return false;
         }
 
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         while (init.type === 'TSAsExpression' || init.type === 'AsExpression') {
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-expect-error
           init = init.expression;
         }
 
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         let declaration = defNode.parent;
 
@@ -298,6 +314,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           callee.type === 'MemberExpression' &&
           'name' in callee.object &&
           callee.object.name === 'React' &&
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           callee.property != null &&
           !callee.computed
         ) {
@@ -316,6 +333,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
         if ((isSignalIdentifier(callee) || isSignalVariable(id)) && id.type === 'Identifier') {
           for (const ref of resolved.references) {
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             if (ref !== id) {
               signalVariables.add(ref.identifier);
@@ -327,6 +345,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
         if (isUseEffectEventIdentifier(callee) && id.type === 'Identifier') {
           for (const ref of resolved.references) {
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             if (ref !== id) {
               useEffectEventVariables.add(ref.identifier);
@@ -391,6 +410,11 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         return false;
       }
 
+      const memoizedIsStableKnownHookValue = memoizeWithWeakMap(
+        isStableKnownHookValue,
+        stableKnownValueCache
+      );
+
       function isFunctionWithoutCapturedValues(resolved: Scope.Variable): boolean {
         if (!isArray(resolved.defs)) {
           return false;
@@ -398,6 +422,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
         const def = resolved.defs[0];
 
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (def == null) {
           return false;
         }
@@ -417,6 +442,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           if (
             (fnNode.type === 'FunctionDeclaration' && childScopeBlock === fnNode) ||
             (fnNode.type === 'VariableDeclarator' &&
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               childScopeBlock.parent === fnNode)
           ) {
@@ -443,11 +469,6 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         return true;
       }
 
-      const memoizedIsStableKnownHookValue = memoizeWithWeakMap(
-        isStableKnownHookValue,
-        stableKnownValueCache
-      );
-
       const memoizedIsFunctionWithoutCapturedValues = memoizeWithWeakMap(
         isFunctionWithoutCapturedValues,
         functionWithoutCapturedValueCache
@@ -469,8 +490,10 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         while (curScope != null && curScope.block !== node) {
           if (curScope.type === 'function') {
             isInReturnedFunction =
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               curScope.block.parent != null &&
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               curScope.block.parent.type === 'ReturnStatement';
           }
@@ -492,6 +515,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
       function isOnlyAssignmentReference(reference: Scope.Reference): boolean {
         const { identifier } = reference;
 
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         const { parent } = identifier;
 
@@ -542,6 +566,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           parent?.type === 'MemberExpression' &&
           parent.property === identifier &&
           parent.object?.type === 'Identifier' &&
+          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
           parent.object.name.endsWith('Signal')
         ) {
           if (parent.parent?.type === 'AssignmentExpression' && parent.parent.left === parent) {
@@ -564,9 +589,11 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
       function gatherDependenciesRecursively(currentScope: Scope.Scope): void {
         for (const reference of currentScope.references) {
           const isSignalReference =
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
             reference.identifier.type === 'Identifier' &&
             (reference.identifier.name.endsWith('Signal') ||
               reference.identifier.name.endsWith('signal') ||
+              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
               (reference.resolved?.name?.endsWith('Signal') ?? false));
 
           if (reference.resolved == null) {
@@ -575,16 +602,22 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
           // biome-ignore format: because
           if (
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             reference.identifier.parent?.type === "MemberExpression" &&
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
+            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
             !reference.identifier.parent.computed &&
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             reference.identifier.parent.property?.type === "Identifier" &&
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             reference.identifier.parent.object === reference.identifier
           ) {
             const objectName = reference.identifier.name;
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             const propertyName = reference.identifier.parent.property.name;
 
@@ -593,6 +626,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
                 objectPropertyAccesses.set(objectName, new Set<string>());
               }
 
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               let currentNode = reference.identifier.parent;
               let fullPath = `${objectName}.${propertyName}`;
@@ -601,6 +635,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
                 currentNode.parent?.type === "MemberExpression"
               ) {
                 if (currentNode.parent.object === currentNode) {
+                  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
                   if (!currentNode.parent.computed) {
                     if (currentNode.parent.property?.type === "Identifier") {
                       fullPath += `.${currentNode.parent.property.name}`;
@@ -617,7 +652,8 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
                       currentNode = currentNode.parent;
                     } catch (error) {
-                      console.error(error instanceof Error ? error.message : JSON.stringify(error))
+                      console.error(error instanceof Error ? error.message : JSON.stringify(error));
+
                       break;
                     }
                   }
@@ -638,9 +674,11 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           let isComputedMemberAssignmentOnly = false;
 
           if (
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
             reference.identifier.type === 'Identifier' &&
             reference.identifier.name.endsWith('Signal')
           ) {
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             const parent = reference.identifier.parent;
             if (
@@ -653,6 +691,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
               parent.parent.parent.left === parent.parent
             ) {
               isComputedMemberAssignmentOnly = true;
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               reference.isComputedAssignmentOnly = true;
 
@@ -660,6 +699,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
               for (const ref of currentScope.references) {
                 if (ref.identifier.name === baseSignalName) {
+                  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                   // @ts-expect-error
                   ref.isComputedAssignmentOnly = true;
                 }
@@ -677,6 +717,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           }
 
           if (
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
             reference.identifier.type === 'Identifier' &&
             reference.identifier.name.endsWith('Signal')
           ) {
@@ -684,13 +725,16 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
             for (const ref of currentScope.references) {
               if (ref.identifier.name === reference.identifier.name) {
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-expect-error
+                // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
                 if (!ref.isComputedAssignmentOnly) {
                   allReferencesAreComputedAssignments = false;
                   break;
                 }
               }
             }
+
             if (allReferencesAreComputedAssignments) {
               continue;
             }
@@ -705,15 +749,21 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           let currentNode = reference.identifier;
 
           while (
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
+            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
             currentNode.parent &&
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             (currentNode.parent.type === 'MemberExpression' ||
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               currentNode.parent.type === 'OptionalMemberExpression') &&
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             currentNode.parent.object === currentNode
           ) {
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             currentNode = currentNode.parent;
           }
@@ -721,30 +771,41 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           // biome-ignore format: because
           // Skip function calls, but still track function references as dependencies
           if (
-         // @ts-expect-error
-        currentNode.parent &&
-         // @ts-expect-error
-        currentNode.parent.type === "CallExpression" &&
-        // @ts-expect-error
-        currentNode.parent.callee === currentNode
-      ) {
-        // Don't continue - let it fall through to process the function reference as a dependency
-      }
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-expect-error
+            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+            currentNode.parent &&
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-expect-error
+            currentNode.parent.type === "CallExpression" &&
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-expect-error
+            currentNode.parent.callee === currentNode
+          ) {
+            // Don't continue - let it fall through to process the function reference as a dependency
+          }
+
           let dependencyNode = getDependency(referenceNode);
 
           try {
             let currentNode = referenceNode;
 
             while (
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
+              // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
               currentNode.parent &&
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               (currentNode.parent.type === 'MemberExpression' ||
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-expect-error
                 currentNode.parent.type === 'OptionalMemberExpression') &&
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               currentNode.parent.object === currentNode
             ) {
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               currentNode = currentNode.parent;
             }
@@ -755,23 +816,30 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           if (dependencyNode.type === 'Identifier' && dependencyNode.name.endsWith('Signal')) {
             // biome-ignore format: because
             if (
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               referenceNode.parent?.type === "MemberExpression" &&
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               referenceNode.parent.object === referenceNode &&
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               referenceNode.parent.property?.type === "Identifier" &&
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               referenceNode.parent.property.name === "value"
             ) {
               if (
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-expect-error
                 referenceNode.parent.parent?.type === "MemberExpression" &&
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-expect-error
                 referenceNode.parent.parent.object === referenceNode.parent
               ) {
                 let isAssignmentOnly = false;
 
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-expect-error
                 let outermostNode = referenceNode.parent.parent;
 
@@ -792,8 +860,11 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
                 dependencyNode = outermostNode;
 
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-expect-error
+                // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
                 if (referenceNode.parent.parent.computed && referenceNode.parent.parent.property) {
+                  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                   // @ts-expect-error
                   const propertyNode = referenceNode.parent.parent.property;
 
@@ -802,11 +873,13 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
                     propertyName = propertyNode.name;
                   } else if (propertyNode.type === "TSAsExpression" || propertyNode.type === "AsExpression") {
                     const expr = propertyNode.expression;
+                    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
                     if (expr && expr.type === "Identifier") {
                       propertyName = expr.name;
                     }
                   }
 
+                  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
                   if (propertyName) {
 
                     let isInnerScopeProperty = false;
@@ -837,6 +910,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
                             checkScope = checkScope.upper;
                         }
 
+                        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                     // @ts-expect-error
                     reference.isInnerScopeComputedProperty = isInnerScopeProperty;
 
@@ -852,10 +926,12 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
                 }
 
                 if (isAssignmentOnly) {
+                  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                   // @ts-expect-error
                   reference.isComputedAssignmentOnly = true;
                 }
               } else {
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-expect-error
                 dependencyNode = referenceNode.parent;
               }
@@ -866,10 +942,13 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           const dependency = analyzePropertyChain(dependencyNode, optionalChains);
 
           if (
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
+            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
             dependencyNode.parent &&
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
-            isSignalValueAccess(dependencyNode.parent) &&
+            isSignalValueAccess(dependencyNode.parent, context) &&
             dependencyNode.type === 'Identifier' &&
             !signalVariables.has(dependencyNode) &&
             isSignalVariable(dependencyNode)
@@ -880,14 +959,20 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           if (
             isEffect &&
             dependencyNode.type === 'Identifier' &&
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             (dependencyNode.parent?.type === 'MemberExpression' ||
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               dependencyNode.parent?.type === 'OptionalMemberExpression') &&
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
+            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
             !dependencyNode.parent.computed &&
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             dependencyNode.parent.property.type === 'Identifier' &&
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             dependencyNode.parent.property.name === 'current' &&
             isInsideEffectCleanup(reference)
@@ -899,8 +984,10 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           }
 
           if (
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             dependencyNode.parent?.type === 'TSTypeQuery' ||
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             dependencyNode.parent?.type === 'TSTypeReference'
           ) {
@@ -909,6 +996,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
           const def = reference.resolved.defs[0];
 
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           if (def == null) {
             continue;
           }
@@ -921,6 +1009,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           let isAssignment = isOnlyAssignmentReference(reference);
 
           const isComputedAssignmentOnly =
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             reference.isComputedAssignmentOnly === true;
 
@@ -941,7 +1030,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           } else {
             const resolved = reference.resolved;
 
-            const isSignalValueRef = isSignalValueAccess(reference.identifier);
+            const isSignalValueRef = isSignalValueAccess(reference.identifier, context);
 
             const isImportedSignal =
               dependency.endsWith('Signal') ||
@@ -955,12 +1044,15 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
               typeof dependency === 'string' &&
               !dependency.includes('.') &&
               !dependency.endsWith('Signal') &&
+              // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
               resolved &&
+              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
               resolved.defs &&
               resolved.defs.length > 0 &&
               !memoizedIsStableKnownHookValue(resolved); // Exclude useRef and other stable hook values
 
             const isStable =
+              // eslint-disable-next-line react-signals-hooks/prefer-show-over-ternary
               isSignalValueRef ||
               isSignalDependency(dependency) ||
               isImportedSignal ||
@@ -985,15 +1077,22 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
               // biome-ignore format: because
               if (
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-expect-error
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
                 reference.identifier.type === "MemberExpression" &&
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-expect-error
                 reference.identifier.property.type === "Identifier" &&
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-expect-error
                 reference.identifier.property.name === "value" &&
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-expect-error
                 reference.identifier.object.type === "Identifier"
               ) {
+
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-expect-error
                 const signalName = reference.identifier.object.name;
 
@@ -1002,6 +1101,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
             }
 
             const hasInnerScopeComputedProperty =
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               reference.isInnerScopeComputedProperty === true;
 
@@ -1027,12 +1127,14 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         for (const ref of references) {
           const { identifier } = ref;
 
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-expect-error
           const { parent } = identifier;
 
           if (
             parent != null &&
             parent.type === 'MemberExpression' &&
+            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
             !parent.computed &&
             parent.property.type === 'Identifier' &&
             parent.property.name === 'current' &&
@@ -1048,6 +1150,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           return;
         }
         reportProblem({
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-expect-error
           node: dependencyNode.parent.property,
           message: `The ref value '${dependency}.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy '${dependency}.current' to a variable inside the effect, and use that variable in the cleanup function.`,
@@ -1095,11 +1198,13 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         let setStateInsideEffectWithoutDeps: string | null = null;
 
         dependencies.forEach(({ references }, key) => {
+          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
           if (setStateInsideEffectWithoutDeps) {
             return;
           }
 
           for (const reference of references) {
+            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
             if (setStateInsideEffectWithoutDeps) {
               return;
             }
@@ -1127,6 +1232,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           }
         });
 
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
         if (setStateInsideEffectWithoutDeps) {
           const { suggestedDependencies } = collectRecommendations({
             dependencies,
@@ -1166,8 +1272,10 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
       const isArrayExpression = declaredDependenciesNode.type === 'ArrayExpression';
 
       const isTSAsArrayExpression =
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         declaredDependenciesNode.type === 'TSAsExpression' &&
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         declaredDependenciesNode.expression.type === 'ArrayExpression';
 
@@ -1178,7 +1286,8 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         });
       } else {
         const arrayExpression = isTSAsArrayExpression
-          ? // @ts-expect-error
+          ? // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-expect-error
             declaredDependenciesNode.expression
           : declaredDependenciesNode;
 
@@ -1260,7 +1369,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
             if (error instanceof Error && /Unsupported node type/.test(error.message)) {
               if (declaredDependencyNode.type === 'Literal') {
                 if (
-                  declaredDependencyNode.value &&
+                  declaredDependencyNode.value != null &&
                   dependencies.has(declaredDependencyNode.value as string)
                 ) {
                   reportProblem({
@@ -1294,10 +1403,12 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
             )
           ) {
             // @ts-expect-error This can be done better
-            maybeID = maybeID.object || maybeID.expression.object;
+            maybeID = maybeID.object ?? maybeID.expression.object;
           }
           const isDeclaredInComponent = !componentScope.through.some(
-            (ref) => ref.identifier === maybeID
+            (ref: Scope.Reference): boolean => {
+              return ref.identifier === maybeID;
+            }
           );
 
           declaredDependencies.push({
@@ -1337,56 +1448,69 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           scope,
         });
 
-        constructions.forEach(({ construction, isUsedOutsideOfHook, depType }) => {
-          const wrapperHook = depType === 'function' ? 'useCallback' : 'useMemo';
+        constructions.forEach(
+          ({
+            construction,
+            isUsedOutsideOfHook,
+            depType,
+          }: {
+            construction: Scope.Definition;
+            depType: string;
+            isUsedOutsideOfHook: boolean;
+          }): void => {
+            const wrapperHook = depType === 'function' ? 'useCallback' : 'useMemo';
 
-          const constructionType = depType === 'function' ? 'definition' : 'initialization';
+            const constructionType = depType === 'function' ? 'definition' : 'initialization';
 
-          const defaultAdvice = `wrap the ${constructionType} of '${construction.name.name}' in its own ${wrapperHook}() Hook.`;
+            const defaultAdvice = `wrap the ${constructionType} of '${construction.name.name}' in its own ${wrapperHook}() Hook.`;
 
-          const advice = isUsedOutsideOfHook
-            ? `To fix this, ${defaultAdvice}`
-            : `Move it inside the ${reactiveHookName} callback. Alternatively, ${defaultAdvice}`;
+            const advice = isUsedOutsideOfHook
+              ? `To fix this, ${defaultAdvice}`
+              : `Move it inside the ${reactiveHookName} callback. Alternatively, ${defaultAdvice}`;
 
-          const causation =
-            depType === 'conditional' || depType === 'logical expression' ? 'could make' : 'makes';
+            const causation =
+              depType === 'conditional' || depType === 'logical expression'
+                ? 'could make'
+                : 'makes';
 
-          const message =
-            `The '${construction.name.name}' ${depType} ${causation} the dependencies of ` +
-            `${reactiveHookName} Hook (at line ${declaredDependenciesNode.loc?.start.line}) ` +
-            `change on every render. ${advice}`;
+            const message =
+              `The '${construction.name.name}' ${depType} ${causation} the dependencies of ` +
+              `${reactiveHookName} Hook (at line ${declaredDependenciesNode.loc?.start.line}) ` +
+              `change on every render. ${advice}`;
 
-          let suggest: Rule.ReportDescriptor['suggest'];
-          if (isUsedOutsideOfHook && construction.type === 'Variable' && depType === 'function') {
-            suggest = [
-              {
-                desc: `Wrap the ${constructionType} of '${construction.name.name}' in its own ${wrapperHook}() Hook.`,
-                fix(fixer: Rule.RuleFixer): Array<Rule.Fix> {
-                  const [before, after] =
-                    wrapperHook === 'useMemo'
-                      ? ['useMemo(() => { return ', '; })']
-                      : ['useCallback(', ')'];
+            let suggest: Rule.ReportDescriptor['suggest'];
 
-                  if (construction.node.init == null) {
-                    return [];
-                  }
+            if (isUsedOutsideOfHook && construction.type === 'Variable' && depType === 'function') {
+              suggest = [
+                {
+                  desc: `Wrap the ${constructionType} of '${construction.name.name}' in its own ${wrapperHook}() Hook.`,
+                  fix(fixer: Rule.RuleFixer): Array<Rule.Fix> {
+                    const [before, after] =
+                      wrapperHook === 'useMemo'
+                        ? ['useMemo(() => { return ', '; })']
+                        : ['useCallback(', ')'];
 
-                  return [
-                    fixer.insertTextBefore(construction.node.init, before),
+                    if (construction.node.init == null) {
+                      return [];
+                    }
 
-                    fixer.insertTextAfter(construction.node.init, after),
-                  ];
+                    return [
+                      fixer.insertTextBefore(construction.node.init, before),
+
+                      fixer.insertTextAfter(construction.node.init, after),
+                    ];
+                  },
                 },
-              },
-            ];
-          }
+              ];
+            }
 
-          reportProblem({
-            node: construction.node,
-            message,
-            suggest,
-          });
-        });
+            reportProblem({
+              node: construction.node,
+              message,
+              suggest,
+            });
+          }
+        );
         return;
       }
 
@@ -1417,6 +1541,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
       }
 
       function formatDependency(path: string): string {
+        // eslint-disable-next-line optimize-regex/optimize-regex
         path = path.replace(/\[\*\]/g, '');
 
         const members = path.split('.');
@@ -1438,7 +1563,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         return finalPath;
       }
 
-      function reportProblem(descriptor: Rule.ReportDescriptor) {
+      function reportProblem(descriptor: Rule.ReportDescriptor): void {
         const hasAutofix = !!(
           descriptor.fix ||
           (enableDangerousAutofixThisMayCauseInfiniteLoops &&
@@ -1464,9 +1589,12 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           descriptor.message += indicator;
         }
 
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if ('message' in descriptor && descriptor.message?.includes('unnecessary dependency')) {
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           const match = descriptor.message?.match(/unnecessary dependency: '([^']+)'/i);
 
+          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
           if (match?.[1]) {
             const depKey = match[1];
 
@@ -1549,6 +1677,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           }
         });
 
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (badRef !== null) {
           extraWarning = ` Mutable values like '${badRef}' aren't valid dependencies because mutating them doesn't re-render the component.`;
         } else if (externalDependencies.size > 0) {
@@ -1584,6 +1713,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
             break;
           }
 
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-expect-error
           const parent = id.parent;
 
@@ -1608,7 +1738,8 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         let missingCallbackDep: string | null = null;
 
         missingDependencies.forEach((missingDep: string): void => {
-          if (missingCallbackDep) {
+          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+          if (missingCallbackDep !== null && missingCallbackDep !== '') {
             return;
           }
 
@@ -1616,12 +1747,15 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
           const usedDep = dependencies.get(missingDep);
 
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           if (!usedDep?.references || usedDep?.references[0]?.resolved !== topScopeRef) {
             return;
           }
 
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           const def = topScopeRef?.defs[0];
 
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           if (def?.name == null || def.type !== 'Parameter') {
             return;
           }
@@ -1634,12 +1768,16 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
             id = reference.identifier;
 
             if (
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               id.parent != null &&
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               (id.parent.type === 'CallExpression' ||
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-expect-error
                 id.parent.type === 'OptionalCallExpression') &&
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
               // @ts-expect-error
               id.parent.callee === id
             ) {
@@ -1656,25 +1794,27 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           missingCallbackDep = missingDep;
         });
 
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (missingCallbackDep !== null) {
           extraWarning = ` If '${missingCallbackDep}' changes too often, find the parent component that defines it and wrap that definition in useCallback.`;
         }
       }
 
       if (!extraWarning && missingDependencies.size > 0) {
-        dependencies.forEach((dep, key) => {
+        dependencies.forEach((dep: Dependency, key: string): void => {
           if (key.includes('.value[') && key.includes('Signal')) {
             const valueIndex = key.indexOf('.value[');
+
             if (valueIndex !== -1) {
               const baseValueKey = key.slice(0, valueIndex + 6); // Include ".value"
 
-              const isBaseValueDeclared = declaredDependencies.some(
-                ({ key: depKey }) => depKey === baseValueKey
-              );
+              const isBaseValueDeclared = declaredDependencies.some(({ key: depKey }) => {
+                return depKey === baseValueKey;
+              });
 
-              const isComputedPropertyDeclared = declaredDependencies.some(
-                ({ key: depKey }) => depKey === key
-              );
+              const isComputedPropertyDeclared = declaredDependencies.some(({ key: depKey }) => {
+                return depKey === key;
+              });
 
               const isInnerScopeComputed = dep.hasInnerScopeComputedProperty === true;
 
@@ -1690,9 +1830,9 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
                       const baseValueKey = `${signalName}.value`;
 
-                      const isBaseValueDeclared = declaredDependencies.some(
-                        ({ key }) => key === baseValueKey
-                      );
+                      const isBaseValueDeclared = declaredDependencies.some(({ key }) => {
+                        return key === baseValueKey;
+                      });
 
                       if (isBaseValueDeclared) {
                         return;
@@ -1723,9 +1863,9 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
               const baseValueKey = `${signalName}.value`;
 
-              const isBaseValueDeclared = declaredDependencies.some(
-                ({ key }) => key === baseValueKey
-              );
+              const isBaseValueDeclared = declaredDependencies.some(({ key }) => {
+                return key === baseValueKey;
+              });
 
               const dependency = dependencies.get(key);
 
@@ -1734,7 +1874,11 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
               const hasInnerScopeComputedProperty =
                 dependency && dependency.hasInnerScopeComputedProperty === true;
 
-              if (!isBaseValueDeclared && !isAssignmentOnly && !hasInnerScopeComputedProperty) {
+              if (
+                !isBaseValueDeclared &&
+                isAssignmentOnly !== true &&
+                hasInnerScopeComputedProperty !== true
+              ) {
                 missingDependencies.add(key);
               }
             }
@@ -1800,12 +1944,14 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
       const maybeNode = node.arguments[callbackIndex + 1];
 
       const declaredDependenciesNode =
+        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
         maybeNode && !(maybeNode.type === 'Identifier' && maybeNode.name === 'undefined')
           ? maybeNode
           : undefined;
 
       const isEffect = /Effect($|[^a-z])/g.test(reactiveHookName);
 
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
       if (!callback) {
         reportProblem({
           node: reactiveHook,
@@ -1815,6 +1961,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         return;
       }
 
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
       if (!maybeNode && isEffect && options.requireExplicitEffectDeps) {
         reportProblem({
           node: reactiveHook,
@@ -1843,11 +1990,14 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
       }
 
       while (
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         callback.type === 'TSAsExpression' ||
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         callback.type === 'AsExpression'
       ) {
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         callback = callback.expression;
       }
@@ -1878,9 +2028,12 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
           if (
             'elements' in declaredDependenciesNode &&
+            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
             declaredDependenciesNode.elements &&
             declaredDependenciesNode.elements.some(
-              (el) => el && el.type === 'Identifier' && el.name === callback.name
+              (el: Expression | SpreadElement | null): boolean => {
+                return el !== null && el.type === 'Identifier' && el.name === callback.name;
+              }
             )
           ) {
             return;
@@ -1888,12 +2041,13 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
           const variable = getScope(callback).set.get(callback.name);
 
-          if (variable == null || variable.defs == null) {
+          if (variable?.defs == null) {
             return;
           }
 
           const def = variable.defs[0];
 
+          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
           if (!def || !def.node) {
             break;
           }
@@ -1924,6 +2078,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
               return;
             }
+
             case 'VariableDeclarator': {
               const init = def.node.init;
 
@@ -1994,7 +2149,7 @@ function collectRecommendations({
   externalDependencies: Set<string>;
   isEffect: boolean;
 }): {
-  suggestedDependencies: string[];
+  suggestedDependencies: Array<string>;
   unnecessaryDependencies: Set<string>;
   duplicateDependencies: Set<string>;
   missingDependencies: Set<string>;
@@ -2083,7 +2238,7 @@ function collectRecommendations({
 
   const importedSignals = new Set<string>();
 
-  dependencies.forEach((_dep, key): void => {
+  dependencies.forEach((_dep: Dependency, key: string): void => {
     if (key.endsWith('.value')) {
       const baseName = key.slice(0, -6);
 
@@ -2116,12 +2271,15 @@ function collectRecommendations({
       const valueKey = `${key}.value`;
 
       // Check if there are any deeper property chains beyond just .value[]
-      const hasDeepPropertyChains = Array.from(dependencies.keys()).some((depKey) => {
-        // Look for patterns like signal.value[key].someProperty
-        return (
-          depKey.startsWith(`${key}.value[`) && depKey.includes('.', depKey.indexOf('.value[') + 7) // Has property access after computed member
-        );
-      });
+      const hasDeepPropertyChains = Array.from(dependencies.keys()).some(
+        (depKey: string): boolean => {
+          // Look for patterns like signal.value[key].someProperty
+          return (
+            depKey.startsWith(`${key}.value[`) &&
+            depKey.includes('.', depKey.indexOf('.value[') + 7) // Has property access after computed member
+          );
+        }
+      );
 
       if (!dependencies.has(valueKey) && !hasDeepPropertyChains) {
         const hasDeepChains = Array.from(importedSignals).some((sig: string): boolean => {
@@ -2157,7 +2315,7 @@ function collectRecommendations({
 
   const satisfyingDependencies = new Set<string>();
 
-  dependencies.forEach((_, key): void => {
+  dependencies.forEach((_dep: Dependency, key: string): void => {
     if (key.endsWith('.value')) {
       const signalName = key.slice(0, -6);
 
@@ -2197,7 +2355,7 @@ function collectRecommendations({
 
   const declaredSignals = new Set<string>();
 
-  declaredDependencies.forEach(({ key }) => {
+  declaredDependencies.forEach(({ key }: { key: string }): void => {
     if (key.endsWith('.value')) {
       const signalName = key.slice(0, -6);
 
@@ -2219,7 +2377,7 @@ function collectRecommendations({
     }
   });
 
-  importedSignals.forEach((signal) => {
+  importedSignals.forEach((signal: string): void => {
     if (signal.includes('.value[') && signal.includes('Signal')) {
       const isComputedPropertyDeclared = declaredDependencies.some(
         ({ key: depKey }) => depKey === signal
@@ -2232,7 +2390,7 @@ function collectRecommendations({
           dependency && dependency.hasInnerScopeComputedProperty === true;
         const isAssignmentOnly = dependency && dependency.hasReads === false;
 
-        if (!isAssignmentOnly && !hasInnerScopeComputedProperty) {
+        if (isAssignmentOnly !== true && hasInnerScopeComputedProperty !== true) {
           missingDependencies.add(signal);
         }
 
@@ -2257,7 +2415,9 @@ function collectRecommendations({
 
       return;
     } else if (signal.endsWith('.value')) {
-      const isValueDeclared = declaredDependencies.some(({ key }) => key === signal);
+      const isValueDeclared = declaredDependencies.some(({ key }: { key: string }): boolean => {
+        return key === signal;
+      });
 
       if (!isValueDeclared) {
         const dependency = dependencies.get(signal);
@@ -2267,7 +2427,7 @@ function collectRecommendations({
 
         const isAssignmentOnly = dependency && dependency.hasReads === false;
 
-        if (!isAssignmentOnly && !hasInnerScopeComputedProperty) {
+        if (isAssignmentOnly !== true && hasInnerScopeComputedProperty !== true) {
           missingDependencies.add(signal);
         }
 
@@ -2282,6 +2442,7 @@ function collectRecommendations({
     }
 
     const valueAccessKey = `${signal}.value`;
+
     const hasValueAccess = dependencies.has(valueAccessKey);
 
     if (hasValueAccess) {
@@ -2300,7 +2461,7 @@ function collectRecommendations({
 
         const isAssignmentOnly = dependency && dependency.hasReads === false;
 
-        if (!isAssignmentOnly && !hasInnerScopeComputedProperty) {
+        if (isAssignmentOnly !== true && hasInnerScopeComputedProperty !== true) {
           missingDependencies.add(valueAccessKey);
         }
 
@@ -2321,7 +2482,9 @@ function collectRecommendations({
     node.isSubtreeUsed = true;
 
     const isDeclared =
-      declaredDependencies.some(({ key }) => key === signal) || declaredSignals.has(signal);
+      declaredDependencies.some(({ key }: DeclaredDependency): boolean => {
+        return key === signal;
+      }) || declaredSignals.has(signal);
 
     if (!isDeclared) {
       const dependency = dependencies.get(signal);
@@ -2329,6 +2492,7 @@ function collectRecommendations({
       const isAssignmentOnly =
         dependency &&
         (dependency.hasReads === false ||
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-expect-error
           dependency.isComputedAssignmentOnly === true);
 
@@ -2356,7 +2520,7 @@ function collectRecommendations({
         });
       }
 
-      if (!isAssignmentOnly && !hasAssignmentOnlyComputedMembers) {
+      if (isAssignmentOnly !== true && hasAssignmentOnlyComputedMembers !== true) {
         if (!hasDeepPropertyChains) {
           missingDependencies.add(signal);
         }
@@ -2370,7 +2534,7 @@ function collectRecommendations({
 
       if (valueIndex !== -1) {
         const isComputedPropertyDeclared = declaredDependencies.some(
-          ({ key: depKey }) => depKey === index
+          ({ key }: DeclaredDependency): boolean => key === index
         );
 
         if (
@@ -2384,7 +2548,14 @@ function collectRecommendations({
     }
   });
 
-  scanTreeRecursively(depTree, missingDependencies, satisfyingDependencies, (key) => key);
+  scanTreeRecursively(
+    depTree,
+    missingDependencies,
+    satisfyingDependencies,
+    (key: string): string => {
+      return key;
+    }
+  );
 
   function scanTreeRecursively(
     node: DependencyTreeNode,
@@ -2415,6 +2586,7 @@ function collectRecommendations({
         return;
       }
 
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (child.isUsed || (isAnySignalType && (child.isSubtreeUsed || child.isUsed))) {
         if (path.endsWith('Signal') && !path.includes('.')) {
           const valueChild = child.children.get('value');
@@ -2428,12 +2600,9 @@ function collectRecommendations({
         return;
       }
 
-      scanTreeRecursively(
-        child,
-        missingPaths,
-        satisfyingPaths,
-        (childKey) => `${path}.${childKey}`
-      );
+      scanTreeRecursively(child, missingPaths, satisfyingPaths, (childKey: string): string => {
+        return `${path}.${childKey}`;
+      });
     });
   }
 
@@ -2445,11 +2614,11 @@ function collectRecommendations({
 
   const declaredDepsMap = new Map<string, boolean>();
 
-  declaredDependencies.forEach(({ key }) => {
+  declaredDependencies.forEach(({ key }: { key: string }): void => {
     declaredDepsMap.set(key, true);
   });
 
-  declaredDependencies.forEach(({ key }) => {
+  declaredDependencies.forEach(({ key }: { key: string }): void => {
     if (key.endsWith('Signal') && !key.includes('.')) {
       const valueKey = `${key}.value`;
 
@@ -2491,10 +2660,12 @@ function collectRecommendations({
               if (hasOtherDeepPropertyChains) {
                 // Only mark as redundant if the base computed expression is not directly read
                 const baseDependency = dependencies.get(baseComputedExpression);
+
                 const isDirectlyUsed = baseDependency && baseDependency.hasReads === true;
 
-                if (!isDirectlyUsed) {
+                if (isDirectlyUsed !== true) {
                   redundantDependencies.add(baseComputedExpression);
+
                   satisfyingDependencies.delete(baseComputedExpression);
                 }
               }
@@ -2523,9 +2694,10 @@ function collectRecommendations({
         if (hasPropertyAlsoDeclared) {
           // Check if the base dependency is directly used (not just through deeper properties)
           const baseDependency = dependencies.get(key);
+
           const isDirectlyUsed = baseDependency && baseDependency.hasReads === true;
 
-          if (!isDirectlyUsed) {
+          if (isDirectlyUsed !== true) {
             redundantDependencies.add(key);
             satisfyingDependencies.delete(key);
           }
@@ -2534,7 +2706,7 @@ function collectRecommendations({
     }
   });
 
-  declaredDependencies.forEach(({ key }): void => {
+  declaredDependencies.forEach(({ key }: { key: string }): void => {
     if (satisfyingDependencies.has(key)) {
       if (suggestedDependencies.includes(key)) {
         duplicateDependencies.add(key);
@@ -2551,7 +2723,7 @@ function collectRecommendations({
 
     const isAssignmentOnly = isSignalDep && dependency && dependency.hasReads === false;
 
-    if (isAssignmentOnly) {
+    if (isAssignmentOnly === true) {
       unnecessaryDependencies.add(key);
     } else if (incompleteDependencies.has(key) || redundantDependencies.has(key)) {
       unnecessaryDependencies.add(key);
@@ -2652,11 +2824,13 @@ function getConstructionExpressionType(node: Node): string | null {
       return null;
     }
 
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error
     case 'JSXFragment': {
       return 'JSX fragment';
     }
 
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error
     case 'JSXElement': {
       return 'JSX element';
@@ -2682,12 +2856,16 @@ function getConstructionExpressionType(node: Node): string | null {
       return null;
     }
 
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error
     case 'TypeCastExpression':
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error
     case 'AsExpression':
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error
     case 'TSAsExpression': {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-expect-error
       return getConstructionExpressionType(node.expression);
     }
@@ -2696,6 +2874,7 @@ function getConstructionExpressionType(node: Node): string | null {
   return null;
 }
 
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function scanForConstructions({
   declaredDependencies,
   declaredDependenciesNode,
@@ -2717,18 +2896,21 @@ function scanForConstructions({
 
       const node = ref.defs[0];
 
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (node == null) {
         return null;
       }
 
       if (
         node.type === 'Variable' &&
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         node.node.type === 'VariableDeclarator' &&
         node.node.id.type === 'Identifier' && // Ensure this is not destructed assignment
         node.node.init != null
       ) {
         const constantExpressionType = getConstructionExpressionType(node.node.init);
 
+        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
         if (constantExpressionType) {
           return [ref, constantExpressionType];
         }
@@ -2786,9 +2968,11 @@ function scanForConstructions({
 function getDependency(node: Node): Node {
   if (
     node.type === 'MemberExpression' ||
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error
     node.type === 'OptionalMemberExpression'
   ) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (node.type === 'MemberExpression' && !node.computed) {
       if (
         node.property.type === 'Identifier' &&
@@ -2810,8 +2994,10 @@ function getDependency(node: Node): Node {
     return node;
   }
 
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-expect-error
   if (node.type === 'JSXExpressionContainer') {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error
     return getDependency(node.expression);
   }
@@ -2824,8 +3010,10 @@ function getDependency(node: Node): Node {
     return getDependency(node.expression);
   }
 
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-expect-error
   if (node.type === 'TSNonNullExpression') {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error
     return getDependency(node.expression);
   }
@@ -2846,6 +3034,7 @@ function markNode(node: Node, optionalChains: Map<string, boolean> | null, resul
 }
 
 function analyzePropertyChain(node: Node, optionalChains: Map<string, boolean> | null): string {
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-expect-error
   if (node.type === 'Identifier' || node.type === 'JSXIdentifier') {
     const result = node.name;
@@ -2889,13 +3078,16 @@ function analyzePropertyChain(node: Node, optionalChains: Map<string, boolean> |
 
         computedResult = `${object}[${property}]`;
         // oxlint-disable-next-line no-unused-vars
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
       } catch (_error) {
         // biome-ignore format: because
         // @ts-expect-error - TypeScript AST node types not in estree
         if (node.property.type === "TSAsExpression" || node.property.type === "AsExpression") {
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-expect-error
           const expr = node.property.expression;
 
+          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
           if (expr && expr.type === "Identifier") {
             computedResult = `${object}[${expr.name}]`;
           } else {
@@ -2910,20 +3102,27 @@ function analyzePropertyChain(node: Node, optionalChains: Map<string, boolean> |
     let currentNode = node;
     let finalResult = computedResult;
 
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (node.type === 'MemberExpression' && node.computed) {
       currentNode = node;
     } else {
       // biome-ignore format: because
       while (
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         currentNode.parent?.type === "MemberExpression" &&
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
+        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
         !currentNode.parent.computed &&
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         currentNode.parent.object === currentNode &&
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         currentNode.parent.property?.type === "Identifier"
       ) {
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         const propertyName = currentNode.parent.property.name;
 
@@ -2931,6 +3130,7 @@ function analyzePropertyChain(node: Node, optionalChains: Map<string, boolean> |
           finalResult += `.${propertyName}`;
         }
 
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         currentNode = currentNode.parent;
       }
@@ -2941,11 +3141,15 @@ function analyzePropertyChain(node: Node, optionalChains: Map<string, boolean> |
     return finalResult;
   }
 
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-expect-error
+  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
   if (node.type === 'OptionalMemberExpression' && !node.computed) {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error
     const object = analyzePropertyChain(node.object, optionalChains);
 
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error
     const property = analyzePropertyChain(node.property, null);
 
@@ -2956,6 +3160,7 @@ function analyzePropertyChain(node: Node, optionalChains: Map<string, boolean> |
     return result;
   }
 
+  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
   if (node.type === 'ChainExpression' && (!('computed' in node) || !node.computed)) {
     const expression = node.expression;
 
@@ -3060,6 +3265,7 @@ function fastFindReferenceWithParent(start: Node, target: Node): Node | null {
       }
 
       if (isNodeLike(value)) {
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         value.parent = item;
 
@@ -3067,6 +3273,7 @@ function fastFindReferenceWithParent(start: Node, target: Node): Node | null {
       } else if (Array.isArray(value)) {
         for (const val of value) {
           if (isNodeLike(val)) {
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             val.parent = item;
 
@@ -3110,6 +3317,7 @@ function isNodeLike(val: unknown): val is Node {
 
 function isSameIdentifier(a: Node, b: Node): boolean {
   return (
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error
     (a.type === 'Identifier' || a.type === 'JSXIdentifier') &&
     a.type === b.type &&
@@ -3159,7 +3367,8 @@ function isSignalDependency(dependency: string): boolean {
   );
 }
 
-function isSignalValueAccess(node: Node): boolean {
+function isSignalValueAccess(node: Node, context: Rule.RuleContext): boolean {
+  // Check if this is a direct signal.value access
   if (
     node.type === 'MemberExpression' &&
     !node.computed &&
@@ -3168,6 +3377,29 @@ function isSignalValueAccess(node: Node): boolean {
     node.object.type === 'Identifier' &&
     node.object.name.endsWith('Signal')
   ) {
+    // Get the parent nodes using the context's getAncestors method
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    const ancestors = context.getAncestors();
+
+    const parent = ancestors[ancestors.length - 1];
+
+    // Check if this is part of an assignment operation (like countSignal.value++)
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+    if (parent) {
+      if (
+        parent.type === 'UpdateExpression' ||
+        (parent.type === 'AssignmentExpression' &&
+          (parent.operator === '=' ||
+            parent.operator === '+=' ||
+            parent.operator === '-=' ||
+            parent.operator === '*=' ||
+            parent.operator === '/=' ||
+            parent.operator === '%='))
+      ) {
+        return false;
+      }
+    }
     return true;
   }
 
