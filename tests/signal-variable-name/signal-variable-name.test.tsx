@@ -1,3 +1,4 @@
+// oxlint-disable no-unused-vars
 /** biome-ignore-all lint/correctness/noUnusedVariables: not the target of the test */
 import { computed, signal } from '@preact/signals-react';
 import { useSignals } from '@preact/signals-react/runtime';
@@ -85,7 +86,8 @@ export function TestDestructuring(): JSX.Element {
   useSignals();
 
   const obj = { signal: () => 0, computed: () => 1 };
-  const { signal: mySignal, computed: myComputed } = obj;
+
+  const { signal: _mySignal, computed: _myComputed } = obj;
 
   const validSignal = signal(0);
 

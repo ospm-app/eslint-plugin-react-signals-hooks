@@ -1,23 +1,100 @@
-import type { Rule, SourceCode } from 'eslint';
-import type { ArrowFunctionExpression, CallExpression, Expression, BlockStatement } from 'estree';
+import { ESLintUtils, type TSESTree } from '@typescript-eslint/utils';
+import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
-function getNodeText(node: CallExpression | Expression | BlockStatement, sourceCode: SourceCode) {
-  try {
-    return sourceCode.getText(node);
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  } catch (_error) {
-    return `[${node.type}]`;
+type MessageIds = 'unnecessaryUntracked';
+
+type Options = [
+  // biome-ignore lint/complexity/noBannedTypes: todo
+  {
+    // Future configuration options can be added here
+  },
+];
+
+const createRule = ESLintUtils.RuleCreator((name: string): string => {
+  return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}`;
+});
+
+function containsSignalAccess(node: TSESTree.Node): boolean {
+  if (
+    [
+      'FunctionDeclaration',
+      'FunctionExpression',
+      'ArrowFunctionExpression',
+      'ClassMethod',
+      'ClassPrivateMethod',
+      'ObjectMethod',
+    ].includes(node.type)
+  ) {
+    return false;
   }
+
+  if (
+    node.type === 'MemberExpression' &&
+    node.property.type === 'Identifier' &&
+    node.property.name === 'value' &&
+    node.object.type === 'Identifier' &&
+    (node.object.name.endsWith('Signal') || node.object.name.endsWith('signal'))
+  ) {
+    return true;
+  }
+
+  if ('children' in node && Array.isArray(node.children)) {
+    return node.children.some(
+      (child) =>
+        child && typeof child === 'object' && 'type' in child && containsSignalAccess(child)
+    );
+  }
+
+  if ('properties' in node && Array.isArray(node.properties)) {
+    return node.properties.some(
+      (
+        prop:
+          | TSESTree.PropertyComputedName
+          | TSESTree.PropertyNonComputedName
+          | TSESTree.RestElement
+          | TSESTree.SpreadElement
+      ) => {
+        return containsSignalAccess(prop);
+      }
+    );
+  }
+
+  if ('elements' in node && Array.isArray(node.elements)) {
+    return node.elements.some(
+      (element) =>
+        element && typeof element === 'object' && 'type' in element && containsSignalAccess(element)
+    );
+  }
+
+  for (const key of Object.keys(node)) {
+    if (['parent', 'loc', 'range', 'type'].includes(key)) {
+      continue;
+    }
+
+    const value = node[key as keyof typeof node];
+
+    if (Array.isArray(value)) {
+      if (
+        value.some(
+          (item) => item && typeof item === 'object' && 'type' in item && containsSignalAccess(item)
+        )
+      ) {
+        return true;
+      }
+    } else if (
+      value !== null &&
+      typeof value === 'object' &&
+      'type' in value &&
+      containsSignalAccess(value)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
-function debug(...args: unknown[]): void {
-  console.info('[warn-on-unnecessary-untracked]', ...args);
-}
-
-function isUnnecessaryUntrackedCall(node: CallExpression): boolean {
-  if (node.type !== 'CallExpression') return false;
-
-  // Check if it's a call to untracked()
+function isUnnecessaryUntrackedCall(node: TSESTree.CallExpression): boolean {
   if (
     node.callee.type === 'Identifier' &&
     node.callee.name === 'untracked' &&
@@ -38,13 +115,15 @@ function isUnnecessaryUntrackedCall(node: CallExpression): boolean {
     ) {
       return true;
     }
+
+    return containsSignalAccess(body);
   }
 
   return false;
 }
 
-function isInComponentOrHook(node: CallExpression): boolean {
-  let currentNode: CallExpression | null = node;
+function isInComponentOrHook(node: TSESTree.Node): boolean {
+  let currentNode: TSESTree.Node | null = node;
 
   while (currentNode) {
     if (
@@ -54,75 +133,73 @@ function isInComponentOrHook(node: CallExpression): boolean {
     ) {
       let functionName = 'anonymous';
 
-      // @ts-expect-error
       if (currentNode.type === 'FunctionDeclaration' && currentNode.id) {
-        // @ts-expect-error
         functionName = currentNode.id.name;
       } else if (
-        // @ts-expect-error
-        currentNode.parent &&
-        // @ts-expect-error
-        currentNode.parent.type === 'VariableDeclarator' &&
-        // @ts-expect-error
+        currentNode.parent?.type === 'VariableDeclarator' &&
         currentNode.parent.id.type === 'Identifier'
       ) {
-        // @ts-expect-error
         functionName = currentNode.parent.id.name;
       }
 
-      if (/^[A-Z]/.test(functionName) || /^use[A-Z]/.test(functionName)) {
-        debug('Found component/hook:', functionName);
-        return true;
-      }
+      return /^[A-Z]/.test(functionName) || functionName.startsWith('use');
     }
 
-    // Move up the AST
-    // @ts-expect-error
-    currentNode = 'parent' in currentNode ? currentNode.parent : null;
+    currentNode = currentNode.parent || null;
   }
 
   return false;
 }
 
-export const warnOnUnnecessaryUntrackedRule: Rule.RuleModule = {
+export const warnOnUnnecessaryUntrackedRule = createRule<Options, MessageIds>({
+  name: 'warn-on-unnecessary-untracked',
   meta: {
     type: 'suggestion',
     docs: {
-      description: 'Warn when untracked() is used unnecessarily',
-      recommended: true,
+      description: 'Warn about unnecessary untracked() calls',
+      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/warn-on-unnecessary-untracked',
     },
     messages: {
-      unnecessaryUntracked: 'Unnecessary use of untracked() - signal.value is already untracked',
+      unnecessaryUntracked: 'Unnecessary untracked() call',
     },
-    schema: [],
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          // Future configuration options can be added here
+        },
+        additionalProperties: false,
+      },
+    ],
+    hasSuggestions: true,
   },
-  create(context: Rule.RuleContext): { CallExpression(node: CallExpression): void } {
-    debug('Initializing rule');
-
-    // Get the source code for better error messages
-    const sourceCode = context.sourceCode ?? context.getSourceCode();
-
+  defaultOptions: [{}],
+  create(context: Readonly<RuleContext<MessageIds, Options>>) {
     return {
-      CallExpression(node: CallExpression): void {
-        if (isUnnecessaryUntrackedCall(node) && isInComponentOrHook(node)) {
-          debug('Found unnecessary untracked() call', {
-            code: getNodeText(node, sourceCode),
-            loc: node.loc,
-          });
-
+      CallExpression(node: TSESTree.CallExpression): void {
+        if (
+          node.callee.type === 'Identifier' &&
+          node.callee.name === 'untracked' &&
+          isUnnecessaryUntrackedCall(node) &&
+          isInComponentOrHook(node)
+        ) {
           context.report({
             node,
             messageId: 'unnecessaryUntracked',
-            fix(fixer) {
-              const innerNode = (node.arguments[0] as ArrowFunctionExpression).body;
-              const innerText = getNodeText(innerNode, sourceCode);
-              return fixer.replaceText(node, innerText);
-            },
+            suggest: [
+              {
+                messageId: 'unnecessaryUntracked',
+                fix(fixer) {
+                  return fixer.replaceText(
+                    node,
+                    context.sourceCode.getText(node).replace(/^untracked\(([\s\S]*)\)$/, '$1')
+                  );
+                },
+              },
+            ],
           });
         }
       },
     };
   },
-} satisfies Rule.RuleModule;
-
-export default warnOnUnnecessaryUntrackedRule;
+});

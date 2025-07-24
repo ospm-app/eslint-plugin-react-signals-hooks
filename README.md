@@ -19,6 +19,8 @@ This plugin provides 9 specialized ESLint rules for React signals:
 | `prefer-signal-effect` | Prefers `effect()` over `useEffect` for signal-only deps | ✅ | Warning |
 | `prefer-computed` | Prefers `computed()` over `useMemo` for signal-derived values | ✅ | Warning |
 | `signal-variable-name` | Enforces naming conventions for signal variables | ✅ | Error |
+| `no-non-signal-with-signal-suffix` | Ensures variables with 'Signal' suffix are actual signal instances | ✅ | Warning |
+| `prefer-use-signal-over-use-state` | Suggests `useSignal` over `useState` for primitive values | ✅ | Warning |
 
 ## Key Features
 

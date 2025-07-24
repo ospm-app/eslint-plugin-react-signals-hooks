@@ -1,112 +1,112 @@
-import type { Rule } from 'eslint';
-import type { SimpleCallExpression, VariableDeclarator } from 'estree';
+import { ESLintUtils, type TSESTree } from '@typescript-eslint/utils';
+import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
-/**
- * ESLint rule: signal-variable-name
- *
- * Enforces naming conventions for signal and computed variables.
- * Variables should end with 'Signal', start with lowercase, and not start with 'use'.
- */
-export const signalVariableNameRule = {
+type MessageIds = 'invalidSignalName' | 'invalidComputedName';
+
+type Options = [
+  // biome-ignore lint/complexity/noBannedTypes: todo
+  {
+    // Future configuration options can be added here
+  },
+];
+
+const createRule = ESLintUtils.RuleCreator((name: string): string => {
+  return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}`;
+});
+
+function isValidSignalName(name: string): boolean {
+  if (!name.endsWith('Signal')) {
+    return false;
+  }
+
+  if (!/^[a-z]/.test(name)) {
+    return false;
+  }
+
+  // Only forbid 'use' prefix when followed by a capital letter
+  // (e.g., 'useSignal' is invalid, but 'userSignal' is valid)
+  if (name.startsWith('use') && name.length > 2 && /^[A-Z]/.test(name[2])) {
+    return false;
+  }
+
+  return true;
+}
+
+function getFixedName(originalName: string): string {
+  let fixedName = originalName;
+
+  if (fixedName.startsWith('use')) {
+    fixedName = fixedName.slice(3);
+  }
+
+  if (fixedName.length > 0) {
+    fixedName = fixedName.charAt(0).toLowerCase() + fixedName.slice(1);
+  }
+
+  if (!fixedName.endsWith('Signal')) {
+    fixedName += 'Signal';
+  }
+
+  return fixedName;
+}
+
+export const signalVariableNameRule = createRule<Options, MessageIds>({
+  name: 'signal-variable-name',
   meta: {
     type: 'suggestion',
     docs: {
-      description: 'enforce naming conventions for signal and computed variables',
-      recommended: true,
+      description: 'Enforce naming conventions for signal and computed variables',
+      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/signal-variable-name',
     },
-    fixable: 'code',
-    schema: [],
     messages: {
       invalidSignalName:
         "Signal variable '{{name}}' should end with 'Signal', start with lowercase, and not start with 'use'",
       invalidComputedName:
         "Computed variable '{{name}}' should end with 'Signal', start with lowercase, and not start with 'use'",
     },
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          // Future configuration options can be added here
+        },
+        additionalProperties: false,
+      },
+    ],
+    fixable: 'code',
   },
-  create(context: Rule.RuleContext): {
-    VariableDeclarator(node: VariableDeclarator & Rule.NodeParentExtension): void;
+  defaultOptions: [{}],
+  create(context: Readonly<RuleContext<MessageIds, Options>>): {
+    VariableDeclarator(node: TSESTree.VariableDeclarator): void;
   } {
-    function isSignalCall(node: SimpleCallExpression): boolean {
-      return (
-        node.callee.type === 'Identifier' &&
-        (node.callee.name === 'signal' || node.callee.name === 'computed')
-      );
-    }
-
-    function isValidSignalName(name: string): boolean {
-      if (!name.endsWith('Signal')) {
-        return false;
-      }
-
-      if (!/^[a-z]/.test(name)) {
-        return false;
-      }
-
-      // Only forbid 'use' prefix when followed by a capital letter (e.g., 'useSignal' is invalid, but 'userSignal' is valid)
-      if (name.startsWith('use') && name.length > 2 && /^[A-Z]/.test(name[2])) {
-        return false;
-      }
-
-      return true;
-    }
-
-    function getFixedName(originalName: string): string {
-      let fixedName = originalName;
-
-      if (fixedName.startsWith('use')) {
-        fixedName = fixedName.slice(3);
-      }
-
-      if (fixedName.length > 0) {
-        fixedName = fixedName.charAt(0).toLowerCase() + fixedName.slice(1);
-      }
-
-      if (!fixedName.endsWith('Signal')) {
-        fixedName += 'Signal';
-      }
-
-      return fixedName;
-    }
-
-    function checkVariableDeclarator(node: VariableDeclarator & Rule.NodeParentExtension): void {
-      if (
-        node.id.type === 'Identifier' &&
-        node.init &&
-        node.init.type === 'CallExpression' &&
-        isSignalCall(node.init)
-      ) {
-        const variableName = node.id.name;
-
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
-        const callName = node.init.callee.name;
-
-        if (!isValidSignalName(variableName)) {
-          const fixedName = getFixedName(variableName);
-
-          context.report({
-            node: node.id,
-            message:
-              callName === 'signal'
-                ? "Signal variable '{{name}}' should end with 'Signal', start with lowercase, and not start with 'use'"
-                : "Computed variable '{{name}}' should end with 'Signal', start with lowercase, and not start with 'use'",
-            data: {
-              name: variableName,
-            },
-            fix(fixer) {
-              return fixer.replaceText(node.id, fixedName);
-            },
-          });
-        }
-      }
-    }
-
     return {
-      VariableDeclarator(node: VariableDeclarator & Rule.NodeParentExtension): void {
-        checkVariableDeclarator(node);
+      VariableDeclarator(node: TSESTree.VariableDeclarator): void {
+        if (
+          node.id.type === 'Identifier' &&
+          node.init &&
+          node.init.type === 'CallExpression' &&
+          node.init.callee.type === 'Identifier' &&
+          (node.init.callee.name === 'signal' || node.init.callee.name === 'computed')
+        ) {
+          const variableName = node.id.name;
+
+          if (!isValidSignalName(variableName)) {
+            context.report({
+              node: node.id,
+              messageId:
+                'name' in node.init.callee && node.init.callee.name === 'signal'
+                  ? 'invalidSignalName'
+                  : 'invalidComputedName',
+              data: {
+                name: variableName,
+              },
+              fix(fixer) {
+                return fixer.replaceText(node.id, getFixedName(variableName));
+              },
+            });
+          }
+        }
       },
     };
   },
-} satisfies Rule.RuleModule;
-
-export default signalVariableNameRule;
+});

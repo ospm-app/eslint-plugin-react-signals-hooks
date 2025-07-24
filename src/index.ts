@@ -1,13 +1,14 @@
 import '@total-typescript/ts-reset';
 
-import type { ESLint, Linter, Rule } from 'eslint';
+import type { Linter } from 'eslint';
 
 import { exhaustiveDepsRule } from './exhaustive-deps.js';
 import { requireUseSignalsRule } from './require-use-signals.js';
 import { noMutationInRenderRule } from './no-mutation-in-render.js';
 import { noSignalCreationInComponentRule } from './no-signal-creation-in-component.js';
-// import { noSignalAssignmentInEffectRule } from './no-signal-assignment-in-effect.js';
-// import { noNonSignalWithSignalSuffixRule } from './no-non-signal-with-signal-suffix.js';
+import { preferUseSignalOverUseStateRule } from './prefer-use-signal-over-use-state.js';
+import { noSignalAssignmentInEffectRule } from './no-signal-assignment-in-effect.js';
+import { noNonSignalWithSignalSuffixRule } from './no-non-signal-with-signal-suffix.js';
 
 import { preferComputedRule } from './prefer-computed.js';
 import { preferForOverMapRule } from './prefer-for-over-map.js';
@@ -17,42 +18,44 @@ import { signalVariableNameRule } from './signal-variable-name.js';
 import { preferShowOverTernaryRule } from './prefer-show-over-ternary.js';
 import { warnOnUnnecessaryUntrackedRule } from './warn-on-unnecessary-untracked.js';
 
-// import { preferSignalReadsRule } from './prefer-signal-reads.js';
-// import { preferSignalMethodsRule } from './prefer-signal-methods.js';
+import { preferSignalReadsRule } from './prefer-signal-reads.js';
+import { preferSignalMethodsRule } from './prefer-signal-methods.js';
 
-// import { preferBatchUpdatesRule } from './prefer-batch-updates.js';
-// import { preferBatchForMultiMutationsRule } from './prefer-batch-for-multi-mutations.js';
+import { preferBatchUpdatesRule } from './prefer-batch-updates.js';
+import { preferBatchForMultiMutationsRule } from './prefer-batch-for-multi-mutations.js';
 
 const rules = {
   'exhaustive-deps': exhaustiveDepsRule,
   'require-use-signals': requireUseSignalsRule,
   'no-mutation-in-render': noMutationInRenderRule,
-  // 'no-signal-assignment-in-effect': noSignalAssignmentInEffectRule,
-  // 'no-non-signal-with-signal-suffix': noNonSignalWithSignalSuffixRule,
+  'no-signal-assignment-in-effect': noSignalAssignmentInEffectRule,
+  'no-non-signal-with-signal-suffix': noNonSignalWithSignalSuffixRule,
 
   'prefer-signal-in-jsx': preferSignalInJsxRule,
   'prefer-show-over-ternary': preferShowOverTernaryRule,
   'prefer-for-over-map': preferForOverMapRule,
   'prefer-signal-effect': preferSignalEffectRule,
   'prefer-computed': preferComputedRule,
-  // 'prefer-batch-updates': preferBatchUpdatesRule,
-  // 'prefer-batch-for-multi-mutations': preferBatchForMultiMutationsRule,
+  'prefer-batch-updates': preferBatchUpdatesRule,
+  'prefer-batch-for-multi-mutations': preferBatchForMultiMutationsRule,
 
   'signal-variable-name': signalVariableNameRule,
   'no-signal-creation-in-component': noSignalCreationInComponentRule,
   'warn-on-unnecessary-untracked': warnOnUnnecessaryUntrackedRule,
-} as const satisfies Record<string, Rule.RuleModule>;
+  'prefer-signal-reads': preferSignalReadsRule,
+  'prefer-signal-methods': preferSignalMethodsRule,
+  'prefer-use-signal-over-use-state': preferUseSignalOverUseStateRule,
+} as const;
 
 const configRules = {
-  'react-hooks/rules-of-hooks': 'error',
-  'react-hooks/exhaustive-deps': 'warn',
+  'react-signals-hooks/rules-of-hooks': 'error',
+  'react-signals-hooks/exhaustive-deps': 'off',
 } satisfies Linter.RulesRecord;
 
 const recommendedConfig = {
-  name: 'react-hooks/recommended',
+  name: 'react-signals-hooks/recommended',
   plugins: {
-    get 'react-hooks'(): ESLint.Plugin {
-      // eslint-disable-next-line @typescript-eslint/no-use-before-define
+    get 'react-signals-hooks'() {
       return plugin;
     },
   },
@@ -71,7 +74,7 @@ const plugin = {
     recommended: recommendedConfig,
     'recommended-latest': recommendedConfig,
   },
-} satisfies ESLint.Plugin;
+};
 
 const configs = plugin.configs;
 const meta = plugin.meta;

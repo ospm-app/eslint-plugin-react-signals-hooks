@@ -14,6 +14,9 @@ importers:
       '@preact/signals-react':
         specifier: ^3.2.1
         version: 3.2.1(react@19.1.0)
+      '@typescript-eslint/types':
+        specifier: ^8.38.0
+        version: 8.38.0
       react:
         specifier: ^18.2.0 || ^19.0.0
         version: 19.1.0
@@ -48,6 +51,9 @@ importers:
       '@typescript-eslint/parser':
         specifier: ^8.38.0
         version: 8.38.0(eslint@9.31.0(jiti@2.4.2))(typescript@5.8.3)
+      '@typescript-eslint/scope-manager':
+        specifier: ^8.38.0
+        version: 8.38.0
       '@typescript-eslint/utils':
         specifier: ^8.38.0
         version: 8.38.0(eslint@9.31.0(jiti@2.4.2))(typescript@5.8.3)

@@ -1,5 +1,96 @@
-import type { Rule } from 'eslint';
-import type { Node, MemberExpression } from 'estree';
+import { ESLintUtils, type TSESTree } from '@typescript-eslint/utils';
+
+type MessageIds = 'preferDirectSignalUsage';
+
+type Options = [
+  // biome-ignore lint/complexity/noBannedTypes: todo
+  {
+    // Future configuration options can be added here
+  },
+];
+
+function isInJSXAttribute(node: TSESTree.Node): boolean {
+  let current: TSESTree.Node | undefined = node.parent;
+
+  while (current) {
+    if (current.type === 'JSXAttribute') {
+      return true;
+    }
+
+    if (current.type === 'JSXElement' || current.type === 'JSXFragment') {
+      return false;
+    }
+
+    current = current.parent;
+  }
+
+  return false;
+}
+
+function isInFunctionProp(node: TSESTree.Node): boolean {
+  let current: TSESTree.Node | undefined = node.parent;
+
+  while (current) {
+    if (current.type === 'ArrowFunctionExpression' || current.type === 'FunctionExpression') {
+      // Check if the function is a direct child of a JSX attribute
+      if (
+        current.parent?.type === 'JSXExpressionContainer' &&
+        current.parent.parent?.type === 'JSXAttribute'
+      ) {
+        return true;
+      }
+
+      // Check if the function is a prop value
+      if (
+        current.parent?.type === 'Property' &&
+        current.parent.parent?.type === 'ObjectExpression' &&
+        current.parent.parent.parent?.type === 'JSXExpressionContainer' &&
+        current.parent.parent.parent.parent?.type === 'JSXAttribute'
+      ) {
+        return true;
+      }
+
+      return false;
+    }
+
+    if (current.type === 'JSXElement' || current.type === 'JSXFragment') {
+      return false;
+    }
+
+    current = current.parent;
+  }
+
+  return false;
+}
+
+function isSignalValueAccess(node: TSESTree.MemberExpression): node is TSESTree.MemberExpression & {
+  property: TSESTree.Identifier;
+  object: TSESTree.Identifier;
+} {
+  return (
+    node.property.type === 'Identifier' &&
+    node.property.name === 'value' &&
+    node.object.type === 'Identifier' &&
+    node.object.name.endsWith('Signal')
+  );
+}
+
+function shouldSkipNode(node: TSESTree.Node): boolean {
+  const skipExpressionTypes = [
+    'MemberExpression',
+    'ChainExpression',
+    'OptionalMemberExpression',
+    'BinaryExpression',
+    'UnaryExpression',
+    'LogicalExpression',
+  ] as const;
+
+  return skipExpressionTypes.some((type) => node.parent?.type === type);
+}
+
+const createRule = ESLintUtils.RuleCreator((name: string): string => {
+  return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}`;
+});
 
 /**
  * ESLint rule: prefer-signal-in-jsx
@@ -7,161 +98,76 @@ import type { Node, MemberExpression } from 'estree';
  * This rule enforces direct usage of signals in JSX without .value access.
  * In JSX, signals can be used directly for better readability.
  */
-export const preferSignalInJsxRule: Rule.RuleModule = {
+export const preferSignalInJsxRule = createRule<Options, MessageIds>({
+  name: 'prefer-signal-in-jsx',
   meta: {
-    type: 'suggestion', // `problem` or `suggestion` or `layout`
+    type: 'suggestion',
     docs: {
-      description: 'prefer direct signal usage in JSX over .value access',
-      recommended: true,
+      description: 'Prefer direct signal usage in JSX over .value access',
+      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/prefer-signal-in-jsx',
     },
     fixable: 'code',
-    schema: [], // No options
+    messages: {
+      preferDirectSignalUsage: 'Use the signal directly in JSX instead of accessing .value',
+    },
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          // Future configuration properties can be added here
+        },
+        additionalProperties: false,
+      },
+    ],
   },
-  create(context: Rule.RuleContext): Rule.RuleListener {
+  defaultOptions: [{}],
+  create(context) {
     let jsxDepth = 0;
 
-    function isInJSX(): boolean {
-      return jsxDepth > 0;
-    }
-
-    function isInJSXAttribute(node: Node & Rule.NodeParentExtension): boolean {
-      let current = node.parent;
-
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-      while (current) {
-        // @ts-expect-error - JSX types are not fully typed in @types/estree
-        if (current.type === 'JSXAttribute') {
-          return true;
-        }
-
-        // @ts-expect-error - JSX types are not fully typed in @types/estree
-        if (current.type === 'JSXElement' || current.type === 'JSXFragment') {
-          return false;
-        }
-
-        current = current.parent;
-      }
-
-      return false;
-    }
-
-    function isInFunctionProp(node: Node & Rule.NodeParentExtension): boolean {
-      let current = node.parent;
-
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-      while (current) {
-        if (['ArrowFunctionExpression', 'FunctionExpression'].includes(current.type)) {
-          // Check if the function is a direct child of a JSX attribute
-          if (
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-            current.parent?.type === 'JSXExpressionContainer' &&
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            current.parent.parent?.type === 'JSXAttribute'
-          ) {
-            return true;
-          }
-
-          // Check if the function is a prop value
-          if (
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-            current.parent?.type === 'Property' &&
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-            current.parent.parent?.type === 'ObjectExpression' &&
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-            current.parent.parent.parent?.type === 'JSXExpressionContainer' &&
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            current.parent.parent.parent.parent?.type === 'JSXAttribute'
-          ) {
-            return true;
-          }
-
-          return false;
-        }
-
-        if (['JSXElement', 'JSXFragment'].includes(current.type)) {
-          return false;
-        }
-
-        current = current.parent;
-      }
-
-      return false;
-    }
-
     return {
-      JSXElement(_node: Node): void {
+      // Track JSX depth to determine if we're inside JSX
+      JSXElement(): void {
         jsxDepth++;
       },
-      'JSXElement:exit'(_node: Node): void {
+      'JSXElement:exit'(): void {
         jsxDepth--;
       },
-      JSXFragment(_node: Node): void {
+      JSXFragment(): void {
         jsxDepth++;
       },
-      'JSXFragment:exit'(_node: Node): void {
+      'JSXFragment:exit'(): void {
         jsxDepth--;
       },
-      isInJSXAttribute,
-      isInFunctionProp,
-      MemberExpression(node: Node & Rule.NodeParentExtension): void {
-        const memberNode = node as MemberExpression & Rule.NodeParentExtension;
 
-        const inJSX = isInJSX();
-
-        if (!inJSX) {
+      MemberExpression(node: TSESTree.MemberExpression): void {
+        if (jsxDepth === 0) {
           return;
         }
 
-        if (
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          !(memberNode.property?.type === 'Identifier' && memberNode.property.name === 'value') ||
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          !(memberNode.object?.type === 'Identifier' && memberNode.object.name.endsWith('Signal'))
-        ) {
+        if (!isSignalValueAccess(node)) {
           return;
         }
 
-        if (
-          ['MemberExpression', 'ChainExpression', 'OptionalMemberExpression'].includes(
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-            memberNode.parent?.type
-          )
-        ) {
+        if (!isSignalValueAccess(node)) {
           return;
         }
 
-        // Skip if inside a binary, unary, or logical expression (like signal.value + 1)
-        const skipExpressionTypes = ['BinaryExpression', 'UnaryExpression', 'LogicalExpression'];
-
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (skipExpressionTypes.includes(memberNode.parent?.type)) {
+        if (shouldSkipNode(node)) {
           return;
         }
 
-        if (isInJSXAttribute(memberNode)) {
-          return;
-        }
-
-        if (isInFunctionProp(memberNode)) {
+        if (isInJSXAttribute(node) || isInFunctionProp(node)) {
           return;
         }
 
         context.report({
-          node: memberNode,
-          message: 'Use the signal directly in JSX instead of accessing .value',
+          node,
+          messageId: 'preferDirectSignalUsage',
           fix(fixer) {
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            return fixer.replaceText(memberNode, memberNode.object.name);
+            return fixer.replaceText(node, node.object.name);
           },
         });
       },
     };
   },
-} satisfies Rule.RuleModule;
+});

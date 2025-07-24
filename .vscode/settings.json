@@ -13,7 +13,8 @@
     "source.fixAll.ts": "never",
     "source.fixAll.tsx": "never",
     "source.fixAll.js": "never",
-    "source.fixAll.jsx": "never"
+    "source.fixAll.jsx": "never",
+    "source.fixAll.markdownlint": "always"
   },
   "editor.defaultFormatter": "biomejs.biome",
   "oxc.enable": true,
@@ -34,5 +35,9 @@
   "[tsx]": {
     "editor.defaultFormatter": "biomejs.biome"
   },
-  "cSpell.words": ["ospm", "oxlint", "Pressable"]
+  "[markdown]": {
+    "editor.formatOnSave": true,
+    "editor.formatOnPaste": true
+  },
+  "cSpell.words": ["ospm", "oxlint", "Pressable", "TSES"]
 }

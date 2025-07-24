@@ -1,5 +1,14 @@
-import type { Rule } from 'eslint';
-import type { ConditionalExpression, Node, BaseNode } from 'estree';
+import { ESLintUtils, type TSESTree } from '@typescript-eslint/utils';
+import type { SuggestionReportDescriptor } from '@typescript-eslint/utils/ts-eslint';
+
+type MessageIds = 'preferShowOverTernary' | 'suggestShowComponent' | 'addShowImport';
+
+type Options = [
+  {
+    /** Minimum complexity score to trigger the rule */
+    minComplexity?: number | undefined;
+  },
+];
 
 const childProperties = [
   'body',
@@ -15,18 +24,23 @@ const childProperties = [
   'properties',
 ] as const;
 
-type NodeWithProperties = {
-  [key: string]: unknown;
-  type: string;
-};
-
-function isJSXNode(node: Node): boolean {
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-expect-error
-  return 'type' in node && (node.type === 'JSXElement' || node.type === 'JSXFragment');
+// Helper function to check if a node is a JSX element or fragment
+function isJSXNode(node: TSESTree.Node): boolean {
+  return (
+    node.type === 'JSXElement' ||
+    node.type === 'JSXFragment' ||
+    (node.type === 'ExpressionStatement' &&
+      'expression' in node &&
+      node.expression &&
+      'type' in node.expression &&
+      (node.expression.type === 'JSXElement' || node.expression.type === 'JSXFragment'))
+  );
 }
 
-function getComplexity(node: Node, visited = new Set<Node>()): number {
+function getComplexity(
+  node: TSESTree.Node | TSESTree.Expression | TSESTree.PrivateIdentifier,
+  visited = new Set<TSESTree.Node | TSESTree.Expression | TSESTree.PrivateIdentifier>()
+): number {
   if (visited.has(node)) {
     return 0;
   }
@@ -34,8 +48,6 @@ function getComplexity(node: Node, visited = new Set<Node>()): number {
   visited.add(node);
 
   let complexity = 0;
-
-  const nodeWithProperties = node as NodeWithProperties;
 
   // Check node type safely
   if (isJSXNode(node)) {
@@ -48,20 +60,17 @@ function getComplexity(node: Node, visited = new Set<Node>()): number {
 
   // Process child properties
   for (const key of childProperties) {
-    const value = nodeWithProperties[key];
+    const value = node[key as keyof typeof node];
 
-    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-    if (value && typeof value === 'object') {
+    if (typeof value !== 'undefined') {
       if (Array.isArray(value)) {
         for (const item of value) {
-          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
           if (item && typeof item === 'object' && 'type' in item) {
-            complexity += getComplexity(item as Node, visited);
+            complexity += getComplexity(item, visited);
           }
         }
-        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-      } else if (value && 'type' in value) {
-        complexity += getComplexity(value as Node, visited);
+      } else if (typeof value === 'object' && value !== null && 'type' in value) {
+        complexity += getComplexity(value, visited);
       }
     }
   }
@@ -71,185 +80,161 @@ function getComplexity(node: Node, visited = new Set<Node>()): number {
   return complexity;
 }
 
+const createRule = ESLintUtils.RuleCreator(
+  (name) => `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}`
+);
+
 /**
  * ESLint rule: prefer-show-over-ternary
  *
  * Prefers Show component over ternary for conditional rendering with signals.
  * This provides better performance and readability for signal-based conditions.
  */
-export const preferShowOverTernaryRule = {
+export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
+  name: 'prefer-show-over-ternary',
   meta: {
     type: 'suggestion',
-    docs: {
-      description: 'prefer Show component over ternary for conditional rendering with signals',
-      recommended: false,
-    },
     fixable: 'code',
+    hasSuggestions: true,
+    docs: {
+      description: 'Prefer Show component over ternary for conditional rendering with signals',
+      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/prefer-show-over-ternary',
+    },
+    messages: {
+      preferShowOverTernary:
+        'Prefer using the `<Show>` component instead of ternary for better performance with signal conditions.',
+      suggestShowComponent: 'Replace ternary with `<Show>` component',
+      addShowImport: 'Add `Show` import from @preact/signals-react',
+    },
     schema: [
       {
         type: 'object',
-        additionalProperties: false,
         properties: {
           minComplexity: {
             type: 'number',
+            minimum: 1,
             default: 2,
           },
         },
+        additionalProperties: false,
       },
     ],
   },
-  create(context: Rule.RuleContext) {
-    // Skip if not a JSX/TSX file
-    const filename = context.getFilename();
-    if (!filename.endsWith('.tsx') && !filename.endsWith('.jsx')) {
-      return {};
-    }
+  defaultOptions: [
+    {
+      minComplexity: 2,
+    },
+  ],
+  create(context, [options]) {
+    let hasShowImport = false;
 
-    const options = context.options[0] ?? {};
-
-    const minComplexity = options.minComplexity ?? 2;
-
-    // Skip if file doesn't contain JSX
-    const sourceCode = context.getSourceCode();
-
-    type NodeWithChildren = BaseNode & {
-      children?: Array<BaseNode>;
-    };
-
-    function hasJSX(node: BaseNode | null | undefined, visited = new WeakSet<object>()): boolean {
-      // Check for non-objects or null
-      if (!node || typeof node !== 'object') {
-        return false;
-      }
-
-      // Check if we've already visited this node to prevent infinite recursion
-      if (visited.has(node)) {
-        return false;
-      }
-
-      visited.add(node);
-
-      // Check if this is a JSX node
-      if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
-        return true;
-      }
-
-      // Handle children array if it exists
-      const nodeWithChildren = node as NodeWithChildren;
-      if (Array.isArray(nodeWithChildren.children)) {
-        if (nodeWithChildren.children.some((child) => hasJSX(child, visited))) {
-          return true;
+    hasShowImport = context.sourceCode.ast.body.some(
+      (node: TSESTree.ProgramStatement): node is TSESTree.ImportDeclaration => {
+        if (node.type !== 'ImportDeclaration' || !node.source) {
+          return false;
         }
-      }
 
-      // Safely check all properties of the node
-      for (const value of Object.values(node)) {
-        if (Array.isArray(value)) {
-          // Check array items
-          for (const item of value) {
-            if (hasJSX(item as BaseNode, visited)) {
-              return true;
-            }
-          }
-          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-        } else if (value && typeof value === 'object' && 'type' in value) {
-          // Check object properties
-          if (hasJSX(value as BaseNode, visited)) {
-            return true;
-          }
+        if (
+          typeof node.source.value !== 'string' ||
+          node.source.value !== '@preact/signals-react'
+        ) {
+          return false;
         }
+
+        return node.specifiers.some((s: TSESTree.ImportClause): boolean => {
+          return s.type === 'ImportSpecifier' && 'name' in s.imported && s.imported.name === 'Show';
+        });
       }
-
-      return false;
-    }
-
-    // Only run the rule if JSX is found in the file
-    if (!hasJSX(sourceCode.ast)) {
-      return {};
-    }
-
-    function hasSignalInTest(node: Node): boolean {
-      if (
-        node.type === 'MemberExpression' &&
-        node.property.type === 'Identifier' &&
-        node.property.name === 'value' &&
-        node.object.type === 'Identifier' &&
-        node.object.name.endsWith('Signal')
-      ) {
-        return true;
-      }
-
-      if (node.type === 'Identifier' && node.name.endsWith('Signal')) {
-        return true;
-      }
-
-      if (node.type === 'BinaryExpression') {
-        return hasSignalInTest(node.left) || hasSignalInTest(node.right);
-      }
-
-      if (node.type === 'LogicalExpression') {
-        return hasSignalInTest(node.left) || hasSignalInTest(node.right);
-      }
-
-      if (node.type === 'UnaryExpression') {
-        return hasSignalInTest(node.argument);
-      }
-
-      if (node.type === 'ChainExpression') {
-        return hasSignalInTest(node.expression);
-      }
-
-      return false;
-    }
-
-    function checkConditionalExpression(
-      node: ConditionalExpression & Rule.NodeParentExtension
-    ): void {
-      const hasSignalTest = hasSignalInTest(node.test);
-
-      if (hasSignalTest) {
-        const consequentComplexity = getComplexity(node.consequent);
-
-        const alternateComplexity = getComplexity(node.alternate);
-
-        if (consequentComplexity >= minComplexity || alternateComplexity >= minComplexity) {
-          context.report({
-            node,
-            message: 'Consider using Show component for complex conditional rendering with signals',
-            fix(fixer) {
-              const sourceCode = context.getSourceCode();
-              const testText = sourceCode.getText(node.test);
-              const consequentText = sourceCode.getText(node.consequent);
-
-              return node.alternate.type === 'Literal' && node.alternate.value == null
-                ? fixer.replaceText(node, `<Show when={${testText}}>{${consequentText}}</Show>`)
-                : fixer.replaceText(
-                    node,
-                    `<Show when={${testText}} fallback={${sourceCode.getText(node.alternate)}}>{${consequentText}}</Show>`
-                  );
-            },
-          });
-        }
-      }
-    }
+    );
 
     return {
-      ConditionalExpression: checkConditionalExpression,
-      JSXExpressionContainer(node: ConditionalExpression & Rule.NodeParentExtension) {
-        if (
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-expect-error
-          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-          node.expression &&
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-expect-error
-          node.expression.type === 'ConditionalExpression'
-        ) {
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-expect-error
-          checkConditionalExpression(node.expression);
+      Program(node: TSESTree.Program): void {
+        const hasJSX = node.body.some((n: TSESTree.ProgramStatement): boolean => {
+          return isJSXNode(n);
+        });
+
+        if (!hasJSX) {
+          return;
+        }
+      },
+
+      ConditionalExpression(node: TSESTree.ConditionalExpression): void {
+        if (!node.parent || !('type' in node.parent) || !isJSXNode(node.parent as TSESTree.Node)) {
+          return;
+        }
+
+        if (getComplexity(node) >= (options?.minComplexity ?? 2)) {
+          context.report({
+            node,
+            messageId: 'preferShowOverTernary',
+            suggest: [
+              {
+                messageId: 'suggestShowComponent',
+                *fix(fixer) {
+                  const consequentText = context.sourceCode.getText(node.consequent);
+                  const alternateText = node.alternate
+                    ? context.sourceCode.getText(node.alternate)
+                    : null;
+
+                  const fixText = alternateText
+                    ? `{/* @ts-expect-error Server Component */}
+                    <Show when={${context.sourceCode.getText(node.test)}} fallback={${alternateText}}>
+                    {${consequentText}}
+                    </Show>`
+                    : `{/* @ts-expect-error Server Component */}
+                    <Show when={${context.sourceCode.getText(node.test)}}>
+                    {${consequentText}}
+                    </Show>
+                  `;
+
+                  yield fixer.replaceText(node, fixText);
+
+                  if (hasShowImport) {
+                    return;
+                  }
+                },
+              },
+              ...(hasShowImport
+                ? ([] satisfies Array<SuggestionReportDescriptor<MessageIds>>)
+                : ([
+                    {
+                      messageId: 'addShowImport',
+                      fix(fixer) {
+                        if (!context.sourceCode.ast) {
+                          return [];
+                        }
+
+                        const signalsImport = context.sourceCode.ast.body.find(
+                          (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
+                            return (
+                              n.type === 'ImportDeclaration' &&
+                              n.source.value === '@preact/signals-react'
+                            );
+                          }
+                        );
+
+                        return signalsImport
+                          ? [
+                              fixer.insertTextAfter(
+                                signalsImport.specifiers[signalsImport.specifiers.length - 1],
+                                ', Show'
+                              ),
+                            ]
+                          : [
+                              fixer.insertTextBefore(
+                                context.sourceCode.ast.body[0],
+                                "import { Show } from '@preact/signals-react';\n"
+                              ),
+                            ];
+                      },
+                    } satisfies SuggestionReportDescriptor<MessageIds>,
+                  ] satisfies Array<SuggestionReportDescriptor<MessageIds>>)),
+            ],
+          });
         }
       },
     };
   },
-} satisfies Rule.RuleModule;
+});
+
+export default preferShowOverTernaryRule;

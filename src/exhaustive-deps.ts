@@ -1,39 +1,66 @@
-import type { Rule, Scope, SourceCode } from 'eslint';
+import { ESLintUtils, type TSESTree } from '@typescript-eslint/utils';
+import type { Definition, Reference, Scope, Variable } from '@typescript-eslint/scope-manager';
 
-import type {
-  ArrayExpression,
-  ArrowFunctionExpression,
-  CallExpression,
-  Expression,
-  FunctionDeclaration,
-  FunctionExpression,
-  Identifier,
-  Node,
-  Pattern,
-  PrivateIdentifier,
-  SpreadElement,
-  Super,
-  VariableDeclarator,
-} from 'estree';
+import type { Pattern } from 'estree';
+import type { RuleContext, SuggestionReportDescriptor } from '@typescript-eslint/utils/ts-eslint';
 
-type ExtendedRuleContext = Rule.RuleContext & {
-  sourceCode: SourceCode & {
-    getScope: (node: Node) => Scope.Scope;
-  };
-  getScope?: () => Scope.Scope;
-};
+const createRule = ESLintUtils.RuleCreator((name: string): string => {
+  return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}`;
+});
 
-type DeclaredDependency = {
-  key: string;
-  node: Node;
-};
+type Options = [
+  {
+    additionalHooks?: string | undefined;
+    enableDangerousAutofixThisMayCauseInfiniteLoops?: boolean | undefined;
+    experimental_autoDependenciesHooks?: string[] | undefined;
+    requireExplicitEffectDeps?: boolean | undefined;
+    enableAutoFixForMemoAndCallback?: boolean | undefined;
+  },
+];
+
+type MessageIds =
+  | 'missingDependencies'
+  | 'missingDependency'
+  | 'unnecessaryDependencies'
+  | 'unnecessaryDependency'
+  | 'duplicateDependencies'
+  | 'duplicateDependency'
+  | 'unknownDependencies'
+  | 'asyncEffect'
+  | 'missingEffectCallback'
+  | 'staleAssignmentDependency' // When a dependency is assigned a new value but not included in deps
+  | 'staleAssignmentLiteral' // When a literal value is used in deps but not stable
+  | 'staleAssignmentExpression' // When a complex expression is used in deps
+  | 'staleAssignmentUnstable' // When a value that changes on every render is used in deps
+  | 'spreadElementInDependencyArray'
+  | 'useEffectEventInDependencyArray'
+  | 'addAllDependencies'
+  | 'addSingleDependency'
+  | 'removeDependencyArray'
+  | 'addDependencies'
+  | 'removeDependency'
+  | 'removeSingleDependency'
+  | 'removeAllDuplicates'
+  | 'removeAllUnnecessaryDependencies'
+  | 'removeThisDuplicate'
+  | 'dependencyWithoutSignal'
+  | 'notArrayLiteral'
+  | 'moveInsideEffect';
+
+type DeclaredDependency = { key: string; node: TSESTree.Node };
 
 type Dependency = {
-  node: Node;
-  references: Array<Scope.Reference>;
+  node:
+    | TSESTree.Node
+    | TSESTree.Expression
+    | TSESTree.Super
+    | TSESTree.Identifier
+    | TSESTree.MemberExpression;
+  references: Array<Reference>;
   hasReads: boolean;
   isStable: boolean;
-  hasInnerScopeComputedProperty?: boolean;
+  hasInnerScopeComputedProperty?: boolean | undefined;
+  isComputedAssignmentOnly?: boolean | undefined;
 };
 
 type DependencyTreeNode = {
@@ -43,13 +70,196 @@ type DependencyTreeNode = {
   children: Map<string, DependencyTreeNode>;
 };
 
-export const exhaustiveDepsRule: Rule.RuleModule = {
+export const exhaustiveDepsRule = createRule<Options, MessageIds>({
+  name: 'exhaustive-deps',
   meta: {
     type: 'suggestion',
     docs: {
-      description: 'verifies the list of dependencies for Hooks like useEffect and similar',
-      recommended: true,
-      url: 'https://github.com/facebook/react/issues/14920',
+      description: 'Verifies the list of dependencies for Hooks like useEffect and similar',
+      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/exhaustive-deps',
+    },
+    messages: {
+      missingDependencies:
+        'React Hook {{hookName}} is missing {{dependenciesCount}} dependencies: {{dependencies}}. ' +
+        'Including all dependencies ensures your effect runs when expected. ' +
+        'Either add the missing dependencies or remove the dependency array if this effect should run on every render.\n' +
+        '\n' +
+        'Why this matters:\n' +
+        '• Missing dependencies can cause your effect to use stale values from previous renders\n' +
+        "• This can lead to bugs where your UI doesn't update when expected\n" +
+        '• The effect may run more or less often than intended',
+
+      missingDependency:
+        'React Hook {{hookName}} is missing the dependency: {{dependency}}. ' +
+        'This dependency is used inside the effect but not listed in the dependency array.\n' +
+        '\n' +
+        'Impact:\n' +
+        '• The effect might not re-run when this value changes\n' +
+        '• The effect could use stale values from previous renders\n' +
+        '• This can lead to UI inconsistencies\n' +
+        '\n' +
+        '{{missingMessage}}',
+
+      unnecessaryDependencies:
+        'React Hook {{hookName}} has {{count}} unnecessary dependencies: {{dependencies}}. ' +
+        'These values are either constants or defined outside the component and will never change.\n' +
+        '\n' +
+        'Recommendation:\n' +
+        '• Remove these dependencies to make the effect more maintainable\n' +
+        '• This helps React optimize re-renders\n' +
+        '\n' +
+        '{{message}}',
+
+      unnecessaryDependency:
+        'React Hook {{hookName}} has an unnecessary dependency: {{dependency}}. ' +
+        'This value is either a constant or defined outside the component and will never change.\n' +
+        '\n' +
+        'Why remove it?\n' +
+        '• Makes the dependency array more accurate\n' +
+        '• Helps React optimize re-renders\n' +
+        '• Reduces unnecessary effect re-runs\n' +
+        '\n' +
+        '{{message}}',
+
+      duplicateDependencies:
+        'React Hook {{hookName}} has {{count}} duplicate dependencies: {{dependencies}}. ' +
+        'This can cause unexpected behavior and unnecessary re-renders.\n' +
+        '\n' +
+        'Impact:\n' +
+        '• The effect may run more times than necessary\n' +
+        '• Can lead to performance issues\n' +
+        '• Makes the code harder to reason about',
+
+      duplicateDependency:
+        'React Hook {{hookName}} has a duplicate dependency: {{dependency}} ({{position}} of {{total}}). ' +
+        'This can cause unexpected behavior and unnecessary re-renders.\n' +
+        '\n' +
+        'Why remove duplicates?\n' +
+        '• Ensures the effect runs only when necessary\n' +
+        '• Improves performance\n' +
+        '• Makes the code more maintainable',
+
+      unknownDependencies:
+        'React Hook {{hookName}} has dependencies that cannot be statically analyzed. ' +
+        'This can happen when using dynamic property access or function calls in the dependency array.\n' +
+        '\n' +
+        'How to fix:\n' +
+        '• Use static, direct references in dependency arrays\n' +
+        '• Extract dynamic values to variables before using them in the effect\n' +
+        '• Consider using useCallback or useMemo for dynamic values',
+
+      asyncEffect:
+        'React Hook {{hookName}} has an async effect callback. ' +
+        'Async effects can lead to race conditions and memory leaks.\n' +
+        '\n' +
+        'Recommended pattern:\n' +
+        'useEffect(() => {\n' +
+        '  let isMounted = true;\n' +
+        '  const fetchData = async () => {\n' +
+        '    try {\n' +
+        '      const result = await someAsyncOperation();\n' +
+        '      if (isMounted) {\n' +
+        '        setData(result);\n' +
+        '      }\n' +
+        '    } catch (error) {\n' +
+        '      // Handle error\n' +
+        '    }\n' +
+        '  };\n' +
+        '  \n' +
+        '  fetchData();\n' +
+        '  \n' +
+        '  return () => { isMounted = false; };\n' +
+        '}, [/* dependencies */]);',
+
+      missingEffectCallback:
+        'React Hook {{hookName}} is missing its effect callback function. ' +
+        'The first argument must be a function that contains the effect logic.\n' +
+        '\n' +
+        'Correct usage:\n' +
+        'useEffect(() => {\n' +
+        '  // Your effect logic here\n' +
+        '  return () => {\n' +
+        '    // Cleanup logic (optional)\n' +
+        '  };\n' +
+        '}, [dependencies]);',
+
+      staleAssignmentDependency:
+        'The variable "{{dependency}}" is used in the dependency array for {{hookName}} but may not be properly tracked.\n\n' +
+        'Why this is problematic:\n' +
+        '• The effect might use outdated values\n' +
+        '• Changes to this variable might not trigger effect re-runs\n\n' +
+        'Solution: Ensure the variable is properly included in the dependency array or wrap it with useMemo/useCallback.',
+
+      staleAssignmentLiteral:
+        'The literal value {{dependency}} is used in the dependency array for {{hookName}}.\n\n' +
+        'Why this is problematic:\n' +
+        '• Literal values create new references on each render\n' +
+        '• This can cause the effect to re-run on every render\n\n' +
+        'Solution: Move the value outside the component or memoize it with useMemo if needed.',
+
+      staleAssignmentUnstable:
+        'The value {{dependency}} is used in the dependency array for {{hookName}} but may change on every render.\n\n' +
+        'Why this is problematic:\n' +
+        '• This can cause the effect to re-run on every render\n' +
+        '• May lead to performance issues\n\n' +
+        'Solution: Move the value outside the component or memoize it with useMemo.',
+
+      staleAssignmentExpression:
+        'The expression "{{dependency}}" is used in the dependency array for {{hookName}}.\n\n' +
+        'Why this is problematic:\n' +
+        '• Complex expressions are re-evaluated on every render\n' +
+        '• This can lead to unnecessary effect re-runs\n\n' +
+        'Solution: Extract the expression to a variable outside the dependency array or memoize it with useMemo.',
+
+      spreadElementInDependencyArray:
+        'Spread elements ("...") are not allowed in dependency arrays. ' +
+        'They can cause the effect to re-run more often than necessary.\n' +
+        '\n' +
+        'Instead of:\n' +
+        'useEffect(() => { ... }, [...deps, extraDep]);\n' +
+        '\n' +
+        'Try:\n' +
+        'useEffect(() => { ... }, [...deps, extraDep]); // Explicitly list all dependencies',
+
+      useEffectEventInDependencyArray:
+        'The useEffectEvent function "{{eventName}}" should not be included in the dependency array. ' +
+        'useEffectEvent functions are stable and never change between re-renders.\n' +
+        '\n' +
+        'Correct usage:\n' +
+        'const onEvent = useEffectEvent(() => {\n' +
+        '  // Event handler logic\n' +
+        '});\n' +
+        '\n' +
+        'useEffect(() => {\n' +
+        '  // No need to include onEvent in dependencies\n' +
+        '  const subscription = someObservable.subscribe(onEvent);\n' +
+        '  return () => subscription.unsubscribe();\n' +
+        '}, []); // No need to include onEvent here',
+
+      addDependencies: 'Add {{count}} missing dependencies ({{dependencies}})',
+      addAllDependencies: 'Add all {{count}} missing dependencies ({{dependencies}})',
+      addSingleDependency: 'Add missing dependency: {{dependency}}',
+      removeDependencyArray: 'Remove dependency array to run effect on every render',
+
+      removeDependency: 'Remove the "{{dependency}}" dependency from the dependency array.',
+      removeSingleDependency: 'Remove the "{{dependency}}" dependency',
+      removeAllUnnecessaryDependencies:
+        'Remove all {{count}} unnecessary dependencies ({{dependencies}})',
+      removeThisDuplicate: 'Remove this duplicate "{{dependency}}"',
+      removeAllDuplicates: 'Remove all {{count}} duplicate dependencies',
+
+      dependencyWithoutSignal: '{{message}}',
+
+      moveInsideEffect: "Move '{{call}}' inside the effect",
+
+      notArrayLiteral:
+        'React Hook {{hookName}} expects an array literal as its dependency array. ' +
+        'The provided value is not an array literal.\n\n' +
+        'Expected: {{hookName}}(() => { ... }, [{{dependencies}}])\n\n' +
+        'Why this matters:\n' +
+        '• Array literals allow React to properly track dependencies\n' +
+        "• Non-array values won't trigger effect re-runs correctly\n" +
+        '• This can lead to stale closures and unexpected behavior',
     },
     fixable: 'code',
     hasSuggestions: true,
@@ -57,7 +267,6 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
       {
         type: 'object',
         additionalProperties: false,
-        enableDangerousAutofixThisMayCauseInfiniteLoops: false,
         properties: {
           additionalHooks: {
             type: 'string',
@@ -81,111 +290,51 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
       },
     ],
   },
-  create(context: ExtendedRuleContext): Rule.RuleListener {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    const rawOptions = context.options?.[0];
+  defaultOptions: [{}],
+  create(context, [rawFirstOption = {}]) {
+    const {
+      additionalHooks,
+      enableDangerousAutofixThisMayCauseInfiniteLoops = false,
+      experimental_autoDependenciesHooks = [],
+      requireExplicitEffectDeps = false,
+      enableAutoFixForMemoAndCallback = false,
+    } = rawFirstOption;
 
-    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-    const additionalHooks = rawOptions?.additionalHooks
-      ? new RegExp(rawOptions.additionalHooks)
-      : undefined;
+    console.info('context.options', context.options);
 
-    const enableDangerousAutofixThisMayCauseInfiniteLoops: boolean =
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-      rawOptions?.enableDangerousAutofixThisMayCauseInfiniteLoops || false;
-
-    const experimental_autoDependenciesHooks: ReadonlyArray<string> =
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-      rawOptions && Array.isArray(rawOptions.experimental_autoDependenciesHooks)
-        ? rawOptions.experimental_autoDependenciesHooks
-        : [];
-
-    const requireExplicitEffectDeps: boolean =
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-      rawOptions?.requireExplicitEffectDeps || false;
-
-    const enableAutoFixForMemoAndCallback: boolean =
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-      rawOptions?.enableAutoFixForMemoAndCallback || false;
+    const additionalHooksRegex =
+      typeof additionalHooks === 'string' ? new RegExp(additionalHooks) : undefined;
 
     const options = {
-      additionalHooks,
+      additionalHooks: additionalHooksRegex,
       experimental_autoDependenciesHooks,
       enableDangerousAutofixThisMayCauseInfiniteLoops,
       requireExplicitEffectDeps,
       enableAutoFixForMemoAndCallback,
     };
 
-    function reportProblem(problem: Rule.ReportDescriptor): void {
-      const hasAutofix = !!(
-        problem.fix ||
-        (enableDangerousAutofixThisMayCauseInfiniteLoops &&
-          Array.isArray(problem.suggest) &&
-          problem.suggest.length > 0)
-      );
+    const setStateCallSites = new WeakMap<
+      TSESTree.Expression | TSESTree.Super | TSESTree.Identifier | TSESTree.JSXIdentifier,
+      Pattern | TSESTree.DestructuringPattern | null | undefined
+    >();
 
-      const hasSuggestions = Array.isArray(problem.suggest) && problem.suggest.length > 0;
+    const stateVariables = new WeakSet<TSESTree.Identifier | TSESTree.JSXIdentifier>();
 
-      if (hasAutofix || hasSuggestions) {
-        let indicator = '';
+    const stableKnownValueCache = new WeakMap<Variable, boolean>();
 
-        if (hasAutofix) {
-          indicator = ' [AUTOFIXABLE]';
-        } else if (hasSuggestions) {
-          indicator = ' [SUGGESTIONS AVAILABLE]';
-        }
+    const functionWithoutCapturedValueCache = new WeakMap<Variable, boolean>();
 
-        if ('message' in problem && typeof problem.message === 'string') {
-          problem.message += indicator;
-        }
-      }
+    const useEffectEventVariables = new WeakSet<
+      TSESTree.Expression | TSESTree.Identifier | TSESTree.JSXIdentifier
+    >();
 
-      if (enableDangerousAutofixThisMayCauseInfiniteLoops) {
-        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-        if (Array.isArray(problem.suggest) && problem.suggest.length > 0 && problem.suggest[0]) {
-          problem.fix = problem.suggest[0].fix;
-        }
-      }
-
-      context.report(problem);
-    }
-
-    const getSourceCode =
-      typeof context.getSourceCode === 'function'
-        ? () => {
-            return context.getSourceCode();
-          }
-        : () => {
-            return context.sourceCode;
-          };
-
-    function getScope(node: Node): Scope.Scope {
-      if (typeof context.getScope === 'function') {
-        return context.getScope();
-      }
-
-      return context.sourceCode.getScope(node);
-    }
-
-    const scopeManager = getSourceCode().scopeManager;
-
-    const setStateCallSites = new WeakMap<Expression | Super, Pattern | null | undefined>();
-
-    const stateVariables = new WeakSet<Identifier>();
-
-    const stableKnownValueCache = new WeakMap<Scope.Variable, boolean>();
-
-    const functionWithoutCapturedValueCache = new WeakMap<Scope.Variable, boolean>();
-
-    const useEffectEventVariables = new WeakSet<Expression>();
-
-    const signalVariables = new WeakSet<Identifier>();
+    const signalVariables = new WeakSet<TSESTree.Identifier | TSESTree.JSXIdentifier>();
 
     function memoizeWithWeakMap(
-      fn: (resolved: Scope.Variable) => boolean,
-      map: WeakMap<Scope.Variable, boolean>
-    ): (arg: Scope.Variable) => boolean {
-      return (arg: Scope.Variable): boolean => {
+      fn: (resolved: Variable) => boolean,
+      map: WeakMap<Variable, boolean>
+    ): (arg: Variable) => boolean {
+      return (arg: Variable): boolean => {
         if (map.has(arg)) {
           return map.get(arg) ?? false;
         }
@@ -199,9 +348,12 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
     }
 
     function visitFunctionWithDependencies(
-      node: ArrowFunctionExpression | FunctionDeclaration | FunctionExpression,
-      declaredDependenciesNode: Node | undefined,
-      reactiveHook: Node,
+      node:
+        | TSESTree.ArrowFunctionExpression
+        | TSESTree.FunctionDeclaration
+        | TSESTree.FunctionExpression,
+      declaredDependenciesNode: TSESTree.Node | undefined,
+      reactiveHook: TSESTree.Node,
       reactiveHookName: string,
       isEffect: boolean,
       isAutoDepsHook: boolean
@@ -209,13 +361,19 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
       const objectPropertyAccesses = new Map<string, Set<string>>();
 
       if (isEffect && node.async === true) {
-        reportProblem({
+        context.report({
           node,
-          message: `Effect callbacks are synchronous to prevent race conditions. Put the async function inside:\n\nuseEffect(() => {\n  async function fetchData() {\n    // You can await here\n    const response = await MyAPI.getData(someId);\n    // ...\n  }\n  fetchData();\n}, [someId]); // Or [] if effect doesn't need props or state\n\nLearn more about data fetching with Hooks: https://react.dev/link/hooks-data-fetching`,
+          data: {
+            message: `TODO!!!`,
+          },
+          messageId: 'asyncEffect',
+          fix(fixer) {
+            return fixer.replaceText(node, `async () => { ${context.sourceCode.getText(node)}; }`);
+          },
         });
       }
 
-      const scope = scopeManager.acquire(node);
+      const scope = context.sourceCode.scopeManager?.acquire(node);
 
       if (!scope) {
         throw new Error(
@@ -223,9 +381,9 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         );
       }
 
-      const pureScopes = new Set();
+      const pureScopes = new Set<Scope>();
 
-      let componentScope: Scope.Scope | null = null;
+      let componentScope: Scope | null = null;
 
       {
         let currentScope = scope.upper;
@@ -247,49 +405,40 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         componentScope = currentScope;
       }
 
-      const isArray = Array.isArray;
-
-      function isStableKnownHookValue(resolved: Scope.Variable): boolean {
-        if (!isArray(resolved.defs)) {
+      function isStableKnownHookValue(resolved: Variable): boolean {
+        if (!Array.isArray(resolved.defs)) {
           return false;
         }
 
-        const def = resolved.defs[0];
+        const def: Definition | undefined = resolved.defs[0];
 
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (def == null) {
+        if (typeof def === 'undefined') {
           return false;
         }
 
-        const defNode: VariableDeclarator = def.node;
-
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (defNode.type !== 'VariableDeclarator') {
+        if (def.node.type !== 'VariableDeclarator') {
           return false;
         }
 
-        let init = defNode.init;
+        let init = def.node.init;
 
-        if (init == null) {
+        if (init === null) {
           return false;
         }
 
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
-        while (init.type === 'TSAsExpression' || init.type === 'AsExpression') {
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-expect-error
+        while (init.type === 'TSAsExpression') {
           init = init.expression;
         }
 
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
-        let declaration = defNode.parent;
+        let declaration: TSESTree.VariableDeclaration | TSESTree.Node | null | undefined =
+          def.node.parent;
 
-        if (declaration == null && componentScope != null) {
-          fastFindReferenceWithParent(componentScope.block, def.node.id);
+        if (declaration == null && componentScope !== null) {
+          if ('id' in def.node && def.node.id !== null) {
+            fastFindReferenceWithParent(componentScope.block, def.node.id);
 
-          declaration = def.node.parent;
+            declaration = def.node.parent;
+          }
 
           if (declaration == null) {
             return false;
@@ -309,33 +458,35 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         if (init.type !== 'CallExpression') {
           return false;
         }
-        let callee: Expression | PrivateIdentifier | Super = init.callee;
+
+        let callee: TSESTree.Expression | TSESTree.PrivateIdentifier | TSESTree.Super = init.callee;
+
         if (
           callee.type === 'MemberExpression' &&
           'name' in callee.object &&
           callee.object.name === 'React' &&
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           callee.property != null &&
           !callee.computed
         ) {
           callee = callee.property;
         }
+
         if (callee.type !== 'Identifier') {
           return false;
         }
 
-        const definitionNode: VariableDeclarator = def.node;
-        const id = definitionNode.id;
-        const { name } = callee;
-        if (name === 'useRef' && id.type === 'Identifier') {
+        const definitionNode = def.node as TSESTree.VariableDeclarator;
+
+        if (callee.name === 'useRef' && definitionNode.id.type === 'Identifier') {
           return true;
         }
 
-        if ((isSignalIdentifier(callee) || isSignalVariable(id)) && id.type === 'Identifier') {
+        if (
+          (isSignalIdentifier(callee) || isSignalVariable(definitionNode.id)) &&
+          definitionNode.id.type === 'Identifier'
+        ) {
           for (const ref of resolved.references) {
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            if (ref !== id) {
+            if (ref.identifier !== definitionNode.id) {
               signalVariables.add(ref.identifier);
             }
           }
@@ -343,11 +494,9 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           return false;
         }
 
-        if (isUseEffectEventIdentifier(callee) && id.type === 'Identifier') {
+        if (isUseEffectEventIdentifier(callee) && definitionNode.id.type === 'Identifier') {
           for (const ref of resolved.references) {
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            if (ref !== id) {
+            if (ref.identifier !== definitionNode.id) {
               useEffectEventVariables.add(ref.identifier);
             }
           }
@@ -355,14 +504,14 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           return true;
         }
 
-        if (['useState', 'useReducer', 'useActionState'].includes(name)) {
+        if (['useState', 'useReducer', 'useActionState'].includes(callee.name)) {
           if (
-            id.type === 'ArrayPattern' &&
-            id.elements.length === 2 &&
-            isArray(resolved.identifiers)
+            definitionNode.id.type === 'ArrayPattern' &&
+            definitionNode.id.elements.length === 2 &&
+            Array.isArray(resolved.identifiers)
           ) {
-            if (id.elements[1] === resolved.identifiers[0]) {
-              if (name === 'useState') {
+            if (definitionNode.id.elements[1] === resolved.identifiers[0]) {
+              if (callee.name === 'useState') {
                 const references = resolved.references;
 
                 let writeCount = 0;
@@ -376,15 +525,15 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
                     return false;
                   }
 
-                  setStateCallSites.set(reference.identifier, id.elements[0]);
+                  setStateCallSites.set(reference.identifier, definitionNode.id.elements[0]);
                 }
               }
 
               return true;
             }
 
-            if (id.elements[0] === resolved.identifiers[0]) {
-              if (name === 'useState') {
+            if (definitionNode.id.elements[0] === resolved.identifiers[0]) {
+              if (callee.name === 'useState') {
                 const references = resolved.references;
 
                 for (const reference of references) {
@@ -395,13 +544,13 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
               return false;
             }
           }
-        } else if (name === 'useTransition') {
+        } else if (callee.name === 'useTransition') {
           if (
-            id.type === 'ArrayPattern' &&
-            id.elements.length === 2 &&
+            definitionNode.id.type === 'ArrayPattern' &&
+            definitionNode.id.elements.length === 2 &&
             Array.isArray(resolved.identifiers)
           ) {
-            if (id.elements[1] === resolved.identifiers[0]) {
+            if (definitionNode.id.elements[1] === resolved.identifiers[0]) {
               return true;
             }
           }
@@ -415,23 +564,22 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         stableKnownValueCache
       );
 
-      function isFunctionWithoutCapturedValues(resolved: Scope.Variable): boolean {
-        if (!isArray(resolved.defs)) {
+      function isFunctionWithoutCapturedValues(resolved: Variable): boolean {
+        if (!Array.isArray(resolved.defs)) {
           return false;
         }
 
-        const def = resolved.defs[0];
+        const def: Definition | undefined = resolved.defs[0];
 
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (def == null) {
+        if (typeof def === 'undefined') {
           return false;
         }
 
-        if (def.node?.id == null) {
+        if (!('id' in def.node) || def.node.id == null) {
           return false;
         }
 
-        const fnNode: Node = def.node;
+        const fnNode: TSESTree.Node = def.node;
 
         const childScopes = componentScope?.childScopes || [];
 
@@ -439,12 +587,10 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
         for (const childScope of childScopes) {
           const childScopeBlock = childScope.block;
+
           if (
             (fnNode.type === 'FunctionDeclaration' && childScopeBlock === fnNode) ||
-            (fnNode.type === 'VariableDeclarator' &&
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
-              childScopeBlock.parent === fnNode)
+            (fnNode.type === 'VariableDeclarator' && childScopeBlock.parent === fnNode)
           ) {
             fnScope = childScope;
 
@@ -477,25 +623,20 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
       const currentRefsInEffectCleanup = new Map<
         string,
         {
-          reference: Scope.Reference;
-          dependencyNode: Identifier;
+          reference: Reference;
+          dependencyNode: TSESTree.Identifier;
         }
       >();
 
-      function isInsideEffectCleanup(reference: Scope.Reference): boolean {
-        let curScope: Scope.Scope | null = reference.from;
+      function isInsideEffectCleanup(reference: Reference): boolean {
+        let curScope: Scope | null = reference.from;
 
         let isInReturnedFunction = false;
 
-        while (curScope != null && curScope.block !== node) {
+        while (curScope !== null && curScope.block !== node) {
           if (curScope.type === 'function') {
             isInReturnedFunction =
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
-              curScope.block.parent != null &&
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
-              curScope.block.parent.type === 'ReturnStatement';
+              curScope.block.parent != null && curScope.block.parent?.type === 'ReturnStatement';
           }
 
           curScope = curScope.upper;
@@ -512,11 +653,9 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
       gatherDependenciesRecursively(scope);
 
-      function isOnlyAssignmentReference(reference: Scope.Reference): boolean {
+      function isOnlyAssignmentReference(reference: Reference): boolean {
         const { identifier } = reference;
 
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
         const { parent } = identifier;
 
         if (
@@ -566,7 +705,6 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           parent?.type === 'MemberExpression' &&
           parent.property === identifier &&
           parent.object?.type === 'Identifier' &&
-          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
           parent.object.name.endsWith('Signal')
         ) {
           if (parent.parent?.type === 'AssignmentExpression' && parent.parent.left === parent) {
@@ -586,14 +724,12 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         return false;
       }
 
-      function gatherDependenciesRecursively(currentScope: Scope.Scope): void {
+      function gatherDependenciesRecursively(currentScope: Scope): void {
         for (const reference of currentScope.references) {
           const isSignalReference =
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
             reference.identifier.type === 'Identifier' &&
             (reference.identifier.name.endsWith('Signal') ||
               reference.identifier.name.endsWith('signal') ||
-              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
               (reference.resolved?.name?.endsWith('Signal') ?? false));
 
           if (reference.resolved == null) {
@@ -602,23 +738,13 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
           // biome-ignore format: because
           if (
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            reference.identifier.parent?.type === "MemberExpression" &&
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+            reference.identifier.parent.type === "MemberExpression" &&
             !reference.identifier.parent.computed &&
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            reference.identifier.parent.property?.type === "Identifier" &&
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
+            reference.identifier.parent.property.type === "Identifier" &&
             reference.identifier.parent.object === reference.identifier
           ) {
             const objectName = reference.identifier.name;
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
+
             const propertyName = reference.identifier.parent.property.name;
 
             if (propertyName !== "current") {
@@ -626,16 +752,15 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
                 objectPropertyAccesses.set(objectName, new Set<string>());
               }
 
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
-              let currentNode = reference.identifier.parent;
+              let currentNode: TSESTree.MemberExpressionComputedName | TSESTree.MemberExpressionNonComputedName = reference.identifier.parent;
+
               let fullPath = `${objectName}.${propertyName}`;
 
               while (
                 currentNode.parent?.type === "MemberExpression"
               ) {
                 if (currentNode.parent.object === currentNode) {
-                  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+
                   if (!currentNode.parent.computed) {
                     if (currentNode.parent.property?.type === "Identifier") {
                       fullPath += `.${currentNode.parent.property.name}`;
@@ -674,33 +799,31 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           let isComputedMemberAssignmentOnly = false;
 
           if (
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
             reference.identifier.type === 'Identifier' &&
             reference.identifier.name.endsWith('Signal')
           ) {
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
             const parent = reference.identifier.parent;
+
             if (
-              parent?.type === 'MemberExpression' &&
+              parent.type === 'MemberExpression' &&
               parent.object === reference.identifier &&
-              parent.property?.name === 'value' &&
-              parent.parent?.type === 'MemberExpression' &&
+              'name' in parent.property &&
+              parent.property.name === 'value' &&
+              parent.parent.type === 'MemberExpression' &&
               parent.parent.object === parent &&
-              parent.parent.parent?.type === 'AssignmentExpression' &&
+              parent.parent.parent.type === 'AssignmentExpression' &&
               parent.parent.parent.left === parent.parent
             ) {
               isComputedMemberAssignmentOnly = true;
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
+
+              // @ts-expect-error adding isComputedAssignmentOnly to Reference
               reference.isComputedAssignmentOnly = true;
 
               const baseSignalName = reference.identifier.name;
 
               for (const ref of currentScope.references) {
                 if (ref.identifier.name === baseSignalName) {
-                  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                  // @ts-expect-error
+                  // @ts-expect-error adding isComputedAssignmentOnly to Reference
                   ref.isComputedAssignmentOnly = true;
                 }
               }
@@ -717,7 +840,6 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           }
 
           if (
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
             reference.identifier.type === 'Identifier' &&
             reference.identifier.name.endsWith('Signal')
           ) {
@@ -725,9 +847,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
             for (const ref of currentScope.references) {
               if (ref.identifier.name === reference.identifier.name) {
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                // @ts-expect-error
-                // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+                // @ts-expect-error reading isComputedAssignmentOnly from Reference
                 if (!ref.isComputedAssignmentOnly) {
                   allReferencesAreComputedAssignments = false;
                   break;
@@ -746,40 +866,22 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
             continue;
           }
 
-          let currentNode = reference.identifier;
+          let currentNode:
+            | TSESTree.Identifier
+            | TSESTree.JSXIdentifier
+            | TSESTree.MemberExpressionComputedName
+            | TSESTree.MemberExpressionNonComputedName = reference.identifier;
 
           while (
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-            currentNode.parent &&
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            (currentNode.parent.type === 'MemberExpression' ||
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
-              currentNode.parent.type === 'OptionalMemberExpression') &&
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
+            currentNode.parent.type === 'MemberExpression' &&
             currentNode.parent.object === currentNode
           ) {
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
             currentNode = currentNode.parent;
           }
 
-          // biome-ignore format: because
           // Skip function calls, but still track function references as dependencies
           if (
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-            currentNode.parent &&
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            currentNode.parent.type === "CallExpression" &&
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
+            currentNode.parent.type === 'CallExpression' &&
             currentNode.parent.callee === currentNode
           ) {
             // Don't continue - let it fall through to process the function reference as a dependency
@@ -791,22 +893,10 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
             let currentNode = referenceNode;
 
             while (
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
-              // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
               currentNode.parent &&
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
-              (currentNode.parent.type === 'MemberExpression' ||
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                // @ts-expect-error
-                currentNode.parent.type === 'OptionalMemberExpression') &&
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
+              currentNode.parent.type === 'MemberExpression' &&
               currentNode.parent.object === currentNode
             ) {
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
               currentNode = currentNode.parent;
             }
           } catch (error) {
@@ -814,45 +904,29 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           }
 
           if (dependencyNode.type === 'Identifier' && dependencyNode.name.endsWith('Signal')) {
-            // biome-ignore format: because
             if (
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
-              referenceNode.parent?.type === "MemberExpression" &&
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
+              referenceNode.parent?.type === 'MemberExpression' &&
               referenceNode.parent.object === referenceNode &&
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
-              referenceNode.parent.property?.type === "Identifier" &&
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
-              referenceNode.parent.property.name === "value"
+              referenceNode.parent.property?.type === 'Identifier' &&
+              referenceNode.parent.property.name === 'value'
             ) {
               if (
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                // @ts-expect-error
-                referenceNode.parent.parent?.type === "MemberExpression" &&
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                // @ts-expect-error
+                referenceNode.parent.parent?.type === 'MemberExpression' &&
                 referenceNode.parent.parent.object === referenceNode.parent
               ) {
                 let isAssignmentOnly = false;
 
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                // @ts-expect-error
                 let outermostNode = referenceNode.parent.parent;
 
                 while (
-                  outermostNode.parent?.type === "MemberExpression" &&
+                  outermostNode.parent?.type === 'MemberExpression' &&
                   outermostNode.parent.object === outermostNode
                 ) {
                   outermostNode = outermostNode.parent;
                 }
 
                 if (
-                  outermostNode.parent?.type === "AssignmentExpression" &&
-
+                  outermostNode.parent?.type === 'AssignmentExpression' &&
                   outermostNode.parent.left === outermostNode
                 ) {
                   isAssignmentOnly = true;
@@ -860,59 +934,55 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
                 dependencyNode = outermostNode;
 
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                // @ts-expect-error
-                // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
                 if (referenceNode.parent.parent.computed && referenceNode.parent.parent.property) {
-                  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                  // @ts-expect-error
                   const propertyNode = referenceNode.parent.parent.property;
 
                   let propertyName = null;
-                  if (propertyNode.type === "Identifier") {
+                  if (propertyNode.type === 'Identifier') {
                     propertyName = propertyNode.name;
-                  } else if (propertyNode.type === "TSAsExpression" || propertyNode.type === "AsExpression") {
+                  } else if (
+                    propertyNode.type === 'TSAsExpression' ||
+                    // @ts-expect-error
+                    propertyNode.type === 'AsExpression'
+                  ) {
                     const expr = propertyNode.expression;
-                    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-                    if (expr && expr.type === "Identifier") {
+                    if (expr && expr.type === 'Identifier') {
                       propertyName = expr.name;
                     }
                   }
 
-                  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
                   if (propertyName) {
-
                     let isInnerScopeProperty = false;
                     let propertyRef = null;
-                    let searchScope: Scope.Scope | null = currentScope;
+                    let searchScope: Scope | null = currentScope;
 
                     while (searchScope && searchScope !== scope?.upper) {
                       propertyRef = searchScope.references.find(
-                        ref => ref.identifier.name === propertyName
+                        (ref) => ref.identifier.name === propertyName
                       );
 
                       if (propertyRef) {
                         break;
                       }
 
-                        searchScope = searchScope.upper;
+                      searchScope = searchScope.upper;
                     }
 
                     if (propertyRef?.resolved) {
-                        let checkScope: Scope.Scope | null = propertyRef.resolved.scope;
+                      let checkScope: Scope | null = propertyRef.resolved.scope;
 
-                        while (checkScope) {
-                            if (checkScope === scope) {
-                                isInnerScopeProperty = true;
+                      while (checkScope) {
+                        if (checkScope === scope) {
+                          isInnerScopeProperty = true;
 
-                                break;
-                            }
-                            checkScope = checkScope.upper;
+                          break;
                         }
+                        checkScope = checkScope.upper;
+                      }
 
-                        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                    // @ts-expect-error
-                    reference.isInnerScopeComputedProperty = isInnerScopeProperty;
+                      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                      // @ts-expect-error
+                      reference.isInnerScopeComputedProperty = isInnerScopeProperty;
 
                       const baseValueKey = `${reference.identifier.name}.value`;
 
@@ -926,13 +996,10 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
                 }
 
                 if (isAssignmentOnly) {
-                  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                  // @ts-expect-error
+                  // @ts-expect-error passing isComputedAssignmentOnly to Reference
                   reference.isComputedAssignmentOnly = true;
                 }
               } else {
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                // @ts-expect-error
                 dependencyNode = referenceNode.parent;
               }
             }
@@ -942,12 +1009,8 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           const dependency = analyzePropertyChain(dependencyNode, optionalChains);
 
           if (
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+            'parent' in dependencyNode &&
             dependencyNode.parent &&
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
             isSignalValueAccess(dependencyNode.parent, context) &&
             dependencyNode.type === 'Identifier' &&
             !signalVariables.has(dependencyNode) &&
@@ -958,22 +1021,14 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
           if (
             isEffect &&
+            'parent' in dependencyNode &&
+            typeof dependencyNode.parent === 'object' &&
+            dependencyNode.parent !== null &&
+            'type' in dependencyNode.parent &&
             dependencyNode.type === 'Identifier' &&
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            (dependencyNode.parent?.type === 'MemberExpression' ||
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
-              dependencyNode.parent?.type === 'OptionalMemberExpression') &&
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+            dependencyNode.parent.type === 'MemberExpression' &&
             !dependencyNode.parent.computed &&
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
             dependencyNode.parent.property.type === 'Identifier' &&
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
             dependencyNode.parent.property.name === 'current' &&
             isInsideEffectCleanup(reference)
           ) {
@@ -984,19 +1039,14 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           }
 
           if (
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
             dependencyNode.parent?.type === 'TSTypeQuery' ||
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
             dependencyNode.parent?.type === 'TSTypeReference'
           ) {
             continue;
           }
 
-          const def = reference.resolved.defs[0];
+          const def: Definition | undefined = reference.resolved.defs[0];
 
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           if (def == null) {
             continue;
           }
@@ -1008,10 +1058,8 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
           let isAssignment = isOnlyAssignmentReference(reference);
 
-          const isComputedAssignmentOnly =
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            reference.isComputedAssignmentOnly === true;
+          // @ts-expect-error reading isComputedAssignmentOnly to Reference
+          const isComputedAssignmentOnly = reference.isComputedAssignmentOnly === true;
 
           if (isComputedAssignmentOnly) {
             isAssignment = true;
@@ -1028,89 +1076,58 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
               }
             }
           } else {
-            const resolved = reference.resolved;
-
-            const isSignalValueRef = isSignalValueAccess(reference.identifier, context);
-
             const isImportedSignal =
               dependency.endsWith('Signal') ||
               (dependency.includes('.') && dependency.split('.')[0].endsWith('Signal'));
 
             const isSignalValueAccessBool = dependency.endsWith('.value');
 
-            // For now, treat all function dependencies as non-stable to fix the context function issue
-            // But exclude useRef variables which should be treated as stable
-            const isFunctionDependency =
-              typeof dependency === 'string' &&
-              !dependency.includes('.') &&
-              !dependency.endsWith('Signal') &&
-              // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-              resolved &&
-              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
-              resolved.defs &&
-              resolved.defs.length > 0 &&
-              !memoizedIsStableKnownHookValue(resolved); // Exclude useRef and other stable hook values
-
-            const isStable =
-              // eslint-disable-next-line react-signals-hooks/prefer-show-over-ternary
-              isSignalValueRef ||
-              isSignalDependency(dependency) ||
-              isImportedSignal ||
-              isSignalValueAccessBool
-                ? false
-                : isFunctionDependency
-                  ? false // Function dependencies should not be marked as stable
-                  : memoizedIsStableKnownHookValue(resolved) ||
-                    memoizedIsFunctionWithoutCapturedValues(resolved);
-
             if (isImportedSignal || isSignalValueAccessBool) {
               if (isImportedSignal && !isSignalValueAccessBool) {
-                const signalName = dependency.includes('.') ? dependency.split('.')[0] : dependency;
-
-                externalDependencies.delete(signalName);
+                externalDependencies.delete(
+                  dependency.includes('.') ? dependency.split('.')[0] : dependency
+                );
               }
 
               if (isSignalValueAccessBool) {
-                const signalName = dependency.replace('.value', '');
-                externalDependencies.delete(signalName);
+                externalDependencies.delete(dependency.replace('.value', ''));
               }
 
-              // biome-ignore format: because
               if (
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-expect-error
-                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-                reference.identifier.type === "MemberExpression" &&
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                reference.identifier.type === 'MemberExpression' &&
                 // @ts-expect-error
-                reference.identifier.property.type === "Identifier" &&
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                reference.identifier.property.type === 'Identifier' &&
                 // @ts-expect-error
-                reference.identifier.property.name === "value" &&
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                reference.identifier.property.name === 'value' &&
                 // @ts-expect-error
-                reference.identifier.object.type === "Identifier"
+                reference.identifier.object.type === 'Identifier'
               ) {
-
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-expect-error
-                const signalName = reference.identifier.object.name;
-
-                externalDependencies.delete(signalName);
+                externalDependencies.delete(reference.identifier.object.name);
               }
             }
 
-            const hasInnerScopeComputedProperty =
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
-              reference.isInnerScopeComputedProperty === true;
-
             dependencies.set(dependency, {
               node: dependencyNode,
-              isStable,
+              isStable:
+                isSignalValueAccess(reference.identifier, context) ||
+                isSignalDependency(dependency) ||
+                isImportedSignal ||
+                isSignalValueAccessBool
+                  ? false
+                  : typeof dependency === 'string' &&
+                      !dependency.includes('.') &&
+                      !dependency.endsWith('Signal') &&
+                      reference.resolved.defs.length > 0 &&
+                      !memoizedIsStableKnownHookValue(reference.resolved)
+                    ? false // Function dependencies should not be marked as stable
+                    : memoizedIsStableKnownHookValue(reference.resolved) ||
+                      memoizedIsFunctionWithoutCapturedValues(reference.resolved),
               references: [reference],
               hasReads: !isAssignment && !isComputedAssignmentOnly,
-              hasInnerScopeComputedProperty,
+              // @ts-expect-error reading isInnerScopeComputedProperty from Reference
+              hasInnerScopeComputedProperty: reference.isInnerScopeComputedProperty === true,
             });
           }
         }
@@ -1120,28 +1137,36 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         }
       }
 
-      currentRefsInEffectCleanup.forEach(({ reference, dependencyNode }, dependency) => {
-        const references = reference.resolved?.references || [];
+      currentRefsInEffectCleanup.forEach(({ reference, dependencyNode }): void => {
+        const references = reference.resolved?.references ?? [];
+
         let foundCurrentAssignment = false;
 
         for (const ref of references) {
-          const { identifier } = ref;
-
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-expect-error
-          const { parent } = identifier;
-
           if (
-            parent != null &&
-            parent.type === 'MemberExpression' &&
-            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-            !parent.computed &&
-            parent.property.type === 'Identifier' &&
-            parent.property.name === 'current' &&
-            parent.parent?.type === 'AssignmentExpression' &&
-            parent.parent.left === parent
+            'parent' in ref.identifier &&
+            ref.identifier.parent != null &&
+            typeof ref.identifier.parent === 'object' &&
+            'type' in ref.identifier.parent &&
+            ref.identifier.parent.type === 'MemberExpression' &&
+            (!('computed' in ref.identifier.parent) || !ref.identifier.parent.computed) &&
+            'property' in ref.identifier.parent &&
+            ref.identifier.parent.property != null &&
+            typeof ref.identifier.parent.property === 'object' &&
+            'type' in ref.identifier.parent.property &&
+            ref.identifier.parent.property.type === 'Identifier' &&
+            'name' in ref.identifier.parent.property &&
+            ref.identifier.parent.property.name === 'current' &&
+            'parent' in ref.identifier.parent &&
+            ref.identifier.parent.parent != null &&
+            typeof ref.identifier.parent.parent === 'object' &&
+            'type' in ref.identifier.parent.parent &&
+            ref.identifier.parent.parent.type === 'AssignmentExpression' &&
+            'left' in ref.identifier.parent.parent &&
+            ref.identifier.parent.parent.left === ref.identifier.parent
           ) {
             foundCurrentAssignment = true;
+
             break;
           }
         }
@@ -1149,39 +1174,56 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         if (foundCurrentAssignment) {
           return;
         }
-        reportProblem({
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-expect-error
-          node: dependencyNode.parent.property,
-          message: `The ref value '${dependency}.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy '${dependency}.current' to a variable inside the effect, and use that variable in the cleanup function.`,
+
+        context.report({
+          messageId: 'staleAssignmentDependency',
+          data: {
+            dependency: dependencyNode.name,
+            hookName: reactiveHookName,
+          },
+          node:
+            'property' in dependencyNode.parent ? dependencyNode.parent.property : dependencyNode,
         });
       });
 
       const staleAssignments = new Set<string>();
 
-      function reportStaleAssignment(writeExpr: Node, key: string): void {
-        if (staleAssignments.has(key)) {
-          return;
-        }
-
-        staleAssignments.add(key);
-
-        reportProblem({
-          node: writeExpr,
-          message: `Assignments to the '${key}' variable from inside React Hook ${getSourceCode().getText(reactiveHook)} will be lost after each render. To preserve the value over time, store it in a useRef Hook and keep the mutable value in the '.current' property. Otherwise, you can move this variable directly inside ${getSourceCode().getText(reactiveHook)}.`,
-        });
-      }
-
       const stableDependencies = new Set<string>();
 
-      dependencies.forEach(({ isStable, references }, key) => {
+      dependencies.forEach(({ isStable, references }: Dependency, key: string): void => {
         if (isStable) {
           stableDependencies.add(key);
         }
 
         for (const reference of references) {
           if (reference.writeExpr) {
-            reportStaleAssignment(reference.writeExpr, key);
+            if (staleAssignments.has(key)) {
+              return;
+            }
+
+            staleAssignments.add(key);
+
+            context.report({
+              node: reference.writeExpr ?? reference.identifier,
+              data: {
+                eventName: key,
+                hookName: reactiveHookName,
+              },
+              messageId: 'useEffectEventInDependencyArray',
+              suggest: [
+                {
+                  messageId: 'removeDependency',
+                  data: {
+                    dependency: key,
+                  },
+                  fix(fixer) {
+                    // const sourceCode = context.sourceCode;
+                    const [start, end] = reference.identifier.range;
+                    return fixer.removeRange([start, end + 1]); // +1 to remove the following comma if any
+                  },
+                },
+              ],
+            });
           }
         }
       });
@@ -1197,27 +1239,24 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
         let setStateInsideEffectWithoutDeps: string | null = null;
 
-        dependencies.forEach(({ references }, key) => {
-          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-          if (setStateInsideEffectWithoutDeps) {
+        dependencies.forEach(({ references }: Dependency, key: string): void => {
+          if (setStateInsideEffectWithoutDeps !== null && setStateInsideEffectWithoutDeps !== '') {
             return;
           }
 
           for (const reference of references) {
-            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-            if (setStateInsideEffectWithoutDeps) {
+            if (
+              setStateInsideEffectWithoutDeps !== null &&
+              setStateInsideEffectWithoutDeps !== ''
+            ) {
               return;
             }
 
-            const id = reference.identifier;
-
-            const isSetState = setStateCallSites.has(id);
-
-            if (!isSetState) {
+            if (!setStateCallSites.has(reference.identifier)) {
               return;
             }
 
-            let fnScope: Scope.Scope | null = reference.from;
+            let fnScope: Scope | null = reference.from;
 
             while (fnScope != null && fnScope.type !== 'function') {
               fnScope = fnScope.upper;
@@ -1232,24 +1271,95 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           }
         });
 
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
-        if (setStateInsideEffectWithoutDeps) {
-          const { suggestedDependencies } = collectRecommendations({
-            dependencies,
-            declaredDependencies: [],
-            stableDependencies,
-            externalDependencies: new Set<string>(),
-            isEffect: true,
-          });
+        const { suggestedDependencies } = collectRecommendations({
+          dependencies,
+          declaredDependencies: [],
+          stableDependencies,
+          externalDependencies: new Set<string>(),
+          isEffect: true,
+        });
 
-          reportProblem({
+        const hookName = context.sourceCode.getText(
+          'callee' in reactiveHook ? reactiveHook.callee : reactiveHook
+        );
+
+        const depsText = suggestedDependencies.join(', ');
+
+        const hasDependencies = suggestedDependencies.length > 0;
+
+        if (
+          typeof setStateInsideEffectWithoutDeps === 'string' &&
+          setStateInsideEffectWithoutDeps !== ''
+        ) {
+          // Report a more specific error when setState is used without dependencies
+          context.report({
             node: reactiveHook,
-            message: `React Hook ${reactiveHookName} contains a call to '${setStateInsideEffectWithoutDeps}'. Without a list of dependencies, this can lead to an infinite chain of updates. To fix this, pass [${suggestedDependencies.join(', ')}] as a second argument to the ${reactiveHookName} Hook.`,
+            messageId: 'missingDependency',
+            data: {
+              hookName,
+              dependency: setStateInsideEffectWithoutDeps,
+              dependencies: depsText,
+              reason: `\n  - '${setStateInsideEffectWithoutDeps}' is updated inside the effect but not listed in the dependency array\n  - This can lead to an infinite loop of re-renders`,
+            },
+            suggest: hasDependencies
+              ? [
+                  {
+                    messageId: 'addDependencies',
+                    data: { dependencies: depsText },
+                    fix(fixer) {
+                      const lastArg =
+                        'arguments' in reactiveHook
+                          ? reactiveHook.arguments[reactiveHook.arguments.length - 1]
+                          : null;
+
+                      const insertPosition = lastArg?.range[1];
+
+                      if (typeof insertPosition !== 'number') {
+                        return null;
+                      }
+
+                      return fixer.insertTextAfterRange(
+                        [insertPosition, insertPosition],
+                        `, [${depsText}]`
+                      );
+                    },
+                  },
+                ]
+              : [],
+          });
+        } else if (hasDependencies) {
+          // Report a general missing dependencies error
+          context.report({
+            node: reactiveHook,
+            messageId:
+              suggestedDependencies.length > 1 ? 'missingDependencies' : 'missingDependency',
+            data: {
+              hookName,
+              dependencies: depsText,
+              dependency: suggestedDependencies[0],
+              reason:
+                '\n  - The following values are used in the effect but not listed in the dependency array:' +
+                suggestedDependencies.map((dep) => `\n    - '${dep}'`).join(''),
+            },
             suggest: [
               {
-                desc: `Add dependencies array: [${suggestedDependencies.join(', ')}]`,
+                messageId: 'addDependencies',
+                data: { dependencies: depsText },
                 fix(fixer) {
-                  return fixer.insertTextAfter(node, `, [${suggestedDependencies.join(', ')}]`);
+                  const lastArg =
+                    'arguments' in reactiveHook
+                      ? reactiveHook.arguments[reactiveHook.arguments.length - 1]
+                      : null;
+                  const insertPosition = lastArg?.range[1];
+
+                  if (typeof insertPosition !== 'number') {
+                    return null;
+                  }
+
+                  return fixer.insertTextAfterRange(
+                    [insertPosition, insertPosition],
+                    `, [${depsText}]`
+                  );
                 },
               },
             ],
@@ -1267,159 +1377,351 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         return;
       }
 
-      const declaredDependencies: Array<{ key: string; node: Node }> = [];
-
-      const isArrayExpression = declaredDependenciesNode.type === 'ArrayExpression';
+      const declaredDependencies: Array<DeclaredDependency> = [];
 
       const isTSAsArrayExpression =
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
         declaredDependenciesNode.type === 'TSAsExpression' &&
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
         declaredDependenciesNode.expression.type === 'ArrayExpression';
 
-      if (!isArrayExpression && !isTSAsArrayExpression) {
-        reportProblem({
+      if (!(declaredDependenciesNode.type === 'ArrayExpression') && !isTSAsArrayExpression) {
+        const hookName = context.sourceCode.getText(
+          'callee' in reactiveHook ? reactiveHook.callee : reactiveHook
+        );
+
+        const suggestedDeps = Array.from(dependencies.entries())
+          .filter(([_, dep]) => dep.hasReads && !dep.isComputedAssignmentOnly)
+          .map(([key]) => key);
+
+        context.report({
           node: declaredDependenciesNode,
-          message: `React Hook ${getSourceCode().getText(reactiveHook)} was passed a dependency list that is not an array literal. This means we can't statically verify whether you've passed the correct dependencies.`,
+          messageId: 'notArrayLiteral',
+          data: {
+            hookName,
+            dependencies: suggestedDeps.join(', '),
+            dependency: suggestedDeps[0] || '',
+          },
+          suggest: [
+            {
+              messageId: 'addDependencies',
+              data: {
+                dependencies: suggestedDeps.join(', '),
+              },
+              fix(fixer) {
+                return fixer.insertTextAfter(node, `, [${suggestedDeps.join(', ')}]`);
+              },
+            },
+          ],
         });
       } else {
         const arrayExpression = isTSAsArrayExpression
-          ? // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
-            declaredDependenciesNode.expression
+          ? declaredDependenciesNode.expression
           : declaredDependenciesNode;
 
-        (arrayExpression as ArrayExpression).elements.forEach((declaredDependencyNode) => {
-          if (declaredDependencyNode === null) {
-            return;
-          }
+        if ('elements' in arrayExpression) {
+          arrayExpression.elements.forEach(
+            (
+              declaredDependencyNode:
+                | TSESTree.SpreadElement
+                | TSESTree.Expression
+                | TSESTree.DestructuringPattern
+                | null
+            ) => {
+              if (declaredDependencyNode === null) {
+                return;
+              }
 
-          if (declaredDependencyNode.type === 'SpreadElement') {
-            reportProblem({
-              node: declaredDependencyNode,
-              message: `React Hook ${getSourceCode().getText(reactiveHook)} has a spread element in its dependency array. This means we can't statically verify whether you've passed the correct dependencies.`,
-            });
+              if (declaredDependencyNode.type === 'SpreadElement') {
+                const hookName = context.sourceCode.getText(
+                  'callee' in reactiveHook ? reactiveHook.callee : reactiveHook
+                );
 
-            return;
-          }
+                const spreadSource = context.sourceCode.getText(declaredDependencyNode.argument);
 
-          if (useEffectEventVariables.has(declaredDependencyNode)) {
-            reportProblem({
-              node: declaredDependencyNode,
-              message: `Functions returned from \`useEffectEvent\` must not be included in the dependency array. Remove \`${getSourceCode().getText(
-                declaredDependencyNode
-              )}\` from the list.`,
-              suggest: [
-                {
-                  desc: `Remove the dependency \`${getSourceCode().getText(
-                    declaredDependencyNode
-                  )}\``,
-                  fix(fixer) {
-                    if (typeof declaredDependencyNode.range === 'undefined') {
-                      return [];
-                    }
-
-                    return fixer.removeRange(declaredDependencyNode.range);
-                  },
-                },
-              ],
-            });
-          }
-
-          let declaredDependency: string | undefined;
-
-          let dependencyText = '';
-
-          try {
-            dependencyText = getSourceCode().getText(declaredDependencyNode);
-
-            const arrayMethods = [
-              '.some',
-              '.map',
-              '.filter',
-              '.forEach',
-              '.find',
-              '.every',
-              '.reduce',
-              '.reduceRight',
-              '.findIndex',
-              '.includes',
-              '.indexOf',
-              '.lastIndexOf',
-            ];
-
-            const isArrayMethod = arrayMethods.some((method) => {
-              return dependencyText.endsWith(method);
-            });
-
-            const hasParentheses = dependencyText.includes('(') && dependencyText.includes(')');
-
-            if (hasParentheses || isArrayMethod) {
-              return;
-            }
-          } catch (error) {
-            console.error(`Error getting dependency text:`, error);
-          }
-
-          try {
-            declaredDependency = analyzePropertyChain(declaredDependencyNode, null);
-          } catch (error: unknown) {
-            if (error instanceof Error && /Unsupported node type/.test(error.message)) {
-              if (declaredDependencyNode.type === 'Literal') {
-                if (
-                  declaredDependencyNode.value != null &&
-                  dependencies.has(declaredDependencyNode.value as string)
-                ) {
-                  reportProblem({
-                    node: declaredDependencyNode,
-                    message: `The ${declaredDependencyNode.raw} literal is not a valid dependency because it never changes. Did you mean to include ${declaredDependencyNode.value} in the array instead?`,
-                  });
-                } else {
-                  reportProblem({
-                    node: declaredDependencyNode,
-                    message: `The ${declaredDependencyNode.raw} literal is not a valid dependency because it never changes. You can safely remove it.`,
-                  });
-                }
-              } else {
-                reportProblem({
+                context.report({
                   node: declaredDependencyNode,
-                  message: `React Hook ${getSourceCode().getText(reactiveHook)} has a complex expression in the dependency array. Extract it to a separate variable so it can be statically checked.`,
+                  messageId: 'spreadElementInDependencyArray',
+                  data: {
+                    hookName,
+                    source: spreadSource,
+                  },
+                  suggest: [
+                    {
+                      messageId: 'removeDependency',
+                      data: { dependency: `...${spreadSource}` },
+                      fix(fixer) {
+                        const sourceCode = context.sourceCode;
+                        const [start, end] = declaredDependencyNode.range;
+                        const prevToken = sourceCode.getTokenBefore(declaredDependencyNode);
+                        const nextToken = sourceCode.getTokenAfter(declaredDependencyNode);
+
+                        // Handle removing with surrounding commas if needed
+                        let removeStart = start;
+                        let removeEnd = end;
+
+                        if (prevToken?.value === ',') {
+                          removeStart = prevToken.range[0];
+                        } else if (nextToken?.value === ',') {
+                          removeEnd = nextToken.range[1];
+                        }
+
+                        return fixer.removeRange([removeStart, removeEnd]);
+                      },
+                    },
+                  ],
+                });
+
+                return;
+              }
+
+              if (useEffectEventVariables.has(declaredDependencyNode as TSESTree.Expression)) {
+                const hookName = context.sourceCode.getText(
+                  'callee' in reactiveHook ? reactiveHook.callee : reactiveHook
+                );
+
+                const eventName = context.sourceCode.getText(declaredDependencyNode);
+
+                context.report({
+                  node: declaredDependencyNode,
+                  messageId: 'useEffectEventInDependencyArray',
+                  data: {
+                    hookName,
+                    eventName,
+                  },
+                  suggest: [
+                    {
+                      messageId: 'removeDependency',
+                      data: { dependency: eventName },
+                      fix(fixer) {
+                        const sourceCode = context.sourceCode;
+                        const [start, end] = declaredDependencyNode.range;
+                        const prevToken = sourceCode.getTokenBefore(declaredDependencyNode);
+                        const nextToken = sourceCode.getTokenAfter(declaredDependencyNode);
+
+                        // Handle removing with surrounding commas if needed
+                        let removeStart = start;
+                        let removeEnd = end;
+
+                        if (prevToken?.value === ',') {
+                          removeStart = prevToken.range[0];
+                        } else if (nextToken?.value === ',') {
+                          removeEnd = nextToken.range[1];
+                        }
+
+                        return fixer.removeRange([removeStart, removeEnd]);
+                      },
+                    },
+                  ],
                 });
               }
 
-              return;
-            }
+              let declaredDependency: string | undefined;
 
-            throw error;
-          }
+              try {
+                const hookName = context.sourceCode.getText(
+                  'callee' in reactiveHook ? reactiveHook.callee : reactiveHook
+                );
 
-          let maybeID = declaredDependencyNode;
+                // Check for function calls or complex expressions
+                if (
+                  declaredDependencyNode.type === 'CallExpression' ||
+                  declaredDependencyNode.type === 'NewExpression' ||
+                  (declaredDependencyNode.type === 'MemberExpression' &&
+                    declaredDependencyNode.property.type === 'Identifier' &&
+                    declaredDependencyNode.property.name === 'bind')
+                ) {
+                  let message = '';
+                  let suggestion: SuggestionReportDescriptor<MessageIds> | null = null;
 
-          while (
-            ['MemberExpression', 'OptionalMemberExpression', 'ChainExpression'].includes(
-              maybeID.type
-            )
-          ) {
-            // @ts-expect-error This can be done better
-            maybeID = maybeID.object ?? maybeID.expression.object;
-          }
-          const isDeclaredInComponent = !componentScope.through.some(
-            (ref: Scope.Reference): boolean => {
-              return ref.identifier === maybeID;
+                  if (declaredDependencyNode.type === 'CallExpression') {
+                    const calleeText = context.sourceCode.getText(declaredDependencyNode.callee);
+                    message =
+                      `Function call '${calleeText}()' in dependency array of '${hookName}'. ` +
+                      'This will cause the effect to re-run on every render. ' +
+                      'Move the function call inside the effect or memoize the result with useMemo.';
+
+                    // Suggest moving the call inside the effect
+                    suggestion = {
+                      messageId: 'moveInsideEffect',
+                      data: { call: `${calleeText}()` },
+                      fix(fixer) {
+                        const effectBody = node.body;
+                        if (effectBody.type !== 'BlockStatement') return null;
+
+                        const sourceCode = context.sourceCode;
+                        const callText = sourceCode.getText(declaredDependencyNode);
+                        const range = declaredDependencyNode.range;
+                        const prevToken = sourceCode.getTokenBefore(declaredDependencyNode);
+                        const nextToken = sourceCode.getTokenAfter(declaredDependencyNode);
+
+                        // Handle removing with surrounding commas if needed
+                        let removeStart = range[0];
+                        let removeEnd = range[1];
+
+                        if (prevToken?.value === ',') {
+                          removeStart = prevToken.range[0];
+                        } else if (nextToken?.value === ',') {
+                          removeEnd = nextToken.range[1];
+                        }
+
+                        const removeFix = fixer.removeRange([removeStart, removeEnd]);
+                        const insertFix = fixer.insertTextBefore(
+                          effectBody,
+                          `\n  const result = ${callText};\n`
+                        );
+
+                        return [removeFix, insertFix];
+                      },
+                    };
+                  } else if (declaredDependencyNode.type === 'NewExpression') {
+                    const constructorName = context.sourceCode.getText(
+                      declaredDependencyNode.callee
+                    );
+                    message =
+                      `Constructor call 'new ${constructorName}()' in dependency array of '${hookName}'. ` +
+                      'This will create a new instance on every render. ' +
+                      'Move the instantiation inside the effect or memoize it with useMemo.';
+                  } else if (
+                    declaredDependencyNode.type === 'MemberExpression' &&
+                    declaredDependencyNode.property.type === 'Identifier' &&
+                    declaredDependencyNode.property.name === 'bind'
+                  ) {
+                    const boundFunction = context.sourceCode.getText(declaredDependencyNode.object);
+                    message =
+                      `'.bind()' call on '${boundFunction}' in dependency array of '${hookName}'. ` +
+                      'This will create a new function on every render. ' +
+                      'Move the bind call outside the component or use useCallback.';
+                  }
+
+                  context.report({
+                    node: declaredDependencyNode,
+                    messageId: 'dependencyWithoutSignal',
+                    data: {
+                      message,
+                    },
+                    suggest: suggestion !== null ? [suggestion] : [],
+                  });
+
+                  return;
+                }
+              } catch (error: unknown) {
+                console.error(`Error getting dependency text:`, error);
+              }
+
+              try {
+                declaredDependency = analyzePropertyChain(declaredDependencyNode, null);
+              } catch (error: unknown) {
+                if (error instanceof Error && /Unsupported node type/.test(error.message)) {
+                  if (declaredDependencyNode.type === 'Literal') {
+                    if (
+                      declaredDependencyNode.value != null &&
+                      dependencies.has(declaredDependencyNode.value as string)
+                    ) {
+                      context.report({
+                        node: declaredDependencyNode,
+                        data: {
+                          dependency: declaredDependencyNode.raw,
+                          hookName: reactiveHookName,
+                        },
+                        messageId: 'staleAssignmentLiteral',
+                        suggest: [
+                          {
+                            messageId: 'removeDependency',
+                            data: {
+                              dependency: declaredDependencyNode.raw,
+                            },
+                            fix(fixer) {
+                              const [start, end] = declaredDependencyNode.range;
+                              return fixer.removeRange([start, end + 1]); // +1 to remove the following comma if any
+                            },
+                          },
+                        ],
+                      });
+                    } else {
+                      context.report({
+                        node: declaredDependencyNode,
+                        data: {
+                          dependency: declaredDependencyNode.raw,
+                          hookName: reactiveHookName,
+                        },
+                        messageId: 'staleAssignmentUnstable',
+                        suggest: [
+                          {
+                            messageId: 'removeDependency',
+                            data: {
+                              dependency: declaredDependencyNode.raw,
+                            },
+                            fix(fixer) {
+                              const [start, end] = declaredDependencyNode.range;
+                              return fixer.removeRange([start, end + 1]); // +1 to remove the following comma if any
+                            },
+                          },
+                        ],
+                      });
+                    }
+                  } else {
+                    const nodeText = context.sourceCode.getText(declaredDependencyNode);
+                    context.report({
+                      node: declaredDependencyNode,
+                      data: {
+                        dependency: nodeText,
+                        hookName: reactiveHookName,
+                      },
+                      messageId: 'staleAssignmentExpression',
+                      suggest: [
+                        {
+                          messageId: 'removeDependency',
+                          data: {
+                            dependency: nodeText,
+                          },
+                          fix(fixer) {
+                            const [start, end] = declaredDependencyNode.range;
+                            return fixer.removeRange([start, end + 1]); // +1 to remove the following comma if any
+                          },
+                        },
+                      ],
+                    });
+                  }
+
+                  return;
+                }
+
+                throw error;
+              }
+
+              let maybeID = declaredDependencyNode;
+
+              while (
+                ['MemberExpression', 'OptionalMemberExpression', 'ChainExpression'].includes(
+                  maybeID.type
+                )
+              ) {
+                maybeID =
+                  'object' in maybeID
+                    ? maybeID.object
+                    : 'expression' in maybeID
+                      ? typeof maybeID.expression === 'object' && 'object' in maybeID.expression
+                        ? maybeID.expression.object
+                        : maybeID
+                      : maybeID;
+              }
+
+              const isDeclaredInComponent = !componentScope.through.some(
+                (ref: Reference): boolean => {
+                  return ref.identifier === maybeID;
+                }
+              );
+
+              declaredDependencies.push({
+                key: declaredDependency,
+                node: declaredDependencyNode,
+              });
+
+              if (!isDeclaredInComponent) {
+                externalDependencies.add(declaredDependency);
+              }
             }
           );
-
-          declaredDependencies.push({
-            key: declaredDependency,
-            node: declaredDependencyNode,
-          });
-
-          if (!isDeclaredInComponent) {
-            externalDependencies.add(declaredDependency);
-          }
-        });
+        }
       }
 
       const {
@@ -1454,7 +1756,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
             isUsedOutsideOfHook,
             depType,
           }: {
-            construction: Scope.Definition;
+            construction: Definition;
             depType: string;
             isUsedOutsideOfHook: boolean;
           }): void => {
@@ -1462,7 +1764,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
             const constructionType = depType === 'function' ? 'definition' : 'initialization';
 
-            const defaultAdvice = `wrap the ${constructionType} of '${construction.name.name}' in its own ${wrapperHook}() Hook.`;
+            const defaultAdvice = `wrap the ${constructionType} of '${'name' in construction.name ? construction.name.name : construction.name.type}' in its own ${wrapperHook}() Hook.`;
 
             const advice = isUsedOutsideOfHook
               ? `To fix this, ${defaultAdvice}`
@@ -1474,40 +1776,40 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
                 : 'makes';
 
             const message =
-              `The '${construction.name.name}' ${depType} ${causation} the dependencies of ` +
+              `The '${'name' in construction.name ? construction.name.name : construction.name.type}' ${depType} ${causation} the dependencies of ` +
               `${reactiveHookName} Hook (at line ${declaredDependenciesNode.loc?.start.line}) ` +
               `change on every render. ${advice}`;
 
-            let suggest: Rule.ReportDescriptor['suggest'];
-
-            if (isUsedOutsideOfHook && construction.type === 'Variable' && depType === 'function') {
-              suggest = [
-                {
-                  desc: `Wrap the ${constructionType} of '${construction.name.name}' in its own ${wrapperHook}() Hook.`,
-                  fix(fixer: Rule.RuleFixer): Array<Rule.Fix> {
-                    const [before, after] =
-                      wrapperHook === 'useMemo'
-                        ? ['useMemo(() => { return ', '; })']
-                        : ['useCallback(', ')'];
-
-                    if (construction.node.init == null) {
-                      return [];
-                    }
-
-                    return [
-                      fixer.insertTextBefore(construction.node.init, before),
-
-                      fixer.insertTextAfter(construction.node.init, after),
-                    ];
-                  },
-                },
-              ];
-            }
-
-            reportProblem({
+            context.report({
               node: construction.node,
-              message,
-              suggest,
+              data: {
+                message,
+              },
+              messageId: 'missingDependencies',
+              suggest:
+                isUsedOutsideOfHook && construction.type === 'Variable' && depType === 'function'
+                  ? [
+                      {
+                        messageId: 'missingDependencies',
+                        fix(fixer) {
+                          const [before, after] =
+                            wrapperHook === 'useMemo'
+                              ? ['useMemo(() => { return ', '; })']
+                              : ['useCallback(', ')'];
+
+                          if (construction.node.init == null) {
+                            return [];
+                          }
+
+                          return [
+                            fixer.insertTextBefore(construction.node.init, before),
+
+                            fixer.insertTextAfter(construction.node.init, after),
+                          ];
+                        },
+                      },
+                    ]
+                  : [],
             });
           }
         );
@@ -1563,85 +1865,22 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         return finalPath;
       }
 
-      function reportProblem(descriptor: Rule.ReportDescriptor): void {
-        const hasAutofix = !!(
-          descriptor.fix ||
-          (enableDangerousAutofixThisMayCauseInfiniteLoops &&
-            Array.isArray(descriptor.suggest) &&
-            descriptor.suggest.length > 0)
-        );
+      function joinEnglish(arr: Array<string>): string {
+        let s = '';
 
-        const hasSuggestions = Array.isArray(descriptor.suggest) && descriptor.suggest.length > 0;
+        for (let i = 0; i < arr.length; i++) {
+          s += arr[i];
 
-        if (
-          (hasAutofix || hasSuggestions) &&
-          'message' in descriptor &&
-          typeof descriptor.message === 'string'
-        ) {
-          let indicator = '';
-
-          if (hasAutofix) {
-            indicator = ' [AUTOFIXABLE]';
-          } else if (hasSuggestions) {
-            indicator = ' [SUGGESTIONS AVAILABLE]';
-          }
-
-          descriptor.message += indicator;
-        }
-
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if ('message' in descriptor && descriptor.message?.includes('unnecessary dependency')) {
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          const match = descriptor.message?.match(/unnecessary dependency: '([^']+)'/i);
-
-          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-          if (match?.[1]) {
-            const depKey = match[1];
-
-            if (depKey.includes('.value[')) {
-              const valueIndex = depKey.indexOf('.value[');
-              if (valueIndex !== -1) {
-                const closingBracket = depKey.indexOf(']', valueIndex);
-                if (closingBracket !== -1 && !depKey.includes('.', valueIndex + 7)) {
-                  if (
-                    descriptor.message.includes('redundant') ||
-                    descriptor.message.includes('unnecessary')
-                  ) {
-                    // Skip the autofix to prevent circular fixes
-                    context.report({
-                      node,
-                      message: descriptor.message,
-                      // Don't include fix or suggest
-                    });
-
-                    return;
-                  }
-                }
-              }
-            }
-
-            if (depKey.includes('.') && !depKey.includes('.value[')) {
-              if (
-                ('message' in descriptor && descriptor.message.includes('redundant')) ||
-                descriptor.message.includes('unnecessary')
-              ) {
-                const parts = depKey.split('.');
-
-                if (parts.length === 2) {
-                  context.report({
-                    node,
-                    message: descriptor.message,
-                    // Don't include fix or suggest
-                  });
-
-                  return;
-                }
-              }
-            }
+          if (i === 0 && arr.length === 2) {
+            s += ' and ';
+          } else if (i === arr.length - 2 && arr.length > 2) {
+            s += ', and ';
+          } else if (i < arr.length - 1) {
+            s += ', ';
           }
         }
 
-        context.report(descriptor);
+        return s;
       }
 
       function getWarningMessage(
@@ -1664,29 +1903,66 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
       }
 
       let extraWarning = '';
-      if (unnecessaryDependencies.size > 0) {
-        let badRef: string | null = null;
+      const unnecessaryDepsList = Array.from(unnecessaryDependencies);
 
-        Array.from(unnecessaryDependencies.keys()).forEach((key) => {
-          if (badRef !== null) {
-            return;
-          }
+      if (unnecessaryDepsList.length > 0) {
+        const badRef = unnecessaryDepsList.find((key) => key.endsWith('.current'));
+        const externalDep =
+          externalDependencies.size > 0 ? Array.from(externalDependencies)[0] : null;
 
-          if (key.endsWith('.current')) {
-            badRef = key;
+        if (badRef) {
+          extraWarning = ` Mutable values like '${badRef}' aren't valid dependencies because mutating them doesn't re-render the component.`;
+        } else if (externalDep && !scope.set.has(externalDep)) {
+          extraWarning = ` Outer scope values like '${externalDep}' aren't valid dependencies because mutating them doesn't re-render the component.`;
+        }
+
+        // Report each unnecessary dependency
+        const hookName = context.sourceCode.getText(
+          'callee' in reactiveHook ? reactiveHook.callee : reactiveHook
+        );
+
+        unnecessaryDepsList.forEach((depKey: string): void => {
+          const depNode = dependencies.get(depKey)?.node;
+          if (depNode) {
+            context.report({
+              node: depNode,
+              messageId:
+                unnecessaryDepsList.length > 1
+                  ? 'unnecessaryDependencies'
+                  : 'unnecessaryDependency',
+              data: {
+                hookName,
+                dependencies: unnecessaryDepsList.join(', '),
+                dependency: depKey,
+              },
+              suggest: [
+                {
+                  messageId: 'removeDependency',
+                  data: { dependency: depKey },
+                  fix(fixer) {
+                    const sourceCode = context.sourceCode;
+                    const [start, end] = depNode.range;
+                    // const text = sourceCode.getText(depNode);
+                    const prevToken = sourceCode.getTokenBefore(depNode);
+                    const nextToken = sourceCode.getTokenAfter(depNode);
+
+                    // Handle removing with surrounding commas if needed
+                    let removeStart = start;
+                    let removeEnd = end;
+
+                    if (prevToken?.value === ',') {
+                      removeStart = prevToken.range[0];
+                    } else if (nextToken?.value === ',') {
+                      removeEnd = nextToken.range[1];
+                    }
+
+                    return fixer.removeRange([removeStart, removeEnd]);
+                  },
+                },
+              ],
+            });
           }
         });
-
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (badRef !== null) {
-          extraWarning = ` Mutable values like '${badRef}' aren't valid dependencies because mutating them doesn't re-render the component.`;
-        } else if (externalDependencies.size > 0) {
-          const dep = Array.from(externalDependencies)[0];
-
-          if (!scope.set.has(dep)) {
-            extraWarning = ` Outer scope values like '${dep}' aren't valid dependencies because mutating them doesn't re-render the component.`;
-          }
-        }
       }
 
       if (!extraWarning && missingDependencies.has('props')) {
@@ -1713,16 +1989,17 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
             break;
           }
 
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-expect-error
-          const parent = id.parent;
-
-          if (parent == null) {
+          if (id.parent == null) {
             isPropsOnlyUsedInMembers = false;
 
             break;
           }
-          if (parent.type !== 'MemberExpression' && parent.type !== 'OptionalMemberExpression') {
+
+          if (
+            id.parent.type !== 'MemberExpression' &&
+            // @ts-expect-error
+            id.parent.type !== 'OptionalMemberExpression'
+          ) {
             isPropsOnlyUsedInMembers = false;
 
             break;
@@ -1730,7 +2007,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         }
 
         if (isPropsOnlyUsedInMembers) {
-          extraWarning = ` However, 'props' will change when *any* prop changes, so the preferred fix is to destructure the 'props' object outside of the ${reactiveHookName} call and refer to those specific props inside ${getSourceCode().getText(reactiveHook)}.`;
+          extraWarning = ` However, 'props' will change when *any* prop changes, so the preferred fix is to destructure the 'props' object outside of the ${reactiveHookName} call and refer to those specific props inside ${context.sourceCode.getText(reactiveHook)}.`;
         }
       }
 
@@ -1738,7 +2015,6 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         let missingCallbackDep: string | null = null;
 
         missingDependencies.forEach((missingDep: string): void => {
-          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
           if (missingCallbackDep !== null && missingCallbackDep !== '') {
             return;
           }
@@ -1747,39 +2023,25 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
           const usedDep = dependencies.get(missingDep);
 
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           if (!usedDep?.references || usedDep?.references[0]?.resolved !== topScopeRef) {
             return;
           }
 
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          const def = topScopeRef?.defs[0];
+          const def: Definition | undefined = topScopeRef?.defs[0];
 
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           if (def?.name == null || def.type !== 'Parameter') {
             return;
           }
 
           let isFunctionCall = false;
 
-          let id: Identifier | undefined;
-
           for (const reference of usedDep.references) {
-            id = reference.identifier;
-
             if (
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
-              id.parent != null &&
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
-              (id.parent.type === 'CallExpression' ||
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+              reference.identifier.parent != null &&
+              (reference.identifier.parent.type === 'CallExpression' ||
                 // @ts-expect-error
-                id.parent.type === 'OptionalCallExpression') &&
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-expect-error
-              id.parent.callee === id
+                reference.identifier.parent.type === 'OptionalCallExpression') &&
+              reference.identifier.parent.callee === reference.identifier
             ) {
               isFunctionCall = true;
 
@@ -1794,7 +2056,6 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           missingCallbackDep = missingDep;
         });
 
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (missingCallbackDep !== null) {
           extraWarning = ` If '${missingCallbackDep}' changes too often, find the parent component that defines it and wrap that definition in useCallback.`;
         }
@@ -1806,7 +2067,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
             const valueIndex = key.indexOf('.value[');
 
             if (valueIndex !== -1) {
-              const baseValueKey = key.slice(0, valueIndex + 6); // Include ".value"
+              const baseValueKey = key.slice(0, valueIndex + 6);
 
               const isBaseValueDeclared = declaredDependencies.some(({ key: depKey }) => {
                 return depKey === baseValueKey;
@@ -1886,6 +2147,80 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         });
       }
 
+      // Report each duplicate dependency
+      if (duplicateDependencies.size > 0) {
+        const hookName = context.sourceCode.getText(
+          'callee' in reactiveHook ? reactiveHook.callee : reactiveHook
+        );
+
+        const duplicateDepsList = Array.from(duplicateDependencies);
+
+        // Group duplicate dependencies by their base name to find all occurrences
+        const duplicatesByKey = new Map<string, Array<TSESTree.Node>>();
+
+        for (const depKey of duplicateDepsList) {
+          const depNode = dependencies.get(depKey)?.node;
+
+          if (depNode) {
+            const baseKey = depKey.split('.')[0]; // Get the base key without property access
+
+            if (!duplicatesByKey.has(baseKey)) {
+              duplicatesByKey.set(baseKey, []);
+            }
+
+            duplicatesByKey.get(baseKey)?.push(depNode);
+          }
+        }
+
+        // Report each group of duplicates
+        for (const [baseKey, nodes] of duplicatesByKey.entries()) {
+          if (nodes.length > 1) {
+            // Report all but the first occurrence as duplicates
+            for (let i = 1; i < nodes.length; i++) {
+              const node = nodes[i];
+
+              context.report({
+                node,
+                messageId:
+                  duplicateDepsList.length > 1 ? 'duplicateDependencies' : 'duplicateDependency',
+                data: {
+                  hookName,
+                  dependencies: baseKey,
+                  dependency: baseKey,
+                },
+                suggest: [
+                  {
+                    messageId: 'removeDependency',
+                    data: { dependency: baseKey },
+                    fix(fixer) {
+                      const sourceCode = context.sourceCode;
+                      const [start, end] = node.range;
+                      const prevToken = sourceCode.getTokenBefore(node);
+                      const nextToken = sourceCode.getTokenAfter(node);
+
+                      // Handle removing with surrounding commas if needed
+                      let removeStart = start;
+                      let removeEnd = end;
+
+                      if (prevToken?.value === ',') {
+                        removeStart = prevToken.range[0];
+                      } else if (nextToken?.value === ',') {
+                        removeEnd = nextToken.range[1];
+                      }
+
+                      return fixer.removeRange([removeStart, removeEnd]);
+                    },
+                  },
+                ],
+              });
+            }
+          }
+        }
+      }
+
+      const missingDepsList = Array.from(missingDependencies);
+
+      // Generate summary messages for missing and unnecessary dependencies
       const missingMessage = getWarningMessage(missingDependencies, 'a', 'missing', 'include');
 
       const unnecessaryMessage = getWarningMessage(
@@ -1895,81 +2230,343 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
         'exclude'
       );
 
-      const duplicateMessage = getWarningMessage(duplicateDependencies, 'a', 'duplicate', 'omit');
+      // Report missing dependencies if any
+      if (missingDepsList.length > 0) {
+        const isEffect = /use(Effect|LayoutEffect|InsertionEffect|ImperativeHandle)/.test(
+          reactiveHookName
+        );
+        const suggestions: SuggestionReportDescriptor<MessageIds>[] = [];
 
-      const messages = [missingMessage, unnecessaryMessage, duplicateMessage]
-        .filter(Boolean)
-        .join('');
-
-      const problemReport: Rule.ReportDescriptor = {
-        node: declaredDependenciesNode,
-        message: `React Hook ${getSourceCode().getText(reactiveHook)} has ${messages}${extraWarning}`,
-        suggest: [
-          {
-            desc: `Update the dependencies array to be: [${suggestedDependencies
-              .map(formatDependency)
-              .join(', ')}]`,
+        // Suggestion 1: Add all missing dependencies
+        if (suggestedDependencies.length > 0) {
+          suggestions.push({
+            messageId: 'addAllDependencies',
+            data: {
+              count: missingDepsList.length,
+              dependencies: missingDepsList.map((d) => `'${d}'`).join(', '),
+            },
             fix(fixer) {
               return fixer.replaceText(
                 declaredDependenciesNode,
                 `[${suggestedDependencies.map(formatDependency).join(', ')}]`
               );
             },
-          },
-        ],
-      };
+          });
+        }
 
-      if (enableAutoFixForMemoAndCallback) {
-        problemReport.fix = problemReport.suggest?.[0].fix;
+        // Suggestion 2: Add each missing dependency individually
+        missingDepsList.forEach((dep) => {
+          const newDeps = new Set(declaredDependencies.map((d) => d.key));
+          newDeps.add(dep);
+
+          suggestions.push({
+            messageId: 'addSingleDependency',
+            data: {
+              dependency: dep,
+            },
+            fix(fixer) {
+              const depsArray = Array.from(newDeps).map((d) => formatDependency(d));
+              return fixer.replaceText(declaredDependenciesNode, `[${depsArray.join(', ')}]`);
+            },
+          });
+        });
+
+        // Suggestion 3: If it's an effect, suggest removing dependency array
+        if (isEffect) {
+          suggestions.push({
+            messageId: 'removeDependencyArray',
+            fix(fixer) {
+              const sourceCode = context.sourceCode;
+              const [start] = declaredDependenciesNode.range;
+              const prevToken = sourceCode.getTokenBefore(declaredDependenciesNode);
+              const startPos = prevToken?.value === ',' ? prevToken.range[0] : start;
+
+              return fixer.removeRange([startPos, declaredDependenciesNode.range[1]]);
+            },
+          });
+        }
+
+        // Main report
+        context.report({
+          node: declaredDependenciesNode,
+          messageId: missingDepsList.length > 1 ? 'missingDependencies' : 'missingDependency',
+          data: {
+            hookName: reactiveHookName,
+            dependencies: missingDepsList.join(', '),
+            dependency: missingDepsList[0] || '',
+            count: missingDepsList.length,
+            missingMessage: missingMessage || '',
+          },
+          suggest: suggestions,
+        });
       }
 
-      reportProblem(problemReport);
+      // Report unnecessary dependencies if any
+      if (unnecessaryDependencies.size > 0) {
+        const unnecessaryDepsList = Array.from(unnecessaryDependencies);
+        const hookName = context.sourceCode.getText(
+          'callee' in reactiveHook ? reactiveHook.callee : reactiveHook
+        );
+        const sourceCode = context.sourceCode;
+        const allDeps = Array.from(dependencies.keys());
+
+        // Get the text of the entire dependency array for more precise replacements
+        const depsText = sourceCode.getText(declaredDependenciesNode);
+        const isArrayLiteral = depsText.startsWith('[') && depsText.endsWith(']');
+
+        // Add a summary message as the first report
+        if (unnecessaryMessage) {
+          const suggestions: SuggestionReportDescriptor<MessageIds>[] = [];
+
+          // Only suggest removing all if we can safely do so
+          if (isArrayLiteral && allDeps.length > unnecessaryDepsList.length) {
+            suggestions.push({
+              messageId: 'removeAllUnnecessaryDependencies',
+              data: {
+                count: unnecessaryDepsList.length,
+                dependencies: unnecessaryDepsList.map((d) => `'${d}'`).join(', '),
+              },
+              fix(fixer) {
+                const depsToKeep = allDeps
+                  .filter((key) => !unnecessaryDependencies.has(key))
+                  .map(formatDependency);
+                return fixer.replaceText(declaredDependenciesNode, `[${depsToKeep.join(', ')}]`);
+              },
+            });
+          }
+
+          context.report({
+            node: declaredDependenciesNode,
+            messageId:
+              unnecessaryDepsList.length > 1 ? 'unnecessaryDependencies' : 'unnecessaryDependency',
+            data: {
+              hookName,
+              dependencies: unnecessaryDepsList.join(', '),
+              dependency: unnecessaryDepsList[0] || '',
+              count: unnecessaryDepsList.length,
+              message: unnecessaryMessage,
+            },
+            suggest: suggestions,
+          });
+        }
+
+        // Report each unnecessary dependency individually with precise fixes
+        unnecessaryDepsList.forEach((depKey: string): void => {
+          const depNode = dependencies.get(depKey)?.node;
+          if (!depNode) return;
+
+          const suggestions: SuggestionReportDescriptor<MessageIds>[] = [];
+          // const nodeText = sourceCode.getText(depNode);
+
+          // Find the exact range of this dependency in the source
+          const depIndex = allDeps.indexOf(depKey);
+          const isFirst = depIndex === 0;
+          const isLast = depIndex === allDeps.length - 1;
+
+          // Calculate the exact range to remove, including surrounding commas and whitespace
+          let removeStart = depNode.range[0];
+          let removeEnd = depNode.range[1];
+
+          // Get the tokens around this dependency
+          const tokens = sourceCode.getTokens(declaredDependenciesNode);
+          const depTokenIndex = tokens.findIndex((t) => t.range[0] === depNode.range[0]);
+
+          // Include leading comma if not the first item
+          if (!isFirst && depTokenIndex > 0) {
+            const prevToken = tokens[depTokenIndex - 1];
+            if (prevToken.value === ',') {
+              removeStart = prevToken.range[0];
+            }
+            // Include any whitespace before the dependency
+            const prevTokenEnd = depTokenIndex > 1 ? tokens[depTokenIndex - 1].range[1] : 0;
+            const whitespaceBefore = sourceCode.text.slice(prevTokenEnd, removeStart);
+            if (/^\s+$/.test(whitespaceBefore)) {
+              removeStart = prevTokenEnd;
+            }
+          }
+
+          // Include trailing comma if not the last item
+          if (!isLast && depTokenIndex < tokens.length - 1) {
+            const nextToken = tokens[depTokenIndex + 1];
+            if (nextToken.value === ',') {
+              removeEnd = nextToken.range[1];
+            }
+          }
+
+          // Add suggestion to remove this specific dependency
+          suggestions.push({
+            messageId: 'removeSingleDependency',
+            data: { dependency: depKey },
+            fix(fixer) {
+              return fixer.removeRange([removeStart, removeEnd]);
+            },
+          });
+
+          // Add the main report for this dependency
+          context.report({
+            node: depNode,
+            messageId: 'unnecessaryDependency',
+            data: {
+              hookName,
+              dependency: depKey,
+              message: unnecessaryMessage ?? '',
+            },
+            suggest: suggestions,
+          });
+        });
+      }
+
+      // Report duplicate dependencies if any
+      if (duplicateDependencies.size > 0) {
+        const sourceCode = context.sourceCode;
+        const hookName = sourceCode.getText(
+          'callee' in reactiveHook ? reactiveHook.callee : reactiveHook
+        );
+
+        // Cache for normalized keys to avoid repeated string operations
+        const keyCache = new Map<string, string>();
+        function normalizeKey(key: string): string | undefined {
+          if (!keyCache.has(key)) {
+            // Remove array indices and whitespace in one pass
+            const normalized = key.replace(/\s+|\[\d+\]/g, '');
+            keyCache.set(key, normalized);
+          }
+          return keyCache.get(key);
+        }
+
+        // Single pass to collect all dependencies and their normalized keys
+        const allDeps = Array.from(dependencies.entries());
+        const normalizedMap = new Map<string, { original: string; node: TSESTree.Node }[]>();
+
+        for (const [depKey, dep] of allDeps) {
+          if (!dep.node) continue;
+
+          const normalizedKey = normalizeKey(depKey);
+
+          if (!normalizedKey) {
+            continue;
+          }
+
+          if (!normalizedMap.has(normalizedKey)) {
+            normalizedMap.set(normalizedKey, []);
+          }
+
+          normalizedMap.get(normalizedKey)?.push({ original: depKey, node: dep.node });
+        }
+
+        // Filter to only include duplicates (more than one entry per normalized key)
+        const duplicates = Array.from(normalizedMap.entries())
+          .filter(([_, entries]) => entries.length > 1)
+          .flatMap(([_, entries]) => entries);
+
+        if (duplicates.length > 0) {
+          // Group by original key for reporting
+          const duplicateGroups = new Map<string, (typeof duplicates)[number][]>();
+
+          for (const entry of duplicates) {
+            if (!duplicateGroups.has(entry.original)) {
+              duplicateGroups.set(entry.original, []);
+            }
+
+            duplicateGroups.get(entry.original)?.push(entry);
+          }
+
+          // Get unique duplicate keys for the summary message
+          const uniqueDuplicateKeys = Array.from(duplicateGroups.keys());
+          const isSingleDuplicate = uniqueDuplicateKeys.length === 1;
+
+          // Report the summary
+          context.report({
+            node: declaredDependenciesNode,
+            messageId: isSingleDuplicate ? 'duplicateDependency' : 'duplicateDependencies',
+            data: {
+              hookName,
+              dependencies: uniqueDuplicateKeys.join(', '),
+              dependency: uniqueDuplicateKeys[0],
+              count: uniqueDuplicateKeys.length,
+            },
+            suggest: [
+              {
+                messageId: 'removeAllDuplicates',
+                data: { count: uniqueDuplicateKeys.length },
+                fix(fixer) {
+                  // Create a set of all original dependency keys to keep (first occurrence of each normalized key)
+                  const seen = new Set<string>();
+                  const depsToKeep: string[] = [];
+
+                  for (const [depKey] of allDeps) {
+                    const normalized = normalizeKey(depKey);
+
+                    if (!normalized) {
+                      continue;
+                    }
+
+                    if (!seen.has(normalized)) {
+                      seen.add(normalized);
+
+                      depsToKeep.push(depKey);
+                    }
+                  }
+
+                  return fixer.replaceText(
+                    declaredDependenciesNode,
+                    `[${depsToKeep.map(formatDependency).join(', ')}]`
+                  );
+                },
+              },
+            ],
+          });
+        }
+      }
     }
 
-    function visitCallExpression(node: CallExpression): void {
+    function visitCallExpression(node: TSESTree.CallExpression): void {
       const callbackIndex = getReactiveHookCallbackIndex(node.callee, options);
 
       if (callbackIndex === -1) {
         return;
       }
 
-      let callback = node.arguments[callbackIndex];
+      let callback: TSESTree.CallExpressionArgument | undefined = node.arguments[callbackIndex];
 
-      const reactiveHook = node.callee;
-
-      const nodeWithoutNamespace = getNodeWithoutReactNamespace(reactiveHook);
-
-      const reactiveHookName = 'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '';
+      const nodeWithoutNamespace = getNodeWithoutReactNamespace(node.callee);
 
       const maybeNode = node.arguments[callbackIndex + 1];
 
-      const declaredDependenciesNode =
-        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+      const declaredDependenciesNode: TSESTree.CallExpressionArgument | undefined =
         maybeNode && !(maybeNode.type === 'Identifier' && maybeNode.name === 'undefined')
           ? maybeNode
           : undefined;
 
-      const isEffect = /Effect($|[^a-z])/g.test(reactiveHookName);
+      const isEffect = /Effect($|[^a-z])/g.test(
+        'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : ''
+      );
 
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
       if (!callback) {
-        reportProblem({
-          node: reactiveHook,
-          message: `React Hook ${reactiveHookName} requires an effect callback. Did you forget to pass a callback to the hook?`,
+        context.report({
+          messageId: 'missingEffectCallback',
+          node: node.callee,
+          data: {
+            hookName: 'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
+          },
         });
 
         return;
       }
 
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
       if (!maybeNode && isEffect && options.requireExplicitEffectDeps) {
-        reportProblem({
-          node: reactiveHook,
-          message: `React Hook ${reactiveHookName} always requires dependencies. Please add a dependency array or an explicit \`undefined\``,
+        context.report({
+          node: node.callee,
+          data: {
+            hookName: 'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
+          },
+          messageId: 'missingEffectCallback',
         });
       }
 
-      const isAutoDepsHook = options.experimental_autoDependenciesHooks.includes(reactiveHookName);
+      const isAutoDepsHook = options.experimental_autoDependenciesHooks.includes(
+        'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : ''
+      );
 
       if (
         (!declaredDependenciesNode ||
@@ -1978,27 +2575,24 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
             declaredDependenciesNode.value === null)) &&
         !isEffect
       ) {
-        if (reactiveHookName === 'useMemo' || reactiveHookName === 'useCallback') {
+        if (
+          ('name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '') === 'useMemo' ||
+          ('name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '') === 'useCallback'
+        ) {
           // TODO: Can this have a suggestion?
-          reportProblem({
-            node: reactiveHook,
-            message: `React Hook ${reactiveHookName} does nothing when called with only one argument. Did you forget to pass an array of dependencies?`,
+          context.report({
+            node: node.callee,
+            messageId: 'missingDependencies',
+            data: {
+              hookName: 'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
+            },
           });
         }
 
         return;
       }
 
-      while (
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
-        callback.type === 'TSAsExpression' ||
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
-        callback.type === 'AsExpression'
-      ) {
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
+      while (callback.type === 'TSAsExpression') {
         callback = callback.expression;
       }
 
@@ -2008,8 +2602,8 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           visitFunctionWithDependencies(
             callback,
             declaredDependenciesNode,
-            reactiveHook,
-            reactiveHookName,
+            node.callee,
+            'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
             isEffect,
             isAutoDepsHook
           );
@@ -2028,10 +2622,14 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
 
           if (
             'elements' in declaredDependenciesNode &&
-            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-            declaredDependenciesNode.elements &&
             declaredDependenciesNode.elements.some(
-              (el: Expression | SpreadElement | null): boolean => {
+              (
+                el:
+                  | TSESTree.SpreadElement
+                  | TSESTree.Expression
+                  | TSESTree.DestructuringPattern
+                  | null
+              ): boolean => {
                 return el !== null && el.type === 'Identifier' && el.name === callback.name;
               }
             )
@@ -2039,23 +2637,25 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
             return;
           }
 
-          const variable = getScope(callback).set.get(callback.name);
+          const variable = context.sourceCode.getScope(callback).set.get(callback.name);
 
           if (variable?.defs == null) {
             return;
           }
 
-          const def = variable.defs[0];
+          const def: Definition | undefined = variable.defs[0];
 
-          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
           if (!def || !def.node) {
             break;
           }
 
           if (def.type === 'Parameter') {
-            reportProblem({
-              node: reactiveHook,
-              message: getUnknownDependenciesMessage(reactiveHookName),
+            context.report({
+              node: node.callee,
+              data: {
+                name: 'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
+              },
+              messageId: 'missingEffectCallback',
             });
 
             return;
@@ -2068,10 +2668,10 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           switch (def.node.type) {
             case 'FunctionDeclaration': {
               visitFunctionWithDependencies(
-                def.node,
+                def.node as TSESTree.FunctionDeclaration,
                 declaredDependenciesNode,
-                reactiveHook,
-                reactiveHookName,
+                node.callee,
+                'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
                 isEffect,
                 isAutoDepsHook
               );
@@ -2082,7 +2682,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
             case 'VariableDeclarator': {
               const init = def.node.init;
 
-              if (!init) {
+              if (init === null) {
                 break; // Unhandled
               }
 
@@ -2090,10 +2690,10 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
                 case 'ArrowFunctionExpression':
                 case 'FunctionExpression': {
                   visitFunctionWithDependencies(
-                    init,
+                    init as TSESTree.ArrowFunctionExpression | TSESTree.FunctionExpression,
                     declaredDependenciesNode,
-                    reactiveHook,
-                    reactiveHookName,
+                    node.callee,
+                    'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
                     isEffect,
                     isAutoDepsHook
                   );
@@ -2107,21 +2707,27 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
           break;
         }
         default: {
-          reportProblem({
-            node: reactiveHook,
-            message: getUnknownDependenciesMessage(reactiveHookName),
+          context.report({
+            node: node.callee,
+            data: {
+              name: 'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
+            },
+            messageId: 'missingDependency',
           });
 
           return;
         }
       }
 
-      reportProblem({
-        node: reactiveHook,
-        message: `React Hook ${reactiveHookName} has a missing dependency: '${callback.name}'. Either include it or remove the dependency array.`,
+      context.report({
+        node: node.callee,
+        messageId: 'missingDependency',
+        data: {
+          name: callback.name,
+        },
         suggest: [
           {
-            desc: `Update the dependencies array to be: [${callback.name}]`,
+            messageId: 'addDependencies',
             fix(fixer) {
               return fixer.replaceText(declaredDependenciesNode, `[${callback.name}]`);
             },
@@ -2134,7 +2740,7 @@ export const exhaustiveDepsRule: Rule.RuleModule = {
       CallExpression: visitCallExpression,
     };
   },
-} satisfies Rule.RuleModule;
+});
 
 function collectRecommendations({
   dependencies,
@@ -2209,6 +2815,7 @@ function collectRecommendations({
         child = createDepTree();
         node.children.set(key, child);
       }
+
       node = child;
     }
     return node;
@@ -2255,7 +2862,7 @@ function collectRecommendations({
       if (valueIndex !== -1) {
         const baseName = key.slice(0, valueIndex);
 
-        const baseValueKey = key.slice(0, valueIndex + 6); // Include ".value"
+        const baseValueKey = key.slice(0, valueIndex + 6);
 
         if (baseName.endsWith('Signal')) {
           importedSignals.add(key);
@@ -2491,10 +3098,7 @@ function collectRecommendations({
 
       const isAssignmentOnly =
         dependency &&
-        (dependency.hasReads === false ||
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-expect-error
-          dependency.isComputedAssignmentOnly === true);
+        (dependency.hasReads === false || dependency.isComputedAssignmentOnly === true);
 
       let hasAssignmentOnlyComputedMembers = false;
 
@@ -2586,7 +3190,6 @@ function collectRecommendations({
         return;
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (child.isUsed || (isAnySignalType && (child.isSubtreeUsed || child.isUsed))) {
         if (path.endsWith('Signal') && !path.includes('.')) {
           const valueChild = child.children.get('value');
@@ -2783,7 +3386,7 @@ function collectRecommendations({
   };
 }
 
-function getConstructionExpressionType(node: Node): string | null {
+function getConstructionExpressionType(node: TSESTree.Expression): string | null {
   switch (node.type) {
     case 'ObjectExpression': {
       return 'object';
@@ -2824,14 +3427,10 @@ function getConstructionExpressionType(node: Node): string | null {
       return null;
     }
 
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error
     case 'JSXFragment': {
       return 'JSX fragment';
     }
 
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error
     case 'JSXElement': {
       return 'JSX element';
     }
@@ -2856,17 +3455,7 @@ function getConstructionExpressionType(node: Node): string | null {
       return null;
     }
 
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error
-    case 'TypeCastExpression':
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error
-    case 'AsExpression':
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error
     case 'TSAsExpression': {
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-expect-error
       return getConstructionExpressionType(node.expression);
     }
   }
@@ -2874,7 +3463,6 @@ function getConstructionExpressionType(node: Node): string | null {
   return null;
 }
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function scanForConstructions({
   declaredDependencies,
   declaredDependenciesNode,
@@ -2882,10 +3470,10 @@ function scanForConstructions({
   scope,
 }: {
   declaredDependencies: Array<DeclaredDependency>;
-  declaredDependenciesNode: Node;
-  componentScope: Scope.Scope;
-  scope: Scope.Scope;
-}) {
+  declaredDependenciesNode: TSESTree.Node;
+  componentScope: Scope;
+  scope: Scope;
+}): Array<{ construction: Definition; depType: string; isUsedOutsideOfHook: boolean }> {
   const constructions = declaredDependencies
     .map(({ key }) => {
       const ref = componentScope.variables.find((v) => v.name === key);
@@ -2894,23 +3482,22 @@ function scanForConstructions({
         return null;
       }
 
-      const node = ref.defs[0];
+      const node: Definition | undefined = ref.defs[0];
 
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if (node == null) {
+      if (typeof node === 'undefined') {
         return null;
       }
 
       if (
         node.type === 'Variable' &&
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         node.node.type === 'VariableDeclarator' &&
-        node.node.id.type === 'Identifier' && // Ensure this is not destructed assignment
+        node.node.id.type === 'Identifier' &&
         node.node.init != null
       ) {
-        const constantExpressionType = getConstructionExpressionType(node.node.init);
+        const constantExpressionType = getConstructionExpressionType(
+          node.node.init as TSESTree.Expression
+        );
 
-        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
         if (constantExpressionType) {
           return [ref, constantExpressionType];
         }
@@ -2926,9 +3513,9 @@ function scanForConstructions({
 
       return null;
     })
-    .filter(Boolean) as Array<[Scope.Variable, string]>;
+    .filter(Boolean) as Array<[Variable, string]>;
 
-  function isUsedOutsideOfHook(ref: Scope.Variable): boolean {
+  function isUsedOutsideOfHook(ref: Variable): boolean {
     let foundWriteExpr = false;
 
     for (const reference of ref.references) {
@@ -2942,7 +3529,7 @@ function scanForConstructions({
         continue;
       }
 
-      let currentScope: Scope.Scope | null = reference.from;
+      let currentScope: Scope | null = reference.from;
 
       while (currentScope !== scope && currentScope != null) {
         currentScope = currentScope.upper;
@@ -2958,21 +3545,32 @@ function scanForConstructions({
     return false;
   }
 
-  return constructions.map(([ref, depType]) => ({
-    construction: ref.defs[0] as Scope.Definition,
-    depType,
-    isUsedOutsideOfHook: isUsedOutsideOfHook(ref),
-  }));
+  return constructions.map(
+    ([ref, depType]): {
+      construction: Definition;
+      depType: string;
+      isUsedOutsideOfHook: boolean;
+    } => {
+      return {
+        construction: ref.defs[0],
+        depType,
+        isUsedOutsideOfHook: isUsedOutsideOfHook(ref),
+      };
+    }
+  );
 }
 
-function getDependency(node: Node): Node {
-  if (
-    node.type === 'MemberExpression' ||
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error
-    node.type === 'OptionalMemberExpression'
-  ) {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+function getDependency(
+  node:
+    | TSESTree.Node
+    | TSESTree.ArrowFunctionExpression
+    | TSESTree.FunctionExpression
+    | TSESTree.FunctionDeclaration
+    | TSESTree.Expression
+    | TSESTree.Super
+): TSESTree.MemberExpression | TSESTree.Identifier | TSESTree.Node {
+  // @ts-expect-error
+  if (node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') {
     if (node.type === 'MemberExpression' && !node.computed) {
       if (
         node.property.type === 'Identifier' &&
@@ -2983,6 +3581,7 @@ function getDependency(node: Node): Node {
         return node;
       }
     }
+
     return node;
   }
 
@@ -2994,11 +3593,7 @@ function getDependency(node: Node): Node {
     return node;
   }
 
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-expect-error
   if (node.type === 'JSXExpressionContainer') {
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error
     return getDependency(node.expression);
   }
 
@@ -3010,18 +3605,18 @@ function getDependency(node: Node): Node {
     return getDependency(node.expression);
   }
 
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-expect-error
   if (node.type === 'TSNonNullExpression') {
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error
     return getDependency(node.expression);
   }
 
   return node;
 }
 
-function markNode(node: Node, optionalChains: Map<string, boolean> | null, result: string): void {
+function markNode(
+  node: TSESTree.Node | TSESTree.MemberExpression,
+  optionalChains: Map<string, boolean> | null,
+  result: string
+): void {
   if (optionalChains) {
     if ('optional' in node && node.optional) {
       if (!optionalChains.has(result)) {
@@ -3033,9 +3628,15 @@ function markNode(node: Node, optionalChains: Map<string, boolean> | null, resul
   }
 }
 
-function analyzePropertyChain(node: Node, optionalChains: Map<string, boolean> | null): string {
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-expect-error
+function analyzePropertyChain(
+  node:
+    | TSESTree.Node
+    | TSESTree.Identifier
+    | TSESTree.Expression
+    | TSESTree.Super
+    | TSESTree.PrivateIdentifier,
+  optionalChains: Map<string, boolean> | null
+): string {
   if (node.type === 'Identifier' || node.type === 'JSXIdentifier') {
     const result = node.name;
 
@@ -3077,18 +3678,13 @@ function analyzePropertyChain(node: Node, optionalChains: Map<string, boolean> |
         const property = analyzePropertyChain(node.property, null);
 
         computedResult = `${object}[${property}]`;
-        // oxlint-disable-next-line no-unused-vars
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      } catch (_error) {
-        // biome-ignore format: because
-        // @ts-expect-error - TypeScript AST node types not in estree
-        if (node.property.type === "TSAsExpression" || node.property.type === "AsExpression") {
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-expect-error
+      } catch (error) {
+        console.error(error);
+
+        if (node.property.type === 'TSAsExpression') {
           const expr = node.property.expression;
 
-          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-          if (expr && expr.type === "Identifier") {
+          if (expr && expr.type === 'Identifier') {
             computedResult = `${object}[${expr.name}]`;
           } else {
             computedResult = `${object}[*]`;
@@ -3099,39 +3695,29 @@ function analyzePropertyChain(node: Node, optionalChains: Map<string, boolean> |
       }
     }
 
-    let currentNode = node;
+    let currentNode:
+      | TSESTree.MemberExpressionComputedName
+      | TSESTree.MemberExpressionNonComputedName = node;
+
     let finalResult = computedResult;
 
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (node.type === 'MemberExpression' && node.computed) {
       currentNode = node;
     } else {
-      // biome-ignore format: because
       while (
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
-        currentNode.parent?.type === "MemberExpression" &&
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
-        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+        'parent' in currentNode &&
+        currentNode.parent &&
+        currentNode.parent.type === 'MemberExpression' &&
         !currentNode.parent.computed &&
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
         currentNode.parent.object === currentNode &&
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
-        currentNode.parent.property?.type === "Identifier"
+        currentNode.parent.property?.type === 'Identifier'
       ) {
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
         const propertyName = currentNode.parent.property.name;
 
         if (!finalResult.endsWith(`.${propertyName}`)) {
           finalResult += `.${propertyName}`;
         }
 
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
         currentNode = currentNode.parent;
       }
     }
@@ -3141,15 +3727,17 @@ function analyzePropertyChain(node: Node, optionalChains: Map<string, boolean> |
     return finalResult;
   }
 
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-expect-error
-  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+  console.info('node.type', node.type, 'node.computed', node.computed);
+
+  // @ts-expect-error
   if (node.type === 'OptionalMemberExpression' && !node.computed) {
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    console.info('node.object', node.object);
+    // @ts-expect-error
+    console.info('node.property', node.property);
     // @ts-expect-error
     const object = analyzePropertyChain(node.object, optionalChains);
-
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error
     const property = analyzePropertyChain(node.property, null);
 
@@ -3160,7 +3748,6 @@ function analyzePropertyChain(node: Node, optionalChains: Map<string, boolean> |
     return result;
   }
 
-  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
   if (node.type === 'ChainExpression' && (!('computed' in node) || !node.computed)) {
     const expression = node.expression;
 
@@ -3168,11 +3755,13 @@ function analyzePropertyChain(node: Node, optionalChains: Map<string, boolean> |
       throw new Error(`Unsupported node type: ${expression.type}`);
     }
 
-    const object = analyzePropertyChain(expression.object, optionalChains);
+    const object =
+      'object' in expression ? analyzePropertyChain(expression.object, optionalChains) : '';
 
-    const property = analyzePropertyChain(expression.property, null);
+    const property =
+      'property' in expression ? analyzePropertyChain(expression.property, null) : '';
 
-    const result = `${object}.${property}`;
+    const result = `${object === '' ? 'unknownObject' : object}.${property === '' ? 'unknownProperty' : property}`;
 
     markNode(expression, optionalChains, result);
 
@@ -3182,7 +3771,9 @@ function analyzePropertyChain(node: Node, optionalChains: Map<string, boolean> |
   throw new Error(`Unsupported node type: ${node.type}`);
 }
 
-function getNodeWithoutReactNamespace(node: Expression | Super): Expression | Identifier | Super {
+function getNodeWithoutReactNamespace(
+  node: TSESTree.Expression | TSESTree.Super
+): TSESTree.Expression | TSESTree.Identifier | TSESTree.Super {
   if (
     node.type === 'MemberExpression' &&
     node.object.type === 'Identifier' &&
@@ -3197,11 +3788,13 @@ function getNodeWithoutReactNamespace(node: Expression | Super): Expression | Id
 }
 
 function getReactiveHookCallbackIndex(
-  calleeNode: Expression | Super,
-  options?: {
-    additionalHooks: RegExp | undefined;
-    enableDangerousAutofixThisMayCauseInfiniteLoops?: boolean;
-  }
+  calleeNode: TSESTree.Expression | TSESTree.Super,
+  options?:
+    | {
+        additionalHooks: RegExp | undefined;
+        enableDangerousAutofixThisMayCauseInfiniteLoops?: boolean;
+      }
+    | undefined
 ): 0 | -1 | 1 {
   const node = getNodeWithoutReactNamespace(calleeNode);
 
@@ -3243,13 +3836,34 @@ function getReactiveHookCallbackIndex(
   }
 }
 
-function fastFindReferenceWithParent(start: Node, target: Node): Node | null {
+function fastFindReferenceWithParent(
+  start:
+    | TSESTree.Node
+    | TSESTree.FunctionDeclaration
+    | TSESTree.FunctionExpression
+    | TSESTree.ArrowFunctionExpression,
+  target: TSESTree.Node | TSESTree.Identifier
+):
+  | TSESTree.Node
+  | TSESTree.FunctionDeclaration
+  | TSESTree.FunctionExpression
+  | TSESTree.ArrowFunctionExpression
+  | null {
   const queue = [start];
 
-  let item: Node;
+  let item:
+    | TSESTree.Node
+    | TSESTree.ArrowFunctionExpression
+    | TSESTree.FunctionExpression
+    | TSESTree.FunctionDeclaration
+    | undefined;
 
   while (queue.length) {
-    item = queue.shift() as Node;
+    item = queue.shift();
+
+    if (!item) {
+      continue;
+    }
 
     if (isSameIdentifier(item, target)) {
       return item;
@@ -3264,17 +3878,13 @@ function fastFindReferenceWithParent(start: Node, target: Node): Node | null {
         continue;
       }
 
-      if (isNodeLike(value)) {
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
+      if (isNodeLike(value) && isNodeLike(item)) {
         value.parent = item;
 
         queue.push(value);
-      } else if (Array.isArray(value)) {
+      } else if (Array.isArray(value) && isNodeLike(item)) {
         for (const val of value) {
           if (isNodeLike(val)) {
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-expect-error
             val.parent = item;
 
             queue.push(val);
@@ -3287,25 +3897,7 @@ function fastFindReferenceWithParent(start: Node, target: Node): Node | null {
   return null;
 }
 
-function joinEnglish(arr: Array<string>): string {
-  let s = '';
-
-  for (let i = 0; i < arr.length; i++) {
-    s += arr[i];
-
-    if (i === 0 && arr.length === 2) {
-      s += ' and ';
-    } else if (i === arr.length - 2 && arr.length > 2) {
-      s += ', and ';
-    } else if (i < arr.length - 1) {
-      s += ', ';
-    }
-  }
-
-  return s;
-}
-
-function isNodeLike(val: unknown): val is Node {
+function isNodeLike(val: unknown): val is TSESTree.Node {
   return (
     typeof val === 'object' &&
     val !== null &&
@@ -3315,10 +3907,15 @@ function isNodeLike(val: unknown): val is Node {
   );
 }
 
-function isSameIdentifier(a: Node, b: Node): boolean {
+function isSameIdentifier(
+  a:
+    | TSESTree.Node
+    | TSESTree.FunctionDeclaration
+    | TSESTree.FunctionExpression
+    | TSESTree.ArrowFunctionExpression,
+  b: TSESTree.Node | TSESTree.Identifier
+): boolean {
   return (
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error
     (a.type === 'Identifier' || a.type === 'JSXIdentifier') &&
     a.type === b.type &&
     a.name === b.name &&
@@ -3329,11 +3926,18 @@ function isSameIdentifier(a: Node, b: Node): boolean {
   );
 }
 
-function isAncestorNodeOf(a: Node, b: Node): boolean {
+function isAncestorNodeOf(
+  a:
+    | TSESTree.Node
+    | TSESTree.FunctionDeclaration
+    | TSESTree.FunctionExpression
+    | TSESTree.ArrowFunctionExpression,
+  b: TSESTree.Node | TSESTree.Identifier
+): boolean {
   return !!a.range && !!b.range && a.range[0] <= b.range[0] && a.range[1] >= b.range[1];
 }
 
-function isUseEffectEventIdentifier(node: Node): boolean {
+function isUseEffectEventIdentifier(node: TSESTree.Node | TSESTree.Identifier): boolean {
   if (node.type !== 'Identifier') {
     return false;
   }
@@ -3343,7 +3947,7 @@ function isUseEffectEventIdentifier(node: Node): boolean {
   return name === 'useEffectEvent' || name === 'experimental_useEffectEvent';
 }
 
-function isSignalIdentifier(node: Node): boolean {
+function isSignalIdentifier(node: TSESTree.Node | TSESTree.Identifier): boolean {
   if (node.type !== 'Identifier') {
     return false;
   }
@@ -3353,7 +3957,7 @@ function isSignalIdentifier(node: Node): boolean {
   return ['signal', 'computed', 'effect'].includes(name);
 }
 
-function isSignalVariable(node: Node): boolean {
+function isSignalVariable(node: TSESTree.Node | Pattern): boolean {
   if (node.type !== 'Identifier') {
     return false;
   }
@@ -3367,7 +3971,10 @@ function isSignalDependency(dependency: string): boolean {
   );
 }
 
-function isSignalValueAccess(node: Node, context: Rule.RuleContext): boolean {
+function isSignalValueAccess(
+  node: TSESTree.Node | TSESTree.Identifier,
+  context: Readonly<RuleContext<MessageIds, Options>>
+): boolean {
   // Check if this is a direct signal.value access
   if (
     node.type === 'MemberExpression' &&
@@ -3377,35 +3984,23 @@ function isSignalValueAccess(node: Node, context: Rule.RuleContext): boolean {
     node.object.type === 'Identifier' &&
     node.object.name.endsWith('Signal')
   ) {
-    // Get the parent nodes using the context's getAncestors method
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error
-    const ancestors = context.getAncestors();
+    const ancestors = context.sourceCode.getAncestors(node);
 
-    const parent = ancestors[ancestors.length - 1];
+    const parent: TSESTree.Node | undefined = ancestors[ancestors.length - 1];
 
     // Check if this is part of an assignment operation (like countSignal.value++)
-    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-    if (parent) {
+    if (typeof parent !== 'undefined') {
       if (
         parent.type === 'UpdateExpression' ||
         (parent.type === 'AssignmentExpression' &&
-          (parent.operator === '=' ||
-            parent.operator === '+=' ||
-            parent.operator === '-=' ||
-            parent.operator === '*=' ||
-            parent.operator === '/=' ||
-            parent.operator === '%='))
+          ['=', '+=', '-=', '*=', '/=', '%='].includes(parent.operator))
       ) {
         return false;
       }
     }
+
     return true;
   }
 
   return false;
-}
-
-function getUnknownDependenciesMessage(reactiveHookName: string): string {
-  return `React Hook ${reactiveHookName} received a function whose dependencies are unknown. Pass an inline function instead.`;
 }

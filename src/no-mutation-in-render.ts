@@ -1,11 +1,19 @@
-import type { Rule } from 'eslint';
-import type {
-  ArrowFunctionExpression,
-  AssignmentExpression,
-  CallExpression,
-  FunctionDeclaration,
-  UpdateExpression,
-} from 'estree';
+import { ESLintUtils, type TSESTree } from '@typescript-eslint/utils';
+
+const createRule = ESLintUtils.RuleCreator((name: string): string => {
+  return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}`;
+});
+
+type MessageIds =
+  | 'signalValueAssignment'
+  | 'signalValueUpdate'
+  | 'signalPropertyAssignment'
+  | 'suggestUseEffect'
+  | 'suggestEventHandler'
+  | 'signalArrayIndexAssignment'
+  | 'signalNestedPropertyAssignment';
+
+type Options = [];
 
 /**
  * ESLint rule: no-mutation-in-render
@@ -13,71 +21,71 @@ import type {
  * Disallows direct signal mutation during render.
  * Signal mutations should occur in effects, event handlers, or other side-effect contexts.
  */
-export const noMutationInRenderRule = {
+export const noMutationInRenderRule = createRule<Options, MessageIds>({
+  name: 'no-mutation-in-render',
   meta: {
     type: 'problem',
     docs: {
-      description: 'disallow direct signal mutation during render',
-      recommended: true,
+      description: 'Disallow direct signal mutation during render',
+      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/no-mutation-in-render',
     },
     fixable: 'code',
     schema: [],
+    messages: {
+      signalValueAssignment:
+        'Avoid mutating signal.value directly in render. Move this to an effect or event handler.',
+      signalValueUpdate:
+        'Avoid updating signal.value with operators (++, --, +=, etc.) in render. Move this to an effect or event handler.',
+      signalPropertyAssignment:
+        'Avoid mutating signal properties directly in render. Move this to an effect or event handler.',
+      signalArrayIndexAssignment:
+        'Avoid mutating array indexes of signal values in render. Move this to an effect or event handler.',
+      signalNestedPropertyAssignment:
+        'Avoid mutating nested properties of signal values in render. Move this to an effect or event handler.',
+      suggestUseEffect: 'Wrap in useEffect',
+      suggestEventHandler: 'Move to event handler',
+    },
   },
-  create(context: Rule.RuleContext): {
-    FunctionDeclaration(node: FunctionDeclaration & Rule.NodeParentExtension): void;
-    ArrowFunctionExpression(node: ArrowFunctionExpression & Rule.NodeParentExtension): void;
-    // Track function declarations and expressions (including event handlers)
-    FunctionExpression(): void;
-    CallExpression(node: CallExpression & Rule.NodeParentExtension): void;
-    AssignmentExpression(node: AssignmentExpression & Rule.NodeParentExtension): void;
-    UpdateExpression(node: UpdateExpression & Rule.NodeParentExtension): void;
-    'FunctionDeclaration:exit'(node: FunctionDeclaration & Rule.NodeParentExtension): void;
-    'ArrowFunctionExpression:exit'(node: ArrowFunctionExpression & Rule.NodeParentExtension): void;
-    'FunctionExpression:exit'(): void;
-    'CallExpression:exit'(node: CallExpression & Rule.NodeParentExtension): void;
-  } {
+  defaultOptions: [],
+  create(context) {
     let inRenderContext = false;
     let renderDepth = 0;
     let hookDepth = 0;
     let functionDepth = 0; // Track nested functions
 
     return {
-      FunctionDeclaration(node: FunctionDeclaration & Rule.NodeParentExtension): void {
+      FunctionDeclaration(node: TSESTree.FunctionDeclaration): void {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (node.id?.name && /^[A-Z]/.test(node.id.name)) {
           inRenderContext = true;
+
           renderDepth++;
         }
       },
-      ArrowFunctionExpression(node: ArrowFunctionExpression & Rule.NodeParentExtension): void {
-        // Check if this is the main component arrow function
+      ArrowFunctionExpression(node: TSESTree.ArrowFunctionExpression): void {
         if (
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          node.parent?.type === 'VariableDeclarator' &&
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          node.parent.id?.type === 'Identifier' &&
+          node.parent.type === 'VariableDeclarator' &&
+          node.parent.id.type === 'Identifier' &&
           /^[A-Z]/.test(node.parent.id.name)
         ) {
-          // This is a main component - enter render context
           inRenderContext = true;
+
           renderDepth++;
         } else {
-          // This is a nested arrow function (like event handler) - exit render context
           functionDepth++;
+
           if (functionDepth === 1 && renderDepth >= 1) {
             inRenderContext = false;
           }
         }
       },
-      // Track function declarations and expressions (including event handlers)
-      FunctionExpression() {
+      FunctionExpression(): void {
         functionDepth++;
         if (functionDepth === 1 && renderDepth >= 1) {
-          inRenderContext = false; // Inside a nested function, not in render context
+          inRenderContext = false;
         }
       },
-      CallExpression(node: CallExpression & Rule.NodeParentExtension): void {
-        // Check for React hooks and signal effects - these create non-render context
+      CallExpression(node: TSESTree.CallExpression): void {
         if (
           node.callee.type === 'Identifier' &&
           [
@@ -96,9 +104,8 @@ export const noMutationInRenderRule = {
           }
         }
       },
-      AssignmentExpression(node: AssignmentExpression & Rule.NodeParentExtension): void {
+      AssignmentExpression(node: TSESTree.AssignmentExpression): void {
         if (inRenderContext && renderDepth >= 1 && hookDepth === 0 && functionDepth === 0) {
-          // Check for signal.value assignment
           if (
             node.left.type === 'MemberExpression' &&
             node.left.property.type === 'Identifier' &&
@@ -108,18 +115,21 @@ export const noMutationInRenderRule = {
           ) {
             context.report({
               node,
-              message: `Direct signal mutation '${node.left.object.name}.value' should not occur during render. Use useEffect or event handlers instead.`,
-              fix(fixer) {
-                const sourceCode = context.getSourceCode();
-                const assignmentText = sourceCode.getText(node);
-
-                // Wrap the assignment in useEffect
-                return fixer.replaceText(node, `useEffect(() => { ${assignmentText}; }, [])`);
-              },
+              messageId: 'signalValueAssignment',
+              suggest: [
+                {
+                  messageId: 'suggestUseEffect',
+                  fix(fixer) {
+                    return fixer.replaceText(
+                      node,
+                      `useEffect(() => { ${context.sourceCode.getText(node)} }, [])`
+                    );
+                  },
+                },
+              ],
             });
           }
 
-          // Check for signal[key] assignment
           if (
             node.left.type === 'MemberExpression' &&
             node.left.computed &&
@@ -131,19 +141,25 @@ export const noMutationInRenderRule = {
           ) {
             context.report({
               node,
-              message: `Direct signal mutation '${node.left.object.object.name}.value[...]' should not occur during render. Use useEffect or event handlers instead.`,
-              fix(fixer) {
-                const sourceCode = context.getSourceCode();
-                const assignmentText = sourceCode.getText(node);
-
-                // Wrap the assignment in useEffect
-                return fixer.replaceText(node, `useEffect(() => { ${assignmentText}; }, [])`);
-              },
+              messageId: node.left.computed
+                ? 'signalArrayIndexAssignment'
+                : 'signalNestedPropertyAssignment',
+              suggest: [
+                {
+                  messageId: 'suggestUseEffect',
+                  fix(fixer) {
+                    return fixer.replaceText(
+                      node,
+                      `useEffect(() => { ${context.sourceCode.getText(node)} }, [])`
+                    );
+                  },
+                },
+              ],
             });
           }
         }
       },
-      UpdateExpression(node: UpdateExpression & Rule.NodeParentExtension): void {
+      UpdateExpression(node: TSESTree.UpdateExpression): void {
         if (inRenderContext && renderDepth >= 1 && hookDepth === 0 && functionDepth === 0) {
           // Check for signal.value++ or ++signal.value
           if (
@@ -155,19 +171,23 @@ export const noMutationInRenderRule = {
           ) {
             context.report({
               node,
-              message: `Direct signal mutation '${node.argument.object.name}.value${node.operator}' should not occur during render. Use useEffect or event handlers instead.`,
-              fix(fixer) {
-                const sourceCode = context.getSourceCode();
-                const updateText = sourceCode.getText(node);
-
-                // Wrap the update expression in useEffect
-                return fixer.replaceText(node, `useEffect(() => { ${updateText}; }, [])`);
-              },
+              messageId: 'signalValueUpdate',
+              suggest: [
+                {
+                  messageId: 'suggestUseEffect',
+                  fix(fixer) {
+                    return fixer.replaceText(
+                      node,
+                      `useEffect(() => { ${context.sourceCode.getText(node)} }, [])`
+                    );
+                  },
+                },
+              ],
             });
           }
         }
       },
-      'FunctionDeclaration:exit'(node: FunctionDeclaration & Rule.NodeParentExtension): void {
+      'FunctionDeclaration:exit'(node: TSESTree.FunctionDeclaration): void {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (node.id?.name && /^[A-Z]/.test(node.id.name)) {
           renderDepth--;
@@ -175,18 +195,19 @@ export const noMutationInRenderRule = {
           if (renderDepth === 0) inRenderContext = false;
         }
       },
-      'ArrowFunctionExpression:exit'(node: ArrowFunctionExpression & Rule.NodeParentExtension) {
+      'ArrowFunctionExpression:exit'(node: TSESTree.ArrowFunctionExpression): void {
         // Check if this is the main component arrow function
         if (
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          node.parent?.type === 'VariableDeclarator' &&
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          node.parent.id?.type === 'Identifier' &&
+          node.parent.type === 'VariableDeclarator' &&
+          node.parent.id.type === 'Identifier' &&
           /^[A-Z]/.test(node.parent.id.name)
         ) {
           // This is a main component - exit render context
           renderDepth--;
-          if (renderDepth === 0) inRenderContext = false;
+
+          if (renderDepth === 0) {
+            inRenderContext = false;
+          }
         } else {
           // This is a nested arrow function - back to render context if appropriate
           functionDepth--;
@@ -196,14 +217,14 @@ export const noMutationInRenderRule = {
           }
         }
       },
-      'FunctionExpression:exit'() {
+      'FunctionExpression:exit'(): void {
         functionDepth--;
 
         if (functionDepth === 0 && renderDepth >= 1 && hookDepth === 0) {
           inRenderContext = true; // Back in render context
         }
       },
-      'CallExpression:exit'(node: CallExpression & Rule.NodeParentExtension): void {
+      'CallExpression:exit'(node: TSESTree.CallExpression): void {
         if (
           node.callee.type === 'Identifier' &&
           [
@@ -224,4 +245,4 @@ export const noMutationInRenderRule = {
       },
     };
   },
-} satisfies Rule.RuleModule;
+});

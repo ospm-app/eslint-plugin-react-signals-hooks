@@ -1,26 +1,30 @@
-import type { Rule } from 'eslint';
-import type {
-  ArrowFunctionExpression,
-  CallExpression,
-  FunctionDeclaration,
-  Identifier,
-  MemberExpression,
-} from 'estree';
+import { ESLintUtils, type TSESTree } from '@typescript-eslint/utils';
+import type { RuleContext, RuleFix } from '@typescript-eslint/utils/ts-eslint';
 
-/**
- * ESLint rule: require-use-signals
- *
- * Requires useSignals() hook when signals are used in component.
- * This ensures proper signal subscription and reactivity in React components.
- */
-export const requireUseSignalsRule = {
+type MessageIds = 'missingUseSignals';
+
+type Options = [
+  {
+    ignoreComponents?: string[] | undefined;
+  },
+];
+
+const createRule = ESLintUtils.RuleCreator((name: string): string => {
+  return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}`;
+});
+
+export const requireUseSignalsRule = createRule<Options, MessageIds>({
+  name: 'require-use-signals',
   meta: {
     type: 'suggestion',
     docs: {
-      description: 'require useSignals() hook when signals are used in component',
-      recommended: true,
+      description: 'Require useSignals() hook when signals are used in a component',
+      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/require-use-signals',
     },
-    fixable: 'code',
+    messages: {
+      missingUseSignals:
+        "Component '{{componentName}}' uses signals but is missing useSignals() hook",
+    },
     schema: [
       {
         type: 'object',
@@ -29,128 +33,151 @@ export const requireUseSignalsRule = {
           ignoreComponents: {
             type: 'array',
             items: { type: 'string' },
+            description: 'List of component names to ignore',
           },
         },
       },
     ],
+    fixable: 'code',
   },
-  create(context: Rule.RuleContext): {
-    FunctionDeclaration(node: FunctionDeclaration & Rule.NodeParentExtension): void;
-    ArrowFunctionExpression(node: ArrowFunctionExpression & Rule.NodeParentExtension): void;
-    CallExpression(node: CallExpression & Rule.NodeParentExtension): void;
-    MemberExpression(node: MemberExpression & Rule.NodeParentExtension): void;
-    Identifier(node: Identifier & Rule.NodeParentExtension): void;
-    'Program:exit'(): void;
-  } {
-    const options = context.options[0] ?? {};
-
-    const ignoreComponents = new Set(options.ignoreComponents ?? []);
-
+  defaultOptions: [{}],
+  create(context: Readonly<RuleContext<MessageIds, Options>>) {
     let hasUseSignals = false;
 
     let hasSignalUsage = false;
 
     let componentName = '';
+    let componentNode: TSESTree.Node | null = null;
 
-    let componentNode:
-      | ((FunctionDeclaration | ArrowFunctionExpression) & Rule.NodeParentExtension)
-      | null = null;
+    const isComponentName = (name: string): boolean => /^[A-Z]/.test(name);
 
-    return {
-      FunctionDeclaration(node: FunctionDeclaration & Rule.NodeParentExtension) {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (node.id?.name && /^[A-Z]/.test(node.id.name)) {
-          componentName = node.id.name;
-          componentNode = node;
-          hasUseSignals = false;
-          hasSignalUsage = false;
-        }
-      },
-      ArrowFunctionExpression(node: ArrowFunctionExpression & Rule.NodeParentExtension) {
-        if (
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          node.parent?.type === 'VariableDeclarator' &&
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          node.parent.id?.type === 'Identifier' &&
-          /^[A-Z]/.test(node.parent.id.name)
-        ) {
-          componentName = node.parent.id.name;
-          componentNode = node;
-          hasUseSignals = false;
-          hasSignalUsage = false;
-        }
-      },
-      CallExpression(node: CallExpression & Rule.NodeParentExtension) {
-        if (node.callee.type === 'Identifier' && node.callee.name === 'useSignals') {
-          hasUseSignals = true;
-        }
-      },
-      MemberExpression(node: MemberExpression & Rule.NodeParentExtension) {
-        if (
+    const isSignalUsage = (node: TSESTree.Node): boolean => {
+      if (node.type === 'MemberExpression') {
+        return (
           node.property.type === 'Identifier' &&
           node.property.name === 'value' &&
           node.object.type === 'Identifier' &&
           node.object.name.endsWith('Signal')
+        );
+      }
+
+      if (node.type === 'Identifier') {
+        return node.name.endsWith('Signal') && node.parent?.type !== 'MemberExpression';
+      }
+
+      return false;
+    };
+
+    const getInsertionPoint = (node: TSESTree.Node): TSESTree.Node | null => {
+      if (
+        (node.type === 'FunctionDeclaration' || node.type === 'ArrowFunctionExpression') &&
+        node.body?.type === 'BlockStatement' &&
+        node.body.body.length > 0
+      ) {
+        return node.body.body[0];
+      }
+      return null;
+    };
+
+    return {
+      FunctionDeclaration(node: TSESTree.FunctionDeclaration): void {
+        if (node.id?.name && /^[A-Z]/.test(node.id.name)) {
+          componentName = node.id.name;
+
+          componentNode = node;
+
+          hasUseSignals = false;
+
+          hasSignalUsage = false;
+        }
+      },
+      ArrowFunctionExpression(node: TSESTree.ArrowFunctionExpression): void {
+        if (
+          node.parent?.type === 'VariableDeclarator' &&
+          node.parent.id?.type === 'Identifier' &&
+          isComponentName(node.parent.id.name)
         ) {
+          componentName = node.parent.id.name;
+
+          componentNode = node;
+
+          hasUseSignals = false;
+
+          hasSignalUsage = false;
+        }
+      },
+      CallExpression(node: TSESTree.CallExpression): void {
+        if (node.callee.type === 'Identifier' && node.callee.name === 'useSignals') {
+          hasUseSignals = true;
+        }
+      },
+      MemberExpression(node: TSESTree.MemberExpression): void {
+        if (isSignalUsage(node)) {
           hasSignalUsage = true;
         }
       },
-      Identifier(node: Identifier & Rule.NodeParentExtension) {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (node.name.endsWith('Signal') && node.parent?.type !== 'MemberExpression') {
+      Identifier(node: TSESTree.Identifier): void {
+        if (isSignalUsage(node)) {
           hasSignalUsage = true;
         }
       },
-      'Program:exit'() {
+      'Program:exit'(): void {
         if (
           hasSignalUsage &&
           !hasUseSignals &&
           componentName &&
-          !ignoreComponents.has(componentName)
+          !new Set(context.options[0]?.ignoreComponents ?? []).has(componentName) &&
+          componentNode
         ) {
           context.report({
-            node: componentNode || context.getSourceCode().ast,
-            message: `Component '${componentName}' uses signals but is missing useSignals() hook`,
+            node: componentNode,
+            messageId: 'missingUseSignals',
+            data: { componentName },
             fix(fixer) {
-              const sourceCode = context.getSourceCode();
+              const fixes: Array<RuleFix> = [];
 
-              let insertionPoint = null;
+              if (!componentNode) {
+                return null;
+              }
+
+              const insertionPoint = getInsertionPoint(componentNode);
+
+              if (insertionPoint !== null) {
+                fixes.push(fixer.insertTextBefore(insertionPoint, '\tuseSignals();\n'));
+              }
 
               if (
-                componentNode?.type === 'FunctionDeclaration' &&
-                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-                componentNode.body?.type === 'BlockStatement'
+                !context.sourceCode.ast.body
+                  .filter((node: TSESTree.ProgramStatement): node is TSESTree.ImportDeclaration => {
+                    return node.type === 'ImportDeclaration';
+                  })
+                  .some((node: TSESTree.ImportDeclaration): boolean => {
+                    return (
+                      node.source.value === '@preact/signals-react' &&
+                      node.specifiers.some((s: TSESTree.ImportClause): boolean => {
+                        return (
+                          s.type === 'ImportSpecifier' &&
+                          s.imported.type === 'Identifier' &&
+                          s.imported.name === 'useSignals'
+                        );
+                      })
+                    );
+                  }) &&
+                context.sourceCode.ast.body.length > 0
               ) {
-                insertionPoint = componentNode.body.body[0];
-              } else if (
-                componentNode?.type === 'ArrowFunctionExpression' &&
-                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-                componentNode.body?.type === 'BlockStatement'
-              ) {
-                insertionPoint = componentNode.body.body[0];
-              }
-
-              if (insertionPoint) {
-                return fixer.insertTextBefore(insertionPoint, '\tuseSignals();\n');
-              }
-
-              const program = sourceCode.ast;
-
-              const firstStatement = program.body[0];
-
-              // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-              if (firstStatement) {
-                return fixer.insertTextBefore(
-                  firstStatement,
-                  "import { useSignals } from '@preact/signals-react';\n"
+                fixes.push(
+                  fixer.insertTextBefore(
+                    context.sourceCode.ast.body[0],
+                    "import { useSignals } from '@preact/signals-react';\n"
+                  )
                 );
               }
 
-              return null;
+              return fixes.length > 0 ? fixes : null;
             },
           });
         }
       },
     };
   },
-} satisfies Rule.RuleModule;
+});

@@ -296,23 +296,35 @@ export function TestUseSignalsWithCleanup(): JSX.Element {
 }
 
 // Mock implementations for demonstration
-function useSignalsEffect(effect: () => void | (() => void), deps?: any[]) {
+function useSignalsEffect(
+  effect: (() => () => void) | (() => void),
+  deps?: unknown[] | undefined
+): void {
   useEffect(() => {
     const cleanup = effect();
+
     return () => {
-      if (cleanup) cleanup();
+      if (cleanup) {
+        cleanup();
+      }
     };
     // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   }, deps);
 }
 
-function useSignalsLayoutEffect(effect: () => void | (() => void), deps?: any[]) {
+function useSignalsLayoutEffect(
+  effect: (() => void) | (() => () => void),
+  deps?: unknown[] | undefined
+): void {
   useLayoutEffect(() => {
     const cleanup = effect();
 
     return () => {
-      if (cleanup) cleanup();
+      if (cleanup) {
+        cleanup();
+      }
     };
+
     // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   }, deps);
 }

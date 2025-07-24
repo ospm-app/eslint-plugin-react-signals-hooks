@@ -8,19 +8,29 @@ This document outlines the test cases for all rules in the `@ospm/eslint-plugin-
   - [Table of Contents](#table-of-contents)
   - [Test Cases](#test-cases)
     - [require-use-signals](#require-use-signals)
-    - [exhaustive-deps](#exhaustive-deps)
-    - [no-mutation-in-render](#no-mutation-in-render)
-    - [prefer-computed](#prefer-computed)
-    - [prefer-for-over-map](#prefer-for-over-map)
-    - [prefer-show-over-ternary](#prefer-show-over-ternary)
-    - [prefer-signal-effect](#prefer-signal-effect)
+    - [prefer-batch-updates](#prefer-batch-updates)
     - [prefer-signal-in-jsx](#prefer-signal-in-jsx)
     - [signal-variable-name](#signal-variable-name)
-  - [Planned Rules Test Cases](#planned-rules-test-cases)
+    - [prefer-signal-effect](#prefer-signal-effect)
     - [prefer-batch-for-multi-mutations](#prefer-batch-for-multi-mutations)
     - [warn-on-unnecessary-untracked](#warn-on-unnecessary-untracked)
-    - [prefer-use-signal-over-use-state](#prefer-use-signal-over-use-state)
+    - [no-mutation-in-render](#no-mutation-in-render)
     - [no-non-signal-with-signal-suffix](#no-non-signal-with-signal-suffix)
+    - [prefer-computed](#prefer-computed)
+    - [prefer-for-over-map](#prefer-for-over-map)
+    - [exhaustive-deps](#exhaustive-deps)
+    - [no-mutation-in-render](#no-mutation-in-render-1)
+    - [prefer-computed](#prefer-computed-1)
+    - [prefer-for-over-map](#prefer-for-over-map-1)
+    - [prefer-show-over-ternary](#prefer-show-over-ternary)
+    - [prefer-signal-effect](#prefer-signal-effect-1)
+    - [prefer-signal-in-jsx](#prefer-signal-in-jsx-1)
+    - [signal-variable-name](#signal-variable-name-1)
+  - [Planned Rules Test Cases](#planned-rules-test-cases)
+    - [prefer-batch-for-multi-mutations](#prefer-batch-for-multi-mutations-1)
+    - [warn-on-unnecessary-untracked](#warn-on-unnecessary-untracked-1)
+    - [prefer-use-signal-over-use-state](#prefer-use-signal-over-use-state)
+    - [no-non-signal-with-signal-suffix](#no-non-signal-with-signal-suffix-1)
     - [restrict-signal-locations](#restrict-signal-locations)
     - [require-use-signals Enhancement](#require-use-signals-enhancement)
 
@@ -54,29 +64,169 @@ This document outlines the test cases for all rules in the `@ospm/eslint-plugin-
 
 5. **Arrow Function Components**
    - Description: Test arrow function components with and without useSignals()
-   - Files
+   - Files:
      - `TestArrowFunctionMissingUseSignals` (should warn)
      - `TestArrowFunctionCorrectUseSignals` (should not warn)
 
-6. **Multiple Signals**
+### prefer-batch-updates
+
+1. **Multiple Signal Updates**
+   - Description: Multiple signal updates without batching
+   - File: `tests/prefer-batch-updates/prefer-batch-updates.test.tsx`
+   - Test Function: `TestMultipleSignalUpdates`
+   - Expected: Should trigger warning for multiple updates without batching
+
+2. **Batched Signal Updates**
+   - Description: Multiple signal updates within batch()
+   - File: `tests/prefer-batch-updates/prefer-batch-updates.test.tsx`
+   - Test Function: `TestBatchSignalUpdates`
+   - Expected: No warnings (correct usage)
+
+3. **Nested Signal Updates**
+   - Description: Nested signal updates without batching
+   - File: `tests/prefer-batch-updates/prefer-batch-updates.test.tsx`
+   - Test Function: `TestNestedSignalUpdates`
+   - Expected: Should trigger warning
+
+4. **Single Signal Update**
+   - Description: Single signal update (no batching needed)
+   - File: `tests/prefer-batch-updates/prefer-batch-updates.test.tsx`
+   - Test Function: `TestSingleSignalUpdate`
+   - Expected: No warnings (single update doesn't need batching)
+
+### prefer-signal-in-jsx
+
+1. **Signal Value in JSX**
+   - Description: Using .value in JSX
+   - File: `tests/prefer-signal-in-jsx/prefer-signal-in-jsx.test.tsx`
+   - Test Function: `TestSignalValueInJSX`
+   - Expected: Should trigger warning
+
+2. **Multiple Signal Values in JSX**
+   - Description: Multiple .value usages in JSX
+   - File: `tests/prefer-signal-in-jsx/prefer-signal-in-jsx.test.tsx`
+   - Test Function: `TestMultipleSignalValuesInJSX`
+   - Expected: Should trigger warnings for each .value usage
+
+3. **Signal Value in JSX Attributes**
+   - Description: Using .value in JSX attributes
+   - File: `tests/prefer-signal-in-jsx/prefer-signal-in-jsx.test.tsx`
+   - Test Function: `TestSignalValueInJSXAttribute`
+   - Expected: Should trigger warning
+
+4. **Correct Signal Usage in JSX**
+   - Description: Using signals directly in JSX (without .value)
+   - File: `tests/prefer-signal-in-jsx/prefer-signal-in-jsx.test.tsx`
+   - Test Function: `TestCorrectSignalUsageInJSX`
+   - Expected: No warnings
+
+### signal-variable-name
+
+1. **Valid Signal Names**
+   - Description: Variables with valid signal names
+   - File: `tests/signal-variable-name/signal-variable-name.test.tsx`
+   - Test Functions: Various test cases with valid names
+   - Expected: No warnings for valid names
+
+2. **Invalid Signal Names**
+   - Description: Variables with invalid signal names
+   - File: `tests/signal-variable-name/signal-variable-name.test.tsx`
+   - Test Functions: Various test cases with invalid names
+   - Expected: Should trigger warnings for invalid names
+
+### prefer-signal-effect
+
+1. **useEffect with Signal Dependencies**
+   - Description: Using useEffect with signal dependencies
+   - File: `tests/prefer-signal-effect/prefer-signal-effect.test.tsx`
+   - Test Function: `TestUseEffectWithSignalDeps`
+   - Expected: Should suggest using effect()
+
+2. **effect() with Signals**
+   - Description: Correct usage of effect() with signals
+   - File: `tests/prefer-signal-effect/prefer-signal-effect.test.tsx`
+   - Test Function: `TestEffectWithSignals`
+   - Expected: No warnings
+
+### prefer-batch-for-multi-mutations
+
+1. **Multiple Mutations**
+   - Description: Multiple signal mutations without batching
+   - File: `tests/prefer-batch-for-multi-mutations/prefer-batch-for-multi-mutations.test.tsx`
+   - Test Function: `TestMultipleMutations`
+   - Expected: Should suggest using batch()
+
+2. **Batched Mutations**
+   - Description: Multiple signal mutations within batch()
+   - File: `tests/prefer-batch-for-multi-mutations/prefer-batch-for-multi-mutations.test.tsx`
+   - Test Function: `TestBatchedMutations`
+   - Expected: No warnings
+
+### warn-on-unnecessary-untracked
+
+1. **Unnecessary untracked()**
+   - Description: Using untracked() where it's not needed
+   - File: `tests/warn-on-unnecessary-untracked/warn-on-unnecessary-untracked.test.tsx`
+   - Test Function: `TestUnnecessaryUntracked`
+   - Expected: Should warn about unnecessary untracked()
+
+2. **Necessary untracked()**
+   - Description: Proper usage of untracked()
+   - File: `tests/warn-on-unnecessary-untracked/warn-on-unnecessary-untracked.test.tsx`
+   - Test Function: `TestNecessaryUntracked`
+   - Expected: No warnings
+
+### no-mutation-in-render
+
+1. **Signal Mutation in Render**
+   - Description: Mutating signals during render
+   - File: `tests/no-mutation-in-render/no-mutation-in-render.test.tsx`
+   - Test Function: `TestSignalMutationInRender`
+   - Expected: Should warn about mutation during render
+
+### no-non-signal-with-signal-suffix
+
+1. **Incorrect Signal Suffix**
+   - Description: Non-signal variables with 'Signal' suffix
+   - File: `tests/no-non-signal-with-signal-suffix/no-non-signal-with-signal-suffix.test.tsx`
+   - Test Function: `TestNonSignalWithSuffix`
+   - Expected: Should warn about misleading suffix
+
+### prefer-computed
+
+1. **Derived State with useMemo**
+   - Description: Using useMemo with signal dependencies
+   - File: `tests/prefer-computed/prefer-computed.test.tsx`
+   - Test Function: `TestUseMemoWithSignals`
+   - Expected: Should suggest using computed()
+
+### prefer-for-over-map
+
+1. **Array.map with Signals**
+   - Description: Using .map() with signal arrays
+   - File: `tests/prefer-for-over-map/prefer-for-over-map.test.tsx`
+   - Test Function: `TestArrayMapWithSignals`
+   - Expected: Should suggest using <For> component
+
+2. **Multiple Signals**
    - Description: Component uses multiple signals
    - File: `tests/require-use-signals/require-use-signals.test.tsx`
    - Test Function: `TestMultipleSignalsMissingUseSignals`
    - Expected: Should warn about missing useSignals()
 
-7. **Signal in JSX Expression**
+3. **Signal in JSX Expression**
    - Description: Signal used in conditional JSX
    - File: `tests/require-use-signals/require-use-signals.test.tsx`
    - Test Function: `TestSignalInJSXMissingUseSignals`
    - Expected: Should warn about missing useSignals()
 
-8. **Ignored Components**
+4. **Ignored Components**
    - Description: Components matching ignore patterns
    - File: `tests/require-use-signals/require-use-signals.test.tsx`
    - Test Function: `IgnoredComponent`
    - Expected: No warnings when component is in ignore list
 
-9. **Non-Component Functions**
+5. **Non-Component Functions**
    - Description: Lowercase function names (not React components)
    - File: `tests/require-use-signals/require-use-signals.test.tsx`
    - Test Function: `notAComponent`

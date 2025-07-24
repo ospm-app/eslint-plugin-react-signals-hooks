@@ -81,12 +81,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ospm/eslint-plugin-react-signals-hooks.git"
+    "url": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks.git"
   },
   "bugs": {
-    "url": "https://github.com/ospm/eslint-plugin-react-signals-hooks/issues"
+    "url": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/issues"
   },
-  "homepage": "https://github.com/ospm/eslint-plugin-react-signals-hooks#readme",
+  "homepage": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks#readme",
   "peerDependencies": {
     "@preact/signals-core": "^1.11.0",
     "@preact/signals-react": "^3.2.1",
@@ -105,6 +105,7 @@
     "@types/node": "^24.1.0",
     "@typescript-eslint/eslint-plugin": "^8.38.0",
     "@typescript-eslint/parser": "^8.38.0",
+    "@typescript-eslint/scope-manager": "^8.38.0",
     "@typescript-eslint/utils": "^8.38.0",
     "eslint": "^9.31.0",
     "eslint-config-typescript": "^3.0.0",
@@ -129,5 +130,8 @@
   "optionalDependencies": {
     "@types/react": "^19.0.0",
     "react-native": "^0.79.5"
+  },
+  "dependencies": {
+    "@typescript-eslint/types": "^8.38.0"
   }
 }
