@@ -1,9 +1,26 @@
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
-
-import { validatePerformanceOptions } from './validate-performance-options.js';
-import type { PerformanceOperations } from './performance-constants.js';
 import type { TSESTree } from '@typescript-eslint/utils';
-import { metricsAggregator, logAggregatedMetrics } from './metrics-aggregator.js';
+
+import type { PerformanceBudget, PerformanceMetrics } from './types.js';
+import { validatePerformanceOptions } from './validate-performance-options.js';
+import { type PerformanceOperation, PerformanceOperations } from './performance-constants.js';
+
+export // Default performance budget values
+const DEFAULT_PERFORMANCE_BUDGET: PerformanceBudget = {
+  maxTime: 50, // ms
+  maxNodes: 2000,
+  maxMemory: 50 * 1024 * 1024, // 50MB
+  maxOperations: {
+    [PerformanceOperations.signalAccess]: 1000,
+    [PerformanceOperations.signalCheck]: 500,
+    [PerformanceOperations.effectCheck]: 500,
+    [PerformanceOperations.identifierResolution]: 1000,
+    [PerformanceOperations.scopeLookup]: 1000,
+    [PerformanceOperations.typeCheck]: 500,
+  },
+  enableMetrics: false,
+  logMetrics: false,
+};
 
 export class PerformanceLimitExceededError extends Error {
   constructor(
@@ -15,64 +32,6 @@ export class PerformanceLimitExceededError extends Error {
     this.name = 'PerformanceLimitExceededError';
   }
 }
-
-export type PerformanceMetrics = {
-  // Basic timing
-  startTime: number;
-  endTime?: number | undefined;
-  duration?: number | undefined;
-
-  // Memory usage (in bytes)
-  memoryUsage?: NodeJS.MemoryUsage | undefined;
-  memoryDelta?: number | undefined;
-
-  // Node and operation counts
-  nodeCount: number;
-  operationCounts: Record<string, number>;
-
-  // File and rule info
-  filePath: string;
-  ruleName: string;
-
-  // Budget tracking
-  exceededBudget?: boolean | undefined;
-  budgetExceededBy?: number | undefined;
-
-  // Performance budget configuration
-  perfBudget?: PerformanceBudget | undefined;
-
-  // Additional metrics
-  phaseDurations?: Record<string, number> | undefined;
-  customMetrics?: Record<string, unknown> | undefined;
-
-  // Node type tracking
-  nodeTypes?: Map<string, number>;
-  nodeLocations?: Array<{
-    type: string;
-    start: { line: number; column: number };
-    end: { line: number; column: number };
-  }>;
-  budgetExceededNodeTypes?: Set<string>;
-};
-
-/**
- * Performance budget configuration for rule execution
- *
- * @property maxTime - Maximum execution time in milliseconds
- * @property maxMemory - Maximum memory usage in bytes
- * @property maxNodes - Maximum number of AST nodes to process
- * @property enableMetrics - Whether to collect detailed performance metrics
- * @property logMetrics - Whether to log metrics to console
- * @property maxOperations - Operation-specific limits
- */
-export type PerformanceBudget = {
-  maxTime?: number | undefined;
-  maxMemory?: number | undefined;
-  maxNodes?: number | undefined;
-  enableMetrics?: boolean | undefined;
-  logMetrics?: boolean | undefined;
-  maxOperations?: Partial<Record<keyof typeof PerformanceOperations, number>> | undefined;
-};
 
 const performanceMetrics = new Map<string, PerformanceMetrics>();
 
@@ -143,7 +102,11 @@ function incrementNodeCount(key: string, nodeType?: string): void {
   }
 }
 
-export function trackOperation(key: string, operation: string, count: number = 1): void {
+export function trackOperation(
+  key: string,
+  operation: PerformanceOperation,
+  count: number = 1
+): void {
   const metrics = performanceMetrics.get(key);
 
   if (!metrics) {
@@ -154,8 +117,7 @@ export function trackOperation(key: string, operation: string, count: number = 1
 
   metrics.operationCounts[operation] = newCount;
 
-  const operationLimit =
-    metrics.perfBudget?.maxOperations?.[operation as keyof typeof PerformanceOperations];
+  const operationLimit = metrics.perfBudget?.maxOperations?.[operation];
 
   if (operationLimit !== undefined && newCount > operationLimit) {
     throw new PerformanceLimitExceededError(
@@ -232,89 +194,100 @@ export function stopTracking(key: string): PerformanceMetrics | undefined {
     return undefined;
   }
 
-  // End any active phases for this key
-  while (phaseStack.some((phase) => phase.key === key)) {
-    const phase = phaseStack.pop();
-    if (phase && phase.key === key) {
-      const phaseDuration = performance.now() - phase.startTime;
-      if (metrics.phaseDurations) {
-        metrics.phaseDurations[phase.key] =
-          (metrics.phaseDurations[phase.key] || 0) + phaseDuration;
+  if (
+    phaseStack.some(
+      (phase: { key: string; startTime: number; memoryAtStart?: NodeJS.MemoryUsage }): boolean => {
+        return phase.key === key;
       }
-    }
+    )
+  ) {
+    endPhase(key, 'total');
   }
 
-  // Set final timing and memory metrics
   metrics.endTime = performance.now();
 
   metrics.duration = metrics.endTime - metrics.startTime;
 
-  const currentMemory = process.memoryUsage();
-  metrics.memoryUsage = currentMemory;
-  metrics.memoryDelta = currentMemory.heapUsed - (metrics.memoryUsage?.heapUsed || 0);
+  if (metrics.perfBudget?.maxTime && metrics.duration > metrics.perfBudget.maxTime) {
+    metrics.exceededBudget = true;
 
-  // Check performance budgets
-  if (metrics.perfBudget) {
-    // Time budget check
-    if (metrics.perfBudget.maxTime && metrics.duration > metrics.perfBudget.maxTime) {
-      metrics.exceededBudget = true;
-      metrics.budgetExceededBy = Math.max(
-        metrics.budgetExceededBy || 0,
-        metrics.duration - metrics.perfBudget.maxTime
+    metrics.budgetExceededBy = metrics.duration - metrics.perfBudget.maxTime;
+
+    if (metrics.perfBudget.logMetrics) {
+      console.warn(
+        `[${metrics.ruleName}] Performance budget exceeded: ` +
+          `Time limit of ${metrics.perfBudget.maxTime}ms exceeded by ${metrics.budgetExceededBy.toFixed(2)}ms`
       );
-
-      if (metrics.perfBudget.logMetrics) {
-        console.warn(
-          `[${metrics.ruleName}] Performance budget exceeded: ` +
-            `Time limit of ${metrics.perfBudget.maxTime}ms exceeded by ${metrics.budgetExceededBy.toFixed(2)}ms`
-        );
-      }
-    }
-
-    // Node count budget check
-    if (metrics.perfBudget.maxNodes && metrics.nodeCount > metrics.perfBudget.maxNodes) {
-      metrics.exceededBudget = true;
-
-      const exceededBy = metrics.nodeCount - metrics.perfBudget.maxNodes;
-      metrics.budgetExceededBy = Math.max(metrics.budgetExceededBy || 0, exceededBy);
-
-      if (metrics.perfBudget.logMetrics) {
-        console.warn(
-          `[${metrics.ruleName}] Performance budget exceeded: ` +
-            `Node limit of ${metrics.perfBudget.maxNodes} exceeded by ${exceededBy} nodes`
-        );
-      }
-    }
-
-    // Memory budget check
-    if (metrics.perfBudget.maxMemory && currentMemory.heapUsed > metrics.perfBudget.maxMemory) {
-      metrics.exceededBudget = true;
-      const exceededBy = currentMemory.heapUsed - metrics.perfBudget.maxMemory;
-      metrics.budgetExceededBy = Math.max(metrics.budgetExceededBy || 0, exceededBy);
-
-      if (metrics.perfBudget.logMetrics) {
-        console.warn(
-          `[${metrics.ruleName}] Performance budget exceeded: ` +
-            `Memory limit of ${formatBytes(metrics.perfBudget.maxMemory)} ` +
-            `exceeded by ${formatBytes(exceededBy)}`
-        );
-      }
     }
   }
 
-  // Add metrics to aggregator before cleaning up
-  metricsAggregator.addMetrics(metrics);
+  if (metrics.perfBudget?.maxNodes && metrics.nodeCount > metrics.perfBudget.maxNodes) {
+    metrics.exceededBudget = true;
 
-  // Clean up
-  const result = { ...metrics };
+    const exceededBy = metrics.nodeCount - metrics.perfBudget.maxNodes;
+
+    if (metrics.perfBudget.logMetrics) {
+      console.warn(
+        `[${metrics.ruleName}] Performance budget exceeded: ` +
+          `Node limit of ${metrics.perfBudget.maxNodes} exceeded by ${exceededBy} nodes`
+      );
+    }
+  }
+
+  const memoryUsage = process.memoryUsage();
+
+  if (metrics.perfBudget?.maxMemory && memoryUsage.heapUsed > metrics.perfBudget.maxMemory) {
+    metrics.exceededBudget = true;
+
+    const exceededBy = memoryUsage.heapUsed - metrics.perfBudget.maxMemory;
+
+    if (metrics.perfBudget.logMetrics) {
+      console.warn(
+        `[${metrics.ruleName}] Performance budget exceeded: ` +
+          `Memory limit of ${formatBytes(metrics.perfBudget.maxMemory)} ` +
+          `exceeded by ${formatBytes(exceededBy)}`
+      );
+    }
+  }
+
+  if (metrics.perfBudget) {
+    const { maxTime, maxMemory, maxNodes } = metrics.perfBudget;
+
+    if (maxTime !== undefined && metrics.duration > maxTime) {
+      metrics.exceededBudget = true;
+
+      metrics.budgetExceededBy = metrics.duration - maxTime;
+    }
+
+    if (maxMemory !== undefined && memoryUsage.heapUsed > maxMemory) {
+      metrics.exceededBudget = true;
+    }
+
+    if (maxNodes !== undefined && metrics.nodeCount > maxNodes) {
+      metrics.exceededBudget = true;
+    }
+  }
+
+  if (metrics.perfBudget?.logMetrics) {
+    console.info(`[Performance Metrics] ${metrics.ruleName} (${metrics.filePath})`);
+
+    console.info(`  Duration: ${metrics.duration.toFixed(2)}ms`);
+
+    console.info(`  Node count: ${metrics.nodeCount}`);
+
+    if (metrics.memoryUsage && 'heapUsed' in memoryUsage) {
+      const endMemory = memoryUsage.heapUsed;
+
+      console.info(`  Memory usage: ${endMemory.toLocaleString()} bytes`);
+      console.info(
+        `  Memory delta: ${(endMemory - metrics.memoryUsage.heapUsed).toLocaleString()} bytes`
+      );
+    }
+  }
+
   performanceMetrics.delete(key);
 
-  // Log aggregated metrics if this is the last file being processed
-  if (performanceMetrics.size === 0 && result.perfBudget?.logMetrics) {
-    logAggregatedMetrics();
-  }
-
-  return result;
+  return metrics;
 }
 
 export function logMetrics<Options extends unknown[]>(

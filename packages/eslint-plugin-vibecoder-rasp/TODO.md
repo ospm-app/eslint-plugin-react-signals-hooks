@@ -96,6 +96,18 @@
     }
     ```
 
+- Enforce `typeof` for undefined checks with autofix
+  - Convert direct `!== undefined` checks to use `typeof`
+  - Example:
+
+    ```typescript
+    // Bad
+    if (something !== undefined) {}
+
+    // Good - using typeof for undefined checks
+    if (typeof something !== 'undefined') {}
+    ```
+
 ## Code Organization
 
 ### Import/Export
@@ -155,6 +167,44 @@
 - Prevent conditional hook calls
 - Enforce hook dependencies in custom hooks
 
+## Configuration Autofix
+
+### TypeScript Config
+
+- [ ] Autofix TypeScript configuration
+  - [ ] For latest and strictest tsconfig.json based on TypeScript version in package.json
+  - [ ] For root package in monorepo
+  - [ ] For library package in monorepo
+  - [ ] For library package in root repo
+  - [ ] For private project in root repo
+  - [ ] For private project in root repo of monorepo
+  - [ ] For private project in monorepo
+  - [ ] For CJS build
+  - [ ] For ESM build
+  - [ ] For types build
+  - [ ] For testing
+
+### ESLint Config
+
+- [ ] Autofix ESLint configuration
+  - [ ] For ESLint 9 | 8.57.1
+  - [ ] Support for different file formats:
+    - [ ] CJS
+    - [ ] MJS
+    - [ ] JS
+    - [ ] TS
+  - [ ] For different project types:
+    - [ ] Frontend library
+    - [ ] Backend library
+    - [ ] Cross-platform library
+    - [ ] React frontend
+    - [ ] SolidJS frontend
+    - [ ] Svelte frontend
+    - [ ] React Router frontend
+    - [ ] React Native frontend
+    - [ ] Frontend project
+    - [ ] Backend project
+
 ## Internationalization (i18n)
 
 ### Translation
@@ -199,6 +249,18 @@
 ## Performance Monitoring
 
 ## Code Style
+
+### Code Duplication
+
+- [ ] Detect and prevent code duplication with the following patterns:
+  - Two identical strings one directly under another, with empty lines, or with multiple empty lines in between
+  - Two identical lines of code one directly after another
+  - More than two identical blocks of code
+  - Duplicate code blocks that are not in direct order
+  - Configurable minimum token length for detection
+  - Support for ignoring comments and specific patterns via configuration
+  - Autofix capability to remove or consolidate duplicates
+  - Option to ignore test files or specific file patterns
 
 ### Control Flow
 

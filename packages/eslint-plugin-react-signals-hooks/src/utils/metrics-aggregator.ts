@@ -1,4 +1,4 @@
-import type { PerformanceMetrics } from './performance.js';
+import type { PerformanceMetrics } from './types.js';
 import type { PerformanceOperations } from './performance-constants.js';
 
 type AggregatedMetrics = {

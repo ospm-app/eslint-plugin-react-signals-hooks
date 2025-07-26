@@ -2,18 +2,24 @@ import { ESLintUtils } from '@typescript-eslint/utils';
 import type { TSESLint, TSESTree } from '@typescript-eslint/utils';
 import {
   createPerformanceTracker,
-  type PerformanceBudget,
-  startTracking,
+  trackOperation,
+  startPhase,
+  endPhase,
+  stopTracking,
+  // recordMetric,
+  DEFAULT_PERFORMANCE_BUDGET,
 } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
+import type { PerformanceBudget } from './utils/types.js';
 
 type MessageIds =
   | 'useBatch'
   | 'suggestUseBatch'
   | 'addBatchImport'
   | 'wrapWithBatch'
-  | 'useBatchSuggestion';
+  | 'useBatchSuggestion'
+  | 'performanceLimitExceeded';
 
 type SignalUpdate = {
   node: TSESTree.AssignmentExpression | TSESTree.CallExpression;
@@ -22,14 +28,198 @@ type SignalUpdate = {
   updateType: 'assignment' | 'method';
 };
 
-type Options = [
-  {
-    /** Minimum number of signal updates to trigger the rule */
-    minUpdates?: number | undefined;
-    /** Performance tuning options */
-    performance?: PerformanceBudget | undefined;
-  },
-];
+type Option = {
+  /** Minimum number of signal updates to trigger the rule */
+  minUpdates: number;
+  /** Performance tuning option */
+  performance: PerformanceBudget;
+};
+
+type Options = [Option];
+
+// Process a block of statements for signal updates
+function processBlock(
+  statements: Array<TSESTree.ExpressionStatement | TSESTree.VariableDeclaration>,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
+  option: Option
+) {
+  // Check if batch is already imported
+  const program = context.sourceCode.ast;
+
+  const hasBatchImport = program.body.some((node: TSESTree.ProgramStatement) => {
+    return (
+      node.type === 'ImportDeclaration' &&
+      node.source.value === '@preact/signals-react' &&
+      node.specifiers.some((specifier: TSESTree.ImportClause): boolean => {
+        return (
+          'imported' in specifier &&
+          'name' in specifier.imported &&
+          specifier.imported.name === 'batch'
+        );
+      })
+    );
+  });
+
+  const updatesInBlock: SignalUpdate[] = [];
+
+  for (const stmt of statements) {
+    // Skip non-expression statements and variable declarations
+    if (stmt.type !== 'ExpressionStatement' && stmt.type !== 'VariableDeclaration') {
+      continue;
+    }
+
+    // Handle expression statements (direct assignments or function calls)
+    if (stmt.type === 'ExpressionStatement' && stmt.expression) {
+      if (isSignalUpdate(stmt.expression)) {
+        updatesInBlock.push({
+          node: stmt.expression,
+          isTopLevel: true,
+          signalName:
+            stmt.expression.type === 'AssignmentExpression'
+              ? 'object' in stmt.expression.left &&
+                stmt.expression.left.object.type === 'Identifier'
+                ? stmt.expression.left.object.name
+                : 'signal'
+              : 'object' in stmt.expression.callee &&
+                  stmt.expression.callee.object.type === 'Identifier'
+                ? stmt.expression.callee.object.name
+                : 'signal',
+          updateType: stmt.expression.type === 'AssignmentExpression' ? 'assignment' : 'method',
+        });
+      }
+      // Handle variable declarations with potential signal updates in the initializer
+    } else if (stmt.type === 'VariableDeclaration') {
+      for (const decl of stmt.declarations) {
+        const init = decl.init;
+
+        if (init !== null && isSignalUpdate(init)) {
+          updatesInBlock.push({
+            node: init,
+            isTopLevel: true,
+            signalName:
+              init.type === 'AssignmentExpression'
+                ? 'object' in init.left && init.left.object.type === 'Identifier'
+                  ? init.left.object.name
+                  : 'signal'
+                : 'object' in init.callee && init.callee.object.type === 'Identifier'
+                  ? init.callee.object.name
+                  : 'signal',
+            updateType: init.type === 'AssignmentExpression' ? 'assignment' : 'method',
+          });
+        }
+      }
+    }
+  }
+
+  // Only suggest batching if we have enough updates
+  if (updatesInBlock.length >= option.minUpdates) {
+    const firstNode = updatesInBlock[0].node;
+
+    const signalCount = updatesInBlock.length;
+
+    context.report({
+      node: firstNode,
+      messageId: 'useBatch',
+      data: {
+        count: signalCount,
+        signals: Array.from(
+          new Set(
+            updatesInBlock.map((update: SignalUpdate): string => {
+              return update.signalName;
+            })
+          )
+        ).join(', '),
+      },
+      suggest: [
+        {
+          messageId: 'useBatchSuggestion',
+          data: { count: signalCount },
+          *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
+            const updatesText = updatesInBlock
+              .map(({ node }: SignalUpdate): string => {
+                return context.sourceCode.getText(node);
+              })
+              .join('; ');
+
+            if (!hasBatchImport) {
+              const batchImport = "import { batch } from '@preact/signals-react';\n";
+
+              const firstImport = program.body.find(
+                (n): n is TSESTree.ImportDeclaration => n.type === 'ImportDeclaration'
+              );
+
+              if (typeof firstImport === 'undefined') {
+                yield fixer.insertTextBefore(program.body[0], batchImport);
+              } else {
+                yield fixer.insertTextBefore(firstImport, batchImport);
+              }
+            }
+
+            yield fixer.replaceTextRange(
+              [
+                firstNode.range?.[0] ?? 0,
+                updatesInBlock[updatesInBlock.length - 1].node.range?.[1] ?? 0,
+              ],
+              `batch(() => { ${updatesText} })`
+            );
+          },
+        },
+        {
+          messageId: 'addBatchImport',
+          *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
+            if (hasBatchImport) {
+              return;
+            }
+
+            const batchImport = "import { batch } from '@preact/signals-react';\n";
+
+            const firstImport = program.body.find(
+              (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
+                return n.type === 'ImportDeclaration';
+              }
+            );
+
+            if (typeof firstImport === 'undefined') {
+              yield fixer.insertTextBefore(program.body[0], batchImport);
+            } else {
+              yield fixer.insertTextBefore(firstImport, batchImport);
+            }
+          },
+        },
+      ],
+    });
+  }
+}
+
+function isSignalUpdate(
+  node: TSESTree.Node
+): node is TSESTree.AssignmentExpression | TSESTree.CallExpression {
+  // Handle direct assignments (signal.value = x)
+  if (
+    node.type === 'AssignmentExpression' &&
+    node.left.type === 'MemberExpression' &&
+    node.left.property.type === 'Identifier' &&
+    node.left.property.name === 'value' &&
+    node.left.object.type === 'Identifier' &&
+    (node.left.object.name.endsWith('Signal') || node.left.object.name.endsWith('signal'))
+  ) {
+    return true;
+  }
+
+  // Handle method calls (signal.set(x) or signal.update())
+  if (
+    node.type === 'CallExpression' &&
+    node.callee.type === 'MemberExpression' &&
+    node.callee.property.type === 'Identifier' &&
+    ['set', 'update'].includes(node.callee.property.name) &&
+    node.callee.object.type === 'Identifier' &&
+    (node.callee.object.name.endsWith('Signal') || node.callee.object.name.endsWith('signal'))
+  ) {
+    return true;
+  }
+
+  return false;
+}
 
 const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return getRuleDocUrl(name);
@@ -54,6 +244,7 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
     messages: {
       useBatch:
         '{{count}} signal updates detected in the same scope. Use `batch` to optimize performance by reducing renders.',
+      performanceLimitExceeded: 'Performance limit exceeded: {{message}}',
       suggestUseBatch: 'Use `batch` to group {{count}} signal updates',
       addBatchImport: "Add `batch` import from '@preact/signals-react'",
       wrapWithBatch: 'Wrap with `batch` to optimize signal updates',
@@ -153,282 +344,134 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
   defaultOptions: [
     {
       minUpdates: 2,
-      performance: {
-        // Time and resource limits
-        maxTime: 35, // ms
-        maxNodes: 1800, // Maximum AST nodes to process
-        maxMemory: 45 * 1024 * 1024, // 45MB
-
-        // Operation limits using standardized operation names
-        maxOperations: {
-          [PerformanceOperations.signalAccess]: 1000, // Maximum number of signal access checks
-          [PerformanceOperations.signalCheck]: 500, // Maximum number of signal checks
-          [PerformanceOperations.identifierResolution]: 1000, // Maximum number of identifier resolutions
-          [PerformanceOperations.scopeLookup]: 1000, // Maximum number of scope lookups
-          [PerformanceOperations.typeCheck]: 500, // Maximum number of type checks
-          [PerformanceOperations.batchAnalysis]: 100, // Maximum number of batch operations to analyze
-        },
-
-        // Metrics and logging
-        enableMetrics: false, // Whether to enable detailed performance metrics
-        logMetrics: false, // Whether to log performance metrics to console
-      },
+      performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
 
-  create(context, [options = {}]) {
-    const { minUpdates = 2, performance: performanceOptions = {} } = options;
+  create(context, [option]): TSESLint.RuleListener {
+    // Set up performance tracking with a unique key
+    const perfKey = `prefer-batch-updates:${context.filename}`;
 
-    const key = startTracking<Options>(context, 'prefer-batch-updates');
+    // Initialize performance budget with defaults
+    const perfBudget: PerformanceBudget = {
+      ...DEFAULT_PERFORMANCE_BUDGET,
+      ...option.performance,
+    };
 
-    // Set performance budget for this rule
-    const perf = createPerformanceTracker<Options>(
-      key,
-      {
-        maxTime: performanceOptions.maxTime ?? 35, // ms
-        maxNodes: performanceOptions.maxNodes ?? 1800, // Maximum AST nodes to process
-        maxMemory: performanceOptions.maxMemory ?? 45 * 1024 * 1024, // 45MB
+    // Create performance tracker
+    const perf = createPerformanceTracker(perfKey, perfBudget, context);
 
-        // Operation limits using standardized operation names
-        maxOperations: {
-          [PerformanceOperations.signalAccess]:
-            performanceOptions.maxOperations?.[PerformanceOperations.signalAccess] ?? 1000,
-          [PerformanceOperations.signalCheck]:
-            performanceOptions.maxOperations?.[PerformanceOperations.signalCheck] ?? 500,
-          [PerformanceOperations.identifierResolution]:
-            performanceOptions.maxOperations?.[PerformanceOperations.identifierResolution] ?? 1000,
-          [PerformanceOperations.scopeLookup]:
-            performanceOptions.maxOperations?.[PerformanceOperations.scopeLookup] ?? 1000,
-          [PerformanceOperations.typeCheck]:
-            performanceOptions.maxOperations?.[PerformanceOperations.typeCheck] ?? 500,
-          [PerformanceOperations.batchAnalysis]:
-            performanceOptions.maxOperations?.[PerformanceOperations.batchAnalysis] ?? 100,
-        },
+    // Track node processing
+    let nodeCount = 0;
 
-        // Metrics and logging
-        enableMetrics: performanceOptions.enableMetrics ?? false,
-        logMetrics: performanceOptions.logMetrics ?? false,
-      },
-      context
-    );
+    // Helper function to check if we should continue processing
+    function shouldContinue(): boolean {
+      nodeCount++;
 
-    // Enable performance metrics if configured
-    if (performanceOptions.enableMetrics) {
-      startTracking(context, key, {
-        maxTime: performanceOptions.maxTime,
-        maxNodes: performanceOptions.maxNodes,
-        maxMemory: performanceOptions.maxMemory,
-        maxOperations: performanceOptions.maxOperations,
-        enableMetrics: performanceOptions.enableMetrics,
-        logMetrics: performanceOptions.logMetrics,
-      });
+      // Check if we've exceeded the node budget
+      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+        trackOperation(perfKey, 'nodeBudgetExceeded');
+
+        return false;
+      }
+
+      return true;
     }
 
-    const sourceCode = context.sourceCode;
+    // Track all nodes for performance monitoring
+    const nodeVisitors: TSESLint.RuleFunction<TSESTree.Node> = (node: TSESTree.Node): void => {
+      startPhase(perfKey, 'nodeProcessing');
+
+      perf.trackNode(node);
+
+      if (!shouldContinue()) {
+        return;
+      }
+
+      // Track specific node types
+      if (node.type === 'CallExpression' || node.type === 'AssignmentExpression') {
+        trackOperation(perfKey, 'nodeProcessing.expression');
+      }
+
+      endPhase(perfKey, 'nodeProcessing');
+    };
 
     // Track signal updates in the current scope
     const signalUpdates: Array<SignalUpdate> = [];
 
-    let hasBatchImport = false;
-
-    // Check if batch is already imported
-    const program = sourceCode.ast;
-    hasBatchImport = program.body.some((node) => {
-      return (
-        node.type === 'ImportDeclaration' &&
-        node.source.value === '@preact/signals-react' &&
-        node.specifiers.some((s) => {
-          return (
-            s.type === 'ImportSpecifier' && 'name' in s.imported && s.imported.name === 'batch'
-          );
-        })
-      );
-    });
-
-    function isSignalUpdate(
-      node: TSESTree.Node
-    ): node is TSESTree.AssignmentExpression | TSESTree.CallExpression {
-      // Handle direct assignments (signal.value = x)
-      if (
-        node.type === 'AssignmentExpression' &&
-        node.left.type === 'MemberExpression' &&
-        node.left.property.type === 'Identifier' &&
-        node.left.property.name === 'value' &&
-        node.left.object.type === 'Identifier' &&
-        (node.left.object.name.endsWith('Signal') || node.left.object.name.endsWith('signal'))
-      ) {
-        return true;
+    // Helper function to get signal name from member expression
+    function getSignalName(expr: TSESTree.MemberExpression): string {
+      if (expr.object.type === 'Identifier') {
+        return expr.object.name;
       }
-
-      // Handle method calls (signal.set(x) or signal.update())
-      if (
-        node.type === 'CallExpression' &&
-        node.callee.type === 'MemberExpression' &&
-        node.callee.property.type === 'Identifier' &&
-        ['set', 'update'].includes(node.callee.property.name) &&
-        node.callee.object.type === 'Identifier' &&
-        (node.callee.object.name.endsWith('Signal') || node.callee.object.name.endsWith('signal'))
-      ) {
-        return true;
-      }
-
-      return false;
-    }
-
-    // Process a block of statements for signal updates
-    function processBlock(
-      statements: Array<TSESTree.ExpressionStatement | TSESTree.VariableDeclaration>
-    ) {
-      const updatesInBlock: SignalUpdate[] = [];
-
-      for (const stmt of statements) {
-        // Skip non-expression statements and variable declarations
-        if (stmt.type !== 'ExpressionStatement' && stmt.type !== 'VariableDeclaration') {
-          continue;
-        }
-
-        // Handle expression statements (direct assignments or function calls)
-        if (stmt.type === 'ExpressionStatement' && stmt.expression) {
-          if (isSignalUpdate(stmt.expression)) {
-            updatesInBlock.push({
-              node: stmt.expression,
-              isTopLevel: true,
-              signalName:
-                stmt.expression.type === 'AssignmentExpression'
-                  ? 'object' in stmt.expression.left &&
-                    stmt.expression.left.object.type === 'Identifier'
-                    ? stmt.expression.left.object.name
-                    : 'signal'
-                  : 'object' in stmt.expression.callee &&
-                      stmt.expression.callee.object.type === 'Identifier'
-                    ? stmt.expression.callee.object.name
-                    : 'signal',
-              updateType: stmt.expression.type === 'AssignmentExpression' ? 'assignment' : 'method',
-            });
-          }
-        }
-
-        // Handle variable declarations with potential signal updates in the initializer
-        else if (stmt.type === 'VariableDeclaration') {
-          for (const decl of stmt.declarations) {
-            const init = decl.init;
-
-            if (init !== null && isSignalUpdate(init)) {
-              updatesInBlock.push({
-                node: init,
-                isTopLevel: true,
-                signalName:
-                  init.type === 'AssignmentExpression'
-                    ? 'object' in init.left && init.left.object.type === 'Identifier'
-                      ? init.left.object.name
-                      : 'signal'
-                    : 'object' in init.callee && init.callee.object.type === 'Identifier'
-                      ? init.callee.object.name
-                      : 'signal',
-                updateType: init.type === 'AssignmentExpression' ? 'assignment' : 'method',
-              });
-            }
-          }
-        }
-      }
-
-      // Only suggest batching if we have enough updates
-      if (updatesInBlock.length >= minUpdates) {
-        const firstNode = updatesInBlock[0].node;
-
-        const signalCount = updatesInBlock.length;
-
-        context.report({
-          node: firstNode,
-          messageId: 'useBatch',
-          data: {
-            count: signalCount,
-            signals: Array.from(
-              new Set(
-                updatesInBlock.map((update: SignalUpdate): string => {
-                  return update.signalName;
-                })
-              )
-            ).join(', '),
-          },
-          suggest: [
-            {
-              messageId: 'useBatchSuggestion',
-              data: { count: signalCount },
-              *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
-                const updatesText = updatesInBlock
-                  .map(({ node }) => {
-                    return sourceCode.getText(node);
-                  })
-                  .join('; ');
-
-                if (!hasBatchImport) {
-                  const batchImport = "import { batch } from '@preact/signals-react';\n";
-
-                  const firstImport = program.body.find(
-                    (n): n is TSESTree.ImportDeclaration => n.type === 'ImportDeclaration'
-                  );
-
-                  if (typeof firstImport === 'undefined') {
-                    yield fixer.insertTextBefore(program.body[0], batchImport);
-                  } else {
-                    yield fixer.insertTextBefore(firstImport, batchImport);
-                  }
-                }
-
-                yield fixer.replaceTextRange(
-                  [
-                    firstNode.range?.[0] ?? 0,
-                    updatesInBlock[updatesInBlock.length - 1].node.range?.[1] ?? 0,
-                  ],
-                  `batch(() => { ${updatesText} })`
-                );
-              },
-            },
-            {
-              messageId: 'addBatchImport',
-              *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
-                if (hasBatchImport) {
-                  return;
-                }
-
-                const batchImport = "import { batch } from '@preact/signals-react';\n";
-
-                const firstImport = program.body.find(
-                  (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
-                    return n.type === 'ImportDeclaration';
-                  }
-                );
-
-                if (typeof firstImport === 'undefined') {
-                  yield fixer.insertTextBefore(program.body[0], batchImport);
-                } else {
-                  yield fixer.insertTextBefore(firstImport, batchImport);
-                }
-              },
-            },
-          ],
-        });
-      }
+      return 'signal';
     }
 
     return {
-      // Track all nodes for performance monitoring
-      '*': (node: TSESTree.Node): void => {
-        perf.trackNode(node);
-      },
+      '*': nodeVisitors,
+
       // Process blocks of code (function bodies, if blocks, etc.)
       'BlockStatement:exit'(node: TSESTree.BlockStatement): void {
+        startPhase(perfKey, 'blockStatement');
+
         processBlock(
           node.body.filter(
-            (n): n is TSESTree.ExpressionStatement | TSESTree.VariableDeclaration =>
-              n.type === 'ExpressionStatement' || n.type === 'VariableDeclaration'
-          )
+            (n): n is TSESTree.ExpressionStatement | TSESTree.VariableDeclaration => {
+              return n.type === 'ExpressionStatement' || n.type === 'VariableDeclaration';
+            }
+          ),
+          context,
+          option
         );
+
+        endPhase(perfKey, 'blockStatement');
+      },
+
+      // Track signal updates in the current scope
+      AssignmentExpression(node: TSESTree.AssignmentExpression): void {
+        startPhase(perfKey, 'assignmentExpression');
+
+        perf.trackNode(node);
+
+        if (isSignalUpdate(node)) {
+          signalUpdates.push({
+            node,
+            isTopLevel: true,
+            signalName:
+              'left' in node && node.left.type === 'MemberExpression'
+                ? getSignalName(node.left)
+                : node.left.type,
+            updateType: 'assignment',
+          });
+        }
+
+        endPhase(perfKey, 'assignmentExpression');
+      },
+
+      CallExpression(node: TSESTree.CallExpression): void {
+        startPhase(perfKey, 'callExpression');
+
+        perf.trackNode(node);
+
+        if (isSignalUpdate(node)) {
+          signalUpdates.push({
+            node,
+            isTopLevel: true,
+            signalName:
+              'callee' in node && node.callee.type === 'MemberExpression'
+                ? getSignalName(node.callee)
+                : node.callee.type,
+            updateType: 'method',
+          });
+        }
+
+        endPhase(perfKey, 'callExpression');
       },
 
       // Process program top level
       'Program:exit'(node: TSESTree.Program): void {
+        startPhase(perfKey, 'programExit');
+
         perf.trackNode(node);
 
         processBlock(
@@ -437,46 +480,42 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
               n: TSESTree.ProgramStatement
             ): n is TSESTree.ExpressionStatement | TSESTree.VariableDeclaration =>
               n.type === 'ExpressionStatement' || n.type === 'VariableDeclaration'
-          )
+          ),
+          context,
+          option
         );
 
+        try {
+          startPhase(perfKey, 'recordMetrics');
+
+          if (perfBudget.logMetrics) {
+            const finalMetrics = stopTracking(perfKey);
+
+            if (finalMetrics) {
+              const { exceededBudget, nodeCount, duration } = finalMetrics;
+              const status = exceededBudget ? 'EXCEEDED' : 'OK';
+
+              console.info(`\n[prefer-batch-updates] Performance Metrics (${status}):`);
+              console.info(`  File: ${context.filename}`);
+              console.info(`  Duration: ${duration?.toFixed(2)}ms`);
+              console.info(`  Nodes Processed: ${nodeCount}`);
+
+              if (exceededBudget) {
+                console.warn('\n⚠️  Performance budget exceeded!');
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error recording metrics:', error);
+        } finally {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+        }
+
         perf['Program:exit']();
-      },
-      // Track signal updates in the current scope
-      AssignmentExpression(node: TSESTree.AssignmentExpression): void {
-        perf.trackNode(node);
 
-        if (isSignalUpdate(node)) {
-          const signalName =
-            'object' in node.left && node.left.object.type === 'Identifier'
-              ? node.left.object.name
-              : 'signal';
-
-          signalUpdates.push({
-            node,
-            isTopLevel: node.parent?.type === 'ExpressionStatement',
-            signalName,
-            updateType: 'assignment',
-          });
-        }
-      },
-
-      CallExpression(node: TSESTree.CallExpression): void {
-        perf.trackNode(node);
-
-        if (isSignalUpdate(node)) {
-          const signalName =
-            'object' in node.callee && node.callee.object.type === 'Identifier'
-              ? node.callee.object.name
-              : 'signal';
-
-          signalUpdates.push({
-            node,
-            isTopLevel: node.parent?.type === 'ExpressionStatement',
-            signalName,
-            updateType: 'method',
-          });
-        }
+        endPhase(perfKey, 'programExit');
       },
     };
   },

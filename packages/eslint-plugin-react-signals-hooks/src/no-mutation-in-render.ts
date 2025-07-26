@@ -2,12 +2,13 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import {
   createPerformanceTracker,
-  type PerformanceBudget,
   trackOperation,
   startPhase,
   endPhase,
+  stopTracking,
 } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
+import type { PerformanceBudget } from './utils/types.js';
 
 const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}.md`;
@@ -36,7 +37,7 @@ type Option = {
         signalNestedPropertyAssignment?: 'error' | 'warn' | 'off' | undefined;
       }
     | undefined;
-  /** Performance tuning options */
+  /** Performance tuning option */
   performance?: PerformanceBudget | undefined;
 };
 
@@ -156,26 +157,26 @@ function trackIdentifier(
 }
 
 // Helper function to get severity level for a specific violation type
-function getSeverity(messageId: MessageIds, options: Option): 'error' | 'warn' | 'off' {
-  if (!options.severity) {
+function getSeverity(messageId: MessageIds, option: Option): 'error' | 'warn' | 'off' {
+  if (!option.severity) {
     return 'error';
   }
 
   switch (messageId) {
     case 'signalValueAssignment': {
-      return options.severity.signalValueAssignment ?? 'error';
+      return option.severity.signalValueAssignment ?? 'error';
     }
 
     case 'signalPropertyAssignment': {
-      return options.severity.signalPropertyAssignment ?? 'error';
+      return option.severity.signalPropertyAssignment ?? 'error';
     }
 
     case 'signalArrayIndexAssignment': {
-      return options.severity.signalArrayIndexAssignment ?? 'error';
+      return option.severity.signalArrayIndexAssignment ?? 'error';
     }
 
     case 'signalNestedPropertyAssignment': {
-      return options.severity.signalNestedPropertyAssignment ?? 'error';
+      return option.severity.signalNestedPropertyAssignment ?? 'error';
     }
 
     default: {
@@ -361,28 +362,27 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
       },
     },
   ],
-  create(context, [options = {}]): ESLintUtils.RuleListener {
+  create(context, [option = {}]): ESLintUtils.RuleListener {
     // Set up performance tracking for this rule
     const perfKey = `no-mutation-in-render:${context.filename}`;
 
     const perfBudget: PerformanceBudget = {
-      maxTime: options.performance?.maxTime ?? 50, // ms
-      maxNodes: options.performance?.maxNodes ?? 2000, // Maximum nodes to process
-      maxMemory: options.performance?.maxMemory ?? 50 * 1024 * 1024, // 50MB
+      maxTime: option.performance?.maxTime ?? 50, // ms
+      maxNodes: option.performance?.maxNodes ?? 2000, // Maximum nodes to process
+      maxMemory: option.performance?.maxMemory ?? 50 * 1024 * 1024, // 50MB
       maxOperations: {
         [PerformanceOperations.signalAccess]:
-          options.performance?.maxOperations?.signalAccess ?? 1000,
-        [PerformanceOperations.signalCheck]: options.performance?.maxOperations?.signalCheck ?? 500,
+          option.performance?.maxOperations?.signalAccess ?? 1000,
+        [PerformanceOperations.signalCheck]: option.performance?.maxOperations?.signalCheck ?? 500,
         [PerformanceOperations.nestedPropertyCheck]:
-          options.performance?.maxOperations?.nestedPropertyCheck ?? 500,
+          option.performance?.maxOperations?.nestedPropertyCheck ?? 500,
         [PerformanceOperations.identifierResolution]:
-          options.performance?.maxOperations?.identifierResolution ?? 1000,
-        [PerformanceOperations.scopeLookup]:
-          options.performance?.maxOperations?.scopeLookup ?? 1000,
-        [PerformanceOperations.typeCheck]: options.performance?.maxOperations?.typeCheck ?? 500,
+          option.performance?.maxOperations?.identifierResolution ?? 1000,
+        [PerformanceOperations.scopeLookup]: option.performance?.maxOperations?.scopeLookup ?? 1000,
+        [PerformanceOperations.typeCheck]: option.performance?.maxOperations?.typeCheck ?? 500,
       },
-      enableMetrics: options.performance?.enableMetrics ?? false,
-      logMetrics: options.performance?.logMetrics ?? false,
+      enableMetrics: option.performance?.enableMetrics ?? false,
+      logMetrics: option.performance?.logMetrics ?? false,
     };
 
     // Initialize performance tracking
@@ -392,10 +392,10 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
     trackOperation(perfKey, 'ruleInit');
 
     // Default signal names if none provided
-    const signalNames = options.signalNames ?? ['signal', 'useSignal', 'createSignal'];
+    const signalNames = option.signalNames ?? ['signal', 'useSignal', 'createSignal'];
 
     const isFileExempt =
-      options.allowedPatterns?.some((pattern): boolean => {
+      option.allowedPatterns?.some((pattern): boolean => {
         try {
           return new RegExp(pattern).test(context.filename);
         } catch (e: unknown) {
@@ -426,7 +426,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
       nodeCount++;
 
       // Check if we've exceeded the node budget
-      if (nodeCount > (options.performance?.maxNodes ?? 2000)) {
+      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
         trackOperation(perfKey, 'nodeBudgetExceeded');
 
         return false;
@@ -611,7 +611,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
 
         if (!isSignalValueAssignment) {
         } else {
-          const severity = getSeverity('signalValueAssignment', options);
+          const severity = getSeverity('signalValueAssignment', option);
           if (severity === 'off') return;
 
           context.report({
@@ -643,7 +643,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
         }
 
         if (isArrayIndexSignalAssignment(node, signalNames)) {
-          const severity = getSeverity('signalArrayIndexAssignment', options);
+          const severity = getSeverity('signalArrayIndexAssignment', option);
 
           if (severity !== 'off') {
             context.report({
@@ -672,7 +672,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
         }
 
         if (isNestedSignalPropertyAssignment(node, signalNames)) {
-          if (getSeverity('signalNestedPropertyAssignment', options) !== 'off') {
+          if (getSeverity('signalNestedPropertyAssignment', option) !== 'off') {
             context.report({
               node,
               messageId: 'signalNestedPropertyAssignment',
@@ -722,7 +722,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
             );
           })
         ) {
-          const severity = getSeverity('signalValueAssignment', options);
+          const severity = getSeverity('signalValueAssignment', option);
 
           if (severity === 'off') {
             return;
@@ -825,9 +825,43 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
         }
       },
       'Program:exit'(node: TSESTree.Program): void {
+        if (!perf) {
+          throw new Error('Performance tracker not initialized');
+        }
+
+        startPhase(perfKey, 'programExit');
+
         perf.trackNode(node);
 
+        try {
+          startPhase(perfKey, 'recordMetrics');
+
+          const finalMetrics = stopTracking(perfKey);
+
+          if (finalMetrics) {
+            const { exceededBudget, nodeCount, duration } = finalMetrics;
+            const status = exceededBudget ? 'EXCEEDED' : 'OK';
+
+            console.info(`\n[prefer-batch-updates] Performance Metrics (${status}):`);
+            console.info(`  File: ${context.filename}`);
+            console.info(`  Duration: ${duration?.toFixed(2)}ms`);
+            console.info(`  Nodes Processed: ${nodeCount}`);
+
+            if (exceededBudget) {
+              console.warn('\n⚠️  Performance budget exceeded!');
+            }
+          }
+        } catch (error: unknown) {
+          console.error('Error recording metrics:', error);
+        } finally {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+        }
+
         perf['Program:exit']();
+
+        endPhase(perfKey, 'programExit');
       },
     };
   },

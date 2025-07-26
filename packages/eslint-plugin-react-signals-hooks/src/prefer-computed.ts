@@ -3,7 +3,6 @@ import type { SourceCode } from '@typescript-eslint/utils/ts-eslint';
 import {
   createPerformanceTracker,
   endPhase,
-  type PerformanceBudget,
   PerformanceLimitExceededError,
   recordMetric,
   startPhase,
@@ -11,6 +10,7 @@ import {
 } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
+import type { PerformanceBudget } from './utils/types.js';
 
 type MessageIds =
   | 'preferComputedWithSignal'
@@ -163,7 +163,7 @@ export const preferComputedRule = createRule<Options, MessageIds>({
 
           hasComputedImport = program.body.some(
             (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
-              trackOperation(perfKey, 'import-check');
+              trackOperation(perfKey, 'importCheck');
 
               return (
                 n.type === 'ImportDeclaration' &&
@@ -206,7 +206,7 @@ export const preferComputedRule = createRule<Options, MessageIds>({
         }
 
         metrics.useMemoCalls++;
-        trackOperation(perfKey, 'call-expression-check');
+        trackOperation(perfKey, 'callExpressionCheck');
 
         // Basic validation
         if (
@@ -225,7 +225,7 @@ export const preferComputedRule = createRule<Options, MessageIds>({
 
           // Process dependencies with performance tracking
           for (const dep of node.arguments[1].elements) {
-            trackOperation(perfKey, 'dependency-check');
+            trackOperation(perfKey, 'dependencyCheck');
             metrics.totalSignalChecks++;
 
             const depInfo = getSignalDependencyInfo(dep);

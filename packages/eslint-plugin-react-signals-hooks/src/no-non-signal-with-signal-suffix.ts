@@ -3,7 +3,6 @@ import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 import type { ImportDefaultSpecifier, ImportNamespaceSpecifier, ImportSpecifier } from 'estree';
 import {
   createPerformanceTracker,
-  type PerformanceBudget,
   startPhase,
   endPhase,
   stopTracking,
@@ -13,6 +12,7 @@ import {
 } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
+import type { PerformanceBudget } from './utils/types.js';
 
 const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return getRuleDocUrl(name);
@@ -35,7 +35,7 @@ type Option = {
       }
     | undefined;
 
-  /** Performance tuning options */
+  /** Performance tuning option */
   performance?: PerformanceBudget | undefined;
 };
 
@@ -248,61 +248,63 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
       },
     },
   ],
-  create(context: Readonly<RuleContext<MessageIds, Options>>, [options = {}]) {
+  create(context: Readonly<RuleContext<MessageIds, Options>>, [option = {}]) {
     // Set up performance tracking for this rule with a unique key
     const perfKey = `no-non-signal-with-signal-suffix:${context.filename}`;
 
     // Initialize performance budget with defaults
     const perfBudget: PerformanceBudget = {
       // Time and resource limits
-      maxTime: options.performance?.maxTime ?? 35, // ms
-      maxNodes: options.performance?.maxNodes ?? 1200,
-      maxMemory: options.performance?.maxMemory ?? 35 * 1024 * 1024, // 35MB
+      maxTime: option.performance?.maxTime ?? 35, // ms
+      maxNodes: option.performance?.maxNodes ?? 1200,
+      maxMemory: option.performance?.maxMemory ?? 35 * 1024 * 1024, // 35MB
 
       // Operation-specific limits
       maxOperations: {
-        [PerformanceOperations.signalCheck]: options.performance?.maxOperations?.signalCheck ?? 400,
+        [PerformanceOperations.signalCheck]: option.performance?.maxOperations?.signalCheck ?? 400,
         [PerformanceOperations.identifierResolution]:
-          options.performance?.maxOperations?.identifierResolution ?? 300,
-        [PerformanceOperations.scopeLookup]: options.performance?.maxOperations?.scopeLookup ?? 250,
-        [PerformanceOperations.typeCheck]: options.performance?.maxOperations?.typeCheck ?? 200,
+          option.performance?.maxOperations?.identifierResolution ?? 300,
+        [PerformanceOperations.scopeLookup]: option.performance?.maxOperations?.scopeLookup ?? 250,
+        [PerformanceOperations.typeCheck]: option.performance?.maxOperations?.typeCheck ?? 200,
       },
 
       // Feature toggles
-      enableMetrics: options.performance?.enableMetrics ?? false,
-      logMetrics: options.performance?.logMetrics ?? false,
+      enableMetrics: option.performance?.enableMetrics ?? false,
+      logMetrics: option.performance?.logMetrics ?? false,
     };
 
     // Set up performance tracking
     const perf = createPerformanceTracker<Options>(perfKey, perfBudget, context);
 
-    // Track if we've exceeded performance budget
-    let performanceBudgetExceeded = false;
+    // Track node processing
+    let nodeCount = 0;
 
     // Helper function to check if we should continue processing
-    const shouldContinue = (): boolean => {
-      if (performanceBudgetExceeded) {
+    function shouldContinue(): boolean {
+      nodeCount++;
+
+      // Check if we've exceeded the node budget
+      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+        trackOperation(perfKey, 'nodeBudgetExceeded');
+
         return false;
       }
 
-      // Track this operation
-      trackOperation(perfKey, 'shouldContinueCheck');
       return true;
-    };
+    }
 
     // Initialize rule
     try {
       startPhase(perfKey, 'rule-init');
 
       // Record initial metrics
-      recordMetric(perfKey, 'signalNames', options.signalNames);
-      recordMetric(perfKey, 'ignorePatterns', options.ignorePatterns);
+      recordMetric(perfKey, 'signalNames', option.signalNames);
+      recordMetric(perfKey, 'ignorePatterns', option.ignorePatterns);
       recordMetric(perfKey, 'performanceBudget', perfBudget);
 
       endPhase(perfKey, 'rule-init');
     } catch (error) {
       if (error instanceof PerformanceLimitExceededError) {
-        performanceBudgetExceeded = true;
         context.report({
           loc: { line: 1, column: 0 },
           messageId: 'performanceLimitExceeded',
@@ -313,9 +315,10 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
       throw error; // Re-throw unexpected errors
     }
 
-    const ignorePattern = options?.ignorePattern ? new RegExp(options.ignorePattern) : null;
+    const ignorePattern = option?.ignorePattern ? new RegExp(option.ignorePattern) : null;
 
     const signalImports = new Set<string>();
+
     let hasSignalsImport = false;
 
     function isSignalCreation(
@@ -612,10 +615,14 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
       },
 
       Property(node: TSESTree.Property): void {
-        if (!shouldContinue()) return;
+        if (!shouldContinue()) {
+          return;
+        }
+
         perf.trackNode(node);
 
         startPhase(perfKey, 'property');
+
         trackOperation(perfKey, 'propertyCheck');
 
         try {
@@ -672,50 +679,44 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
         }
       },
 
-      'Program:exit'(): void {
+      'Program:exit'(node: TSESTree.Program): void {
+        if (!perf) {
+          throw new Error('Performance tracker not initialized');
+        }
+
+        startPhase(perfKey, 'programExit');
+
+        perf.trackNode(node);
+
         try {
-          startPhase(perfKey, 'program-exit');
+          startPhase(perfKey, 'recordMetrics');
 
-          if (perf) {
-            perf['Program:exit']();
-          }
+          const finalMetrics = stopTracking(perfKey);
 
-          // Record final metrics
-          recordMetric(perfKey, 'signalImports', Array.from(signalImports));
-          recordMetric(perfKey, 'hasSignalsImport', hasSignalsImport);
+          if (finalMetrics) {
+            const { exceededBudget, nodeCount, duration } = finalMetrics;
+            const status = exceededBudget ? 'EXCEEDED' : 'OK';
 
-          endPhase(perfKey, 'program-exit');
-        } catch (error: unknown) {
-          if (error instanceof PerformanceLimitExceededError) {
-            performanceBudgetExceeded = true;
+            console.info(`\n[prefer-batch-updates] Performance Metrics (${status}):`);
+            console.info(`  File: ${context.filename}`);
+            console.info(`  Duration: ${duration?.toFixed(2)}ms`);
+            console.info(`  Nodes Processed: ${nodeCount}`);
 
-            context.report({
-              loc: { line: 1, column: 0 },
-              messageId: 'performanceLimitExceeded',
-              data: { message: error.message },
-            });
-          } else {
-            throw error;
-          }
-        } finally {
-          // End any remaining phases for this key
-          try {
-            // This will end all phases for the current key
-            endPhase(perfKey, 'any');
-          } catch {
-            // Ignore any errors when ending phases
-          }
-
-          // Stop tracking and clean up
-          try {
-            stopTracking(perfKey);
-          } catch (error: unknown) {
-            // Ignore errors during stop tracking
-            if (error instanceof PerformanceLimitExceededError) {
-              trackOperation(perfKey, 'stopTrackingSkipped');
+            if (exceededBudget) {
+              console.warn('\n⚠️  Performance budget exceeded!');
             }
           }
+        } catch (error: unknown) {
+          console.error('Error recording metrics:', error);
+        } finally {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
         }
+
+        perf['Program:exit']();
+
+        endPhase(perfKey, 'programExit');
       },
     };
   },

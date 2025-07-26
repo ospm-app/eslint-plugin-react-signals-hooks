@@ -115,8 +115,44 @@ return {
   },
   
   // Track program exit for cleanup and reporting
-  'Program:exit'() {
+  'Program:exit'(node: TSESTree.Node): void {
+    if (!perf) {
+      throw new Error('Performance tracker not initialized');
+    }
+
+    startPhase(perfKey, 'programExit');
+
+    perf.trackNode(node);
+
+    try {
+      startPhase(perfKey, 'recordMetrics');
+
+      const finalMetrics = stopTracking(perfKey);
+
+      if (finalMetrics) {
+        const { exceededBudget, nodeCount, duration } = finalMetrics;
+        const status = exceededBudget ? 'EXCEEDED' : 'OK';
+
+        console.info(`\n[prefer-batch-updates] Performance Metrics (${status}):`);
+        console.info(`  File: ${context.filename}`);
+        console.info(`  Duration: ${duration?.toFixed(2)}ms`);
+        console.info(`  Nodes Processed: ${nodeCount}`);
+
+        if (exceededBudget) {
+          console.warn('\n⚠️  Performance budget exceeded!');
+        }
+      }
+    } catch (error: unknown) {
+      console.error('Error recording metrics:', error);
+    } finally {
+      endPhase(perfKey, 'recordMetrics');
+
+      stopTracking(perfKey);
+    }
+
     perf['Program:exit']();
+
+    endPhase(perfKey, 'programExit');
   },
 };
 ```

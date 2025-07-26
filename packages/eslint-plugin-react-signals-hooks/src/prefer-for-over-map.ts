@@ -1,8 +1,9 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import type { SourceCode } from '@typescript-eslint/utils/ts-eslint';
-import { createPerformanceTracker, type PerformanceBudget } from './utils/performance.js';
+import { createPerformanceTracker } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
+import type { PerformanceBudget } from './utils/types.js';
 
 type MessageIds = 'preferForOverMap' | 'suggestForComponent' | 'addForImport';
 

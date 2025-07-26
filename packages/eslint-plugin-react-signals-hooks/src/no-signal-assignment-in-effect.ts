@@ -7,13 +7,13 @@ import {
   stopTracking,
   recordMetric,
   trackOperation,
-  type PerformanceBudget,
   createPerformanceTracker,
   PerformanceLimitExceededError,
 } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
+import type { PerformanceBudget } from './utils/types.js';
 
 type Option = {
   /** Custom signal function names (e.g., ['createSignal', 'useSignal']) */
@@ -432,19 +432,38 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
     // Set up performance tracking with a unique key
     const perfKey = `no-signal-assignment-in-effect:${context.filename}`;
 
-    // Start performance tracking for this rule execution
-    startPhase(perfKey, 'rule-execution');
+    // Set up performance budget with defaults
+    const perfBudget: PerformanceBudget = {
+      maxTime: option.performance?.maxTime ?? 50, // ms
+      maxNodes: option.performance?.maxNodes ?? 2000, // Maximum nodes to process
+      maxMemory: option.performance?.maxMemory ?? 50 * 1024 * 1024, // 50MB
+      maxOperations: {
+        [PerformanceOperations.signalAccess]:
+          option.performance?.maxOperations?.signalAccess ?? 1000,
+        [PerformanceOperations.signalCheck]: option.performance?.maxOperations?.signalCheck ?? 500,
+        [PerformanceOperations.effectCheck]: option.performance?.maxOperations?.effectCheck ?? 500,
+        [PerformanceOperations.identifierResolution]:
+          option.performance?.maxOperations?.identifierResolution ?? 1000,
+        [PerformanceOperations.scopeLookup]: option.performance?.maxOperations?.scopeLookup ?? 1000,
+        [PerformanceOperations.typeCheck]: option.performance?.maxOperations?.typeCheck ?? 500,
+      },
+      enableMetrics: option.performance?.enableMetrics ?? false,
+      logMetrics: option.performance?.logMetrics ?? false,
+    };
 
-    // Create performance tracker for node processing
-    const perf = createPerformanceTracker(perfKey, option.performance, context);
+    // Create performance tracker
+    const perf = createPerformanceTracker(perfKey, perfBudget, context);
+
+    // Track rule initialization
+    trackOperation(perfKey, 'ruleInit');
 
     const signalNames = option.signalNames ?? ['signal', 'useSignal', 'createSignal'];
     const signalNameSet = new Set(signalNames);
     const allowedPatterns = option.allowedPatterns ?? [];
     const effectHooks = new Set(['useEffect', 'useLayoutEffect']);
 
-    // Start performance tracking for this rule execution
-    startPhase(perfKey, 'rule-execution');
+    // Start performance tracking for file analysis
+    startPhase(perfKey, 'fileAnalysis');
 
     // Track effect stack for nested effects
     const effectStack: Array<{
@@ -457,31 +476,21 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
     // Track variables that are signals
     const signalVariables = new Set<string>();
 
-    // Track if we've exceeded performance budget
-    let performanceBudgetExceeded = false;
+    // Track node processing
+    let nodeCount = 0;
 
-    // Check if we should continue processing
-    function shouldContinue(operation: string = PerformanceOperations.nodeProcessing): boolean {
-      if (performanceBudgetExceeded) {
+    // Helper function to check if we should continue processing
+    function shouldContinue(): boolean {
+      nodeCount++;
+
+      // Check if we've exceeded the node budget
+      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+        trackOperation(perfKey, 'nodeBudgetExceeded');
+
         return false;
       }
 
-      try {
-        trackOperation(perfKey, operation);
-        return true;
-      } catch (error) {
-        if (error instanceof PerformanceLimitExceededError) {
-          performanceBudgetExceeded = true;
-          recordMetric(perfKey, 'performanceLimitExceeded', true);
-          context.report({
-            node: { type: 'Program' } as TSESTree.Node,
-            messageId: 'performanceLimitExceeded',
-            data: { message: error.message },
-          });
-          return false;
-        }
-        throw error;
-      }
+      return true;
     }
 
     // Initialize performance metrics
@@ -537,53 +546,58 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
 
       endPhase(perfKey, 'rule-init');
 
+      // Create the rule listener with performance tracking
       return {
-        // Track function declarations and variables
-        ':function'(
-          node:
-            | TSESTree.FunctionDeclaration
-            | TSESTree.FunctionExpression
-            | TSESTree.ArrowFunctionExpression
-        ) {
+        // Track all nodes for performance monitoring
+        '*': (node: TSESTree.Node): void => {
+          // Track node processing
+          perf.trackNode(node);
+
+          // Check if we should continue processing
           if (!shouldContinue()) {
             return;
           }
 
-          try {
-            trackOperation(perfKey, PerformanceOperations.scopeLookup);
-            const scope = context.getScope();
+          // Handle function declarations and variables
+          if (
+            node.type === AST_NODE_TYPES.FunctionDeclaration ||
+            node.type === AST_NODE_TYPES.FunctionExpression ||
+            node.type === AST_NODE_TYPES.ArrowFunctionExpression
+          ) {
+            try {
+              const scope = context.getScope();
 
-            for (const variable of scope.variables) {
-              if (
-                variable.defs.some((def) => {
-                  trackOperation(perfKey, PerformanceOperations.signalCheck);
-                  return (
-                    'init' in def.node &&
-                    def.node.init?.type === AST_NODE_TYPES.CallExpression &&
-                    def.node.init.callee.type === AST_NODE_TYPES.Identifier &&
-                    signalNameSet.has(def.node.init.callee.name)
-                  );
-                })
-              ) {
-                signalVariables.add(variable.name);
+              for (const variable of scope.variables) {
+                if (
+                  variable.defs.some((def) => {
+                    trackOperation(perfKey, PerformanceOperations.signalCheck);
+                    return (
+                      'init' in def.node &&
+                      def.node.init?.type === AST_NODE_TYPES.CallExpression &&
+                      def.node.init.callee.type === AST_NODE_TYPES.Identifier &&
+                      signalNameSet.has(def.node.init.callee.name)
+                    );
+                  })
+                ) {
+                  signalVariables.add(variable.name);
+                }
               }
-            }
-          } catch (error) {
-            if (error instanceof PerformanceLimitExceededError) {
-              performanceBudgetExceeded = true;
-              context.report({
-                node,
-                messageId: 'performanceLimitExceeded',
-                data: { message: error.message },
-              });
-            } else {
-              throw error;
+            } catch (error) {
+              if (error instanceof PerformanceLimitExceededError) {
+                context.report({
+                  node,
+                  messageId: 'performanceLimitExceeded',
+                  data: { message: error.message },
+                });
+              } else {
+                throw error;
+              }
             }
           }
         },
 
         // Track effect hooks
-        CallExpression(node: TSESTree.CallExpression) {
+        CallExpression(node: TSESTree.CallExpression): void {
           if (!shouldContinue()) {
             return;
           }
@@ -638,7 +652,7 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
             }
           } catch (error) {
             if (error instanceof PerformanceLimitExceededError) {
-              performanceBudgetExceeded = true;
+              metrics.performanceBudgetExceeded = true;
               context.report({
                 node,
                 messageId: 'performanceLimitExceeded',
@@ -650,17 +664,19 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
           }
         },
 
-        'CallExpression:exit'(node: TSESTree.CallExpression) {
+        'CallExpression:exit'(node: TSESTree.CallExpression): void {
           if (!shouldContinue() || effectStack.length === 0) {
             return;
           }
 
           const effectInfo = isEffectHook(node, effectHooks, perfKey);
+
           if (!effectInfo) {
             return;
           }
 
           const currentEffect = effectStack[effectStack.length - 1];
+
           if (currentEffect.node !== node) {
             return;
           }
@@ -675,10 +691,7 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
               suggest.push({
                 messageId: 'suggestUseSignalsLayoutEffect',
                 fix: (fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null => {
-                  // Get the source code and node range
-                  const sourceCode = context.getSourceCode();
-                  const effectNode = node as TSESTree.CallExpression;
-                  const callback = effectNode.arguments[0];
+                  const callback = node.arguments[0];
 
                   if (
                     !callback ||
@@ -690,30 +703,29 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
 
                   // Get the body of the effect callback
                   const body = callback.body;
-                  if (!body) return null;
+
+                  if (!body) {
+                    return null;
+                  }
 
                   // Get the range of the effect callback body
                   const [start] = body.range;
-                  const [end] = effectNode.arguments[1]?.range || effectNode.range;
+
+                  const [end] = node.arguments[1]?.range ?? node.range;
 
                   // Get the effect code and wrap it in a useSignalsLayoutEffect
-                  const effectCode = sourceCode.text.slice(start, end);
+                  const effectCode = context.sourceCode.text.slice(start, end);
+
                   const fixedCode = `useSignalsLayoutEffect(() => ${effectCode.trim()})`;
 
-                  return fixer.replaceTextRange(
-                    [effectNode.range[0], effectNode.range[1]],
-                    fixedCode
-                  );
+                  return fixer.replaceTextRange([node.range[0], node.range[1]], fixedCode);
                 },
               });
             } else {
               suggest.push({
                 messageId: 'suggestUseSignalsEffect',
                 fix: (fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null => {
-                  // Get the source code and node range
-                  const sourceCode = context.getSourceCode();
-                  const effectNode = node as TSESTree.CallExpression;
-                  const callback = effectNode.arguments[0];
+                  const callback = node.arguments[0];
 
                   if (
                     !callback ||
@@ -725,20 +737,22 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
 
                   // Get the body of the effect callback
                   const body = callback.body;
-                  if (!body) return null;
+
+                  if (!body) {
+                    return null;
+                  }
 
                   // Get the range of the effect callback body
                   const [start] = body.range;
-                  const [end] = effectNode.arguments[1]?.range || effectNode.range;
+
+                  const [end] = node.arguments[1]?.range ?? node.range;
 
                   // Get the effect code and wrap it in a useSignals
-                  const effectCode = sourceCode.text.slice(start, end);
+                  const effectCode = context.sourceCode.text.slice(start, end);
+
                   const fixedCode = `useSignals(() => ${effectCode.trim()})`;
 
-                  return fixer.replaceTextRange(
-                    [effectNode.range[0], effectNode.range[1]],
-                    fixedCode
-                  );
+                  return fixer.replaceTextRange([node.range[0], node.range[1]], fixedCode);
                 },
               });
             }
@@ -766,13 +780,14 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
         },
 
         // Track signal assignments
-        AssignmentExpression(node: TSESTree.AssignmentExpression) {
+        AssignmentExpression(node: TSESTree.AssignmentExpression): void {
           if (!shouldContinue() || effectStack.length === 0) {
             return;
           }
 
           try {
             trackOperation(perfKey, PerformanceOperations.signalAccess);
+
             const currentEffect = effectStack[effectStack.length - 1];
 
             if (node.left.type === AST_NODE_TYPES.MemberExpression) {
@@ -787,7 +802,7 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
             }
           } catch (error: unknown) {
             if (error instanceof PerformanceLimitExceededError) {
-              performanceBudgetExceeded = true;
+              metrics.performanceBudgetExceeded = true;
               context.report({
                 node,
                 messageId: 'performanceLimitExceeded',
@@ -800,23 +815,27 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
         },
 
         // Track signal value access
-        MemberExpression(node: TSESTree.MemberExpression) {
+        MemberExpression(node: TSESTree.MemberExpression): void {
           if (!shouldContinue() || effectStack.length === 0) {
             return;
           }
 
           try {
             trackOperation(perfKey, PerformanceOperations.signalAccess);
+
             const isSignal = isSignalAssignment(node, signalNames, perfKey, { signalChecks: 0 });
 
             if (isSignal) {
               const currentEffect = effectStack[effectStack.length - 1];
+
               currentEffect.signalAssignments.push(node);
+
               metrics.signalAssignments++;
             }
           } catch (error: unknown) {
             if (error instanceof PerformanceLimitExceededError) {
-              performanceBudgetExceeded = true;
+              metrics.performanceBudgetExceeded = true;
+
               context.report({
                 node,
                 messageId: 'performanceLimitExceeded',
@@ -832,7 +851,7 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
       // Handle performance-related errors gracefully
       if (error instanceof PerformanceLimitExceededError) {
         metrics.performanceBudgetExceeded = true;
-        performanceBudgetExceeded = true;
+
         context.report({
           loc: { line: 1, column: 0 },
           messageId: 'performanceLimitExceeded',

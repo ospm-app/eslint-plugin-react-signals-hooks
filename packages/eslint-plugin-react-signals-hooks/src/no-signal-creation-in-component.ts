@@ -1,12 +1,15 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import type { RuleContext, SourceCode } from '@typescript-eslint/utils/ts-eslint';
 import {
-  createPerformanceTracker,
-  type PerformanceBudget,
+  endPhase,
+  startPhase,
+  stopTracking,
   startTracking,
+  createPerformanceTracker,
 } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
+import type { PerformanceBudget } from './utils/types.js';
 
 type Option = {
   /** Performance tuning options */
@@ -383,6 +386,8 @@ export const noSignalCreationInComponentRule = createRule<Options, MessageIds>({
   },
 
   create(context, [options = {}]): ESLintUtils.RuleListener {
+    const perfKey = 'no-signal-creation-in-component';
+
     // Set up performance tracking for this rule
     const perf = createPerformanceTracker<Options>(
       'no-signal-creation-in-component',
@@ -663,8 +668,44 @@ export const noSignalCreationInComponentRule = createRule<Options, MessageIds>({
           functionStack.pop();
         }
       },
-      'Program:exit'() {
+      'Program:exit'(node: TSESTree.Program): void {
+        if (!perf) {
+          throw new Error('Performance tracker not initialized');
+        }
+
+        startPhase(perfKey, 'programExit');
+
+        perf.trackNode(node);
+
+        try {
+          startPhase(perfKey, 'recordMetrics');
+
+          const finalMetrics = stopTracking(perfKey);
+
+          if (finalMetrics) {
+            const { exceededBudget, nodeCount, duration } = finalMetrics;
+            const status = exceededBudget ? 'EXCEEDED' : 'OK';
+
+            console.info(`\n[prefer-batch-updates] Performance Metrics (${status}):`);
+            console.info(`  File: ${context.filename}`);
+            console.info(`  Duration: ${duration?.toFixed(2)}ms`);
+            console.info(`  Nodes Processed: ${nodeCount}`);
+
+            if (exceededBudget) {
+              console.warn('\n⚠️  Performance budget exceeded!');
+            }
+          }
+        } catch (error: unknown) {
+          console.error('Error recording metrics:', error);
+        } finally {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+        }
+
         perf['Program:exit']();
+
+        endPhase(perfKey, 'programExit');
       },
     };
   },
