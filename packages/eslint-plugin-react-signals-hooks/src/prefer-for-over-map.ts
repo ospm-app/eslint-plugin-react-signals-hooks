@@ -1,6 +1,6 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
-import type { SourceCode } from '@typescript-eslint/utils/ts-eslint';
-import { createPerformanceTracker } from './utils/performance.js';
+import type { RuleContext, SourceCode } from '@typescript-eslint/utils/ts-eslint';
+import { createPerformanceTracker, DEFAULT_PERFORMANCE_BUDGET } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
@@ -9,7 +9,6 @@ type MessageIds = 'preferForOverMap' | 'suggestForComponent' | 'addForImport';
 
 type Options = [
   {
-    // Future configuration options can be added here
     performance?: PerformanceBudget | undefined;
   },
 ];
@@ -168,21 +167,6 @@ const createRule = ESLintUtils.RuleCreator((name: string): string => {
  */
 export const preferForOverMapRule = createRule<Options, MessageIds>({
   name: 'prefer-for-over-map',
-  defaultOptions: [
-    {
-      performance: {
-        maxTime: 40, // ms
-        maxNodes: 1000,
-        maxMemory: 40 * 1024 * 1024, // 40MB
-        enableMetrics: false,
-        logMetrics: false,
-        maxOperations: {
-          [PerformanceOperations.signalAccess]: 500,
-          [PerformanceOperations.nodeProcessing]: 5000,
-        },
-      },
-    },
-  ],
   meta: {
     type: 'suggestion',
     fixable: 'code',
@@ -201,16 +185,40 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
       {
         type: 'object',
         properties: {
-          // Future configuration properties can be added here
+          performance: {
+            type: 'object',
+            properties: {
+              maxTime: { type: 'number', minimum: 1 },
+              maxMemory: { type: 'number', minimum: 1 },
+              maxNodes: { type: 'number', minimum: 1 },
+              enableMetrics: { type: 'boolean' },
+              logMetrics: { type: 'boolean' },
+              maxOperations: {
+                type: 'object',
+                properties: Object.fromEntries(
+                  Object.entries(PerformanceOperations).map(([key]) => [
+                    key,
+                    { type: 'number', minimum: 1 },
+                  ])
+                ),
+              },
+            },
+            additionalProperties: false,
+          },
         },
         additionalProperties: false,
       },
     ],
   },
-  create(context, [options = {}]) {
+  defaultOptions: [
+    {
+      performance: DEFAULT_PERFORMANCE_BUDGET,
+    },
+  ],
+  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
     const perf = createPerformanceTracker(
       PerformanceOperations.signalAccess,
-      options.performance,
+      option.performance,
       context
     );
 

@@ -1,16 +1,18 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
-import type { SourceCode } from '@typescript-eslint/utils/ts-eslint';
+import type { RuleContext, SourceCode } from '@typescript-eslint/utils/ts-eslint';
+
 import {
-  createPerformanceTracker,
   endPhase,
-  PerformanceLimitExceededError,
-  recordMetric,
   startPhase,
+  recordMetric,
   trackOperation,
+  createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
+  PerformanceLimitExceededError,
 } from './utils/performance.js';
-import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
+import { PerformanceOperations } from './utils/performance-constants.js';
 
 type MessageIds =
   | 'preferComputedWithSignal'
@@ -89,21 +91,6 @@ const createRule = ESLintUtils.RuleCreator((name: string): string => {
  */
 export const preferComputedRule = createRule<Options, MessageIds>({
   name: 'prefer-computed',
-  defaultOptions: [
-    {
-      performance: {
-        maxTime: 40, // ms
-        maxNodes: 1000,
-        maxMemory: 40 * 1024 * 1024, // 40MB
-        enableMetrics: false,
-        logMetrics: false,
-        maxOperations: {
-          [PerformanceOperations.signalAccess]: 500,
-          [PerformanceOperations.nodeProcessing]: 5000,
-        },
-      },
-    },
-  ],
   meta: {
     type: 'suggestion',
     docs: {
@@ -122,9 +109,41 @@ export const preferComputedRule = createRule<Options, MessageIds>({
       suggestAddComputedImport: 'Add missing import for `computed`',
       perf: 'Performance limit exceeded',
     },
-    schema: [],
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          performance: {
+            type: 'object',
+            properties: {
+              maxTime: { type: 'number', minimum: 1 },
+              maxMemory: { type: 'number', minimum: 1 },
+              maxNodes: { type: 'number', minimum: 1 },
+              enableMetrics: { type: 'boolean' },
+              logMetrics: { type: 'boolean' },
+              maxOperations: {
+                type: 'object',
+                properties: Object.fromEntries(
+                  Object.entries(PerformanceOperations).map(([key]) => [
+                    key,
+                    { type: 'number', minimum: 1 },
+                  ])
+                ),
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+        additionalProperties: false,
+      },
+    ],
   },
-  create(context, [options = {}]) {
+  defaultOptions: [
+    {
+      performance: DEFAULT_PERFORMANCE_BUDGET,
+    },
+  ],
+  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
     // Set up performance tracking with a unique key
     const filePath = context.filename;
     const perfKey = `prefer-computed:${filePath}:${Date.now()}`;
@@ -132,7 +151,7 @@ export const preferComputedRule = createRule<Options, MessageIds>({
     // Initialize performance tracking
     const perf = createPerformanceTracker(
       PerformanceOperations.signalAccess,
-      options.performance,
+      option.performance,
       context
     );
 

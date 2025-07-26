@@ -1,25 +1,18 @@
 import { ESLintUtils } from '@typescript-eslint/utils';
 import type { TSESLint, TSESTree } from '@typescript-eslint/utils';
+
 import {
-  createPerformanceTracker,
-  trackOperation,
-  startPhase,
   endPhase,
+  startPhase,
   stopTracking,
+  trackOperation,
   // recordMetric,
+  createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
 } from './utils/performance.js';
-import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
-
-type MessageIds =
-  | 'useBatch'
-  | 'suggestUseBatch'
-  | 'addBatchImport'
-  | 'wrapWithBatch'
-  | 'useBatchSuggestion'
-  | 'performanceLimitExceeded';
+import { PerformanceOperations } from './utils/performance-constants.js';
 
 type SignalUpdate = {
   node: TSESTree.AssignmentExpression | TSESTree.CallExpression;
@@ -29,24 +22,26 @@ type SignalUpdate = {
 };
 
 type Option = {
-  /** Minimum number of signal updates to trigger the rule */
   minUpdates: number;
-  /** Performance tuning option */
   performance: PerformanceBudget;
 };
 
 type Options = [Option];
 
-// Process a block of statements for signal updates
+type MessageIds =
+  | 'useBatch'
+  | 'suggestUseBatch'
+  | 'addBatchImport'
+  | 'wrapWithBatch'
+  | 'useBatchSuggestion'
+  | 'performanceLimitExceeded';
+
 function processBlock(
   statements: Array<TSESTree.ExpressionStatement | TSESTree.VariableDeclaration>,
   context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
   option: Option
 ) {
-  // Check if batch is already imported
-  const program = context.sourceCode.ast;
-
-  const hasBatchImport = program.body.some((node: TSESTree.ProgramStatement) => {
+  const hasBatchImport = context.sourceCode.ast.body.some((node: TSESTree.ProgramStatement) => {
     return (
       node.type === 'ImportDeclaration' &&
       node.source.value === '@preact/signals-react' &&
@@ -112,7 +107,7 @@ function processBlock(
   }
 
   // Only suggest batching if we have enough updates
-  if (updatesInBlock.length >= option.minUpdates) {
+  if (updatesInBlock.length >= (option?.minUpdates ?? 2)) {
     const firstNode = updatesInBlock[0].node;
 
     const signalCount = updatesInBlock.length;
@@ -144,12 +139,12 @@ function processBlock(
             if (!hasBatchImport) {
               const batchImport = "import { batch } from '@preact/signals-react';\n";
 
-              const firstImport = program.body.find(
+              const firstImport = context.sourceCode.ast.body.find(
                 (n): n is TSESTree.ImportDeclaration => n.type === 'ImportDeclaration'
               );
 
               if (typeof firstImport === 'undefined') {
-                yield fixer.insertTextBefore(program.body[0], batchImport);
+                yield fixer.insertTextBefore(context.sourceCode.ast.body[0], batchImport);
               } else {
                 yield fixer.insertTextBefore(firstImport, batchImport);
               }
@@ -173,14 +168,14 @@ function processBlock(
 
             const batchImport = "import { batch } from '@preact/signals-react';\n";
 
-            const firstImport = program.body.find(
+            const firstImport = context.sourceCode.ast.body.find(
               (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
                 return n.type === 'ImportDeclaration';
               }
             );
 
             if (typeof firstImport === 'undefined') {
-              yield fixer.insertTextBefore(program.body[0], batchImport);
+              yield fixer.insertTextBefore(context.sourceCode.ast.body[0], batchImport);
             } else {
               yield fixer.insertTextBefore(firstImport, batchImport);
             }
@@ -225,12 +220,13 @@ const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return getRuleDocUrl(name);
 });
 
-/**
- * ESLint rule: prefer-batch-updates
- *
- * Suggests batching multiple signal updates to optimize performance
- * by reducing the number of renders.
- */
+let perf:
+  | {
+      trackNode(node: TSESTree.Node): void;
+      'Program:exit'(): void;
+    }
+  | undefined;
+
 export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
   name: 'prefer-batch-updates',
   meta: {
@@ -263,75 +259,19 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
           performance: {
             type: 'object',
             properties: {
-              maxTime: {
-                type: 'number',
-                minimum: 1,
-                default: 35,
-                description: 'Maximum time in milliseconds the rule should take to process a file',
-              },
-              maxNodes: {
-                type: 'number',
-                minimum: 100,
-                default: 1800,
-                description: 'Maximum number of AST nodes the rule should process',
-              },
-              maxMemory: {
-                type: 'number',
-                minimum: 1024 * 1024, // 1MB
-                default: 45 * 1024 * 1024, // 45MB
-                description: 'Maximum memory in bytes the rule should use',
-              },
+              maxTime: { type: 'number', minimum: 1 },
+              maxMemory: { type: 'number', minimum: 1 },
+              maxNodes: { type: 'number', minimum: 1 },
+              enableMetrics: { type: 'boolean' },
+              logMetrics: { type: 'boolean' },
               maxOperations: {
                 type: 'object',
-                properties: {
-                  [PerformanceOperations.signalAccess]: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 1000,
-                    description: 'Maximum number of signal access checks',
-                  },
-                  [PerformanceOperations.signalCheck]: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 500,
-                    description: 'Maximum number of signal checks',
-                  },
-                  [PerformanceOperations.identifierResolution]: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 1000,
-                    description: 'Maximum number of identifier resolutions',
-                  },
-                  [PerformanceOperations.scopeLookup]: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 1000,
-                    description: 'Maximum number of scope lookups',
-                  },
-                  [PerformanceOperations.typeCheck]: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 500,
-                    description: 'Maximum number of type checks',
-                  },
-                  [PerformanceOperations.batchAnalysis]: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 100,
-                    description: 'Maximum number of batch operations to analyze',
-                  },
-                },
-                additionalProperties: false,
-              },
-              enableMetrics: {
-                type: 'boolean',
-                default: false,
-                description: 'Whether to enable detailed performance metrics',
-              },
-              logMetrics: {
-                type: 'boolean',
-                default: false,
-                description: 'Whether to log performance metrics to console',
+                properties: Object.fromEntries(
+                  Object.entries(PerformanceOperations).map(([key]) => [
+                    key,
+                    { type: 'number', minimum: 1 },
+                  ])
+                ),
               },
             },
             additionalProperties: false,
@@ -347,28 +287,16 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
       performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
-
   create(context, [option]): TSESLint.RuleListener {
-    // Set up performance tracking with a unique key
     const perfKey = `prefer-batch-updates:${context.filename}`;
 
-    // Initialize performance budget with defaults
-    const perfBudget: PerformanceBudget = {
-      ...DEFAULT_PERFORMANCE_BUDGET,
-      ...option.performance,
-    };
+    perf = createPerformanceTracker(perfKey, option.performance, context);
 
-    // Create performance tracker
-    const perf = createPerformanceTracker(perfKey, perfBudget, context);
-
-    // Track node processing
     let nodeCount = 0;
 
-    // Helper function to check if we should continue processing
     function shouldContinue(): boolean {
       nodeCount++;
 
-      // Check if we've exceeded the node budget
       if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
         trackOperation(perfKey, 'nodeBudgetExceeded');
 
@@ -378,37 +306,34 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
       return true;
     }
 
-    // Track all nodes for performance monitoring
-    const nodeVisitors: TSESLint.RuleFunction<TSESTree.Node> = (node: TSESTree.Node): void => {
-      startPhase(perfKey, 'nodeProcessing');
-
-      perf.trackNode(node);
-
-      if (!shouldContinue()) {
-        return;
-      }
-
-      // Track specific node types
-      if (node.type === 'CallExpression' || node.type === 'AssignmentExpression') {
-        trackOperation(perfKey, 'nodeProcessing.expression');
-      }
-
-      endPhase(perfKey, 'nodeProcessing');
-    };
-
-    // Track signal updates in the current scope
     const signalUpdates: Array<SignalUpdate> = [];
 
-    // Helper function to get signal name from member expression
     function getSignalName(expr: TSESTree.MemberExpression): string {
       if (expr.object.type === 'Identifier') {
         return expr.object.name;
       }
+
       return 'signal';
     }
 
     return {
-      '*': nodeVisitors,
+      '*': (node: TSESTree.Node): void => {
+        if (!perf) {
+          throw new Error('Performance tracker not initialized');
+        }
+
+        if (!shouldContinue()) {
+          return;
+        }
+
+        perf.trackNode(node);
+
+        if (node.type === 'CallExpression' || node.type === 'AssignmentExpression') {
+          trackOperation(perfKey, 'nodeProcessing.expression');
+        }
+
+        endPhase(perfKey, 'nodeProcessing');
+      },
 
       // Process blocks of code (function bodies, if blocks, etc.)
       'BlockStatement:exit'(node: TSESTree.BlockStatement): void {
@@ -431,8 +356,6 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
       AssignmentExpression(node: TSESTree.AssignmentExpression): void {
         startPhase(perfKey, 'assignmentExpression');
 
-        perf.trackNode(node);
-
         if (isSignalUpdate(node)) {
           signalUpdates.push({
             node,
@@ -450,8 +373,6 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
 
       CallExpression(node: TSESTree.CallExpression): void {
         startPhase(perfKey, 'callExpression');
-
-        perf.trackNode(node);
 
         if (isSignalUpdate(node)) {
           signalUpdates.push({
@@ -472,8 +393,6 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
       'Program:exit'(node: TSESTree.Program): void {
         startPhase(perfKey, 'programExit');
 
-        perf.trackNode(node);
-
         processBlock(
           node.body.filter(
             (
@@ -488,32 +407,29 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
         try {
           startPhase(perfKey, 'recordMetrics');
 
-          if (perfBudget.logMetrics) {
+          if (option.performance.logMetrics) {
             const finalMetrics = stopTracking(perfKey);
 
-            if (finalMetrics) {
-              const { exceededBudget, nodeCount, duration } = finalMetrics;
-              const status = exceededBudget ? 'EXCEEDED' : 'OK';
-
-              console.info(`\n[prefer-batch-updates] Performance Metrics (${status}):`);
+            if (typeof finalMetrics !== 'undefined') {
+              console.info(
+                `\n[prefer-batch-updates] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
+              );
               console.info(`  File: ${context.filename}`);
-              console.info(`  Duration: ${duration?.toFixed(2)}ms`);
-              console.info(`  Nodes Processed: ${nodeCount}`);
+              console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
+              console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
 
-              if (exceededBudget) {
+              if (finalMetrics.exceededBudget === true) {
                 console.warn('\n⚠️  Performance budget exceeded!');
               }
             }
           }
-        } catch (error) {
+        } catch (error: unknown) {
           console.error('Error recording metrics:', error);
         } finally {
           endPhase(perfKey, 'recordMetrics');
 
           stopTracking(perfKey);
         }
-
-        perf['Program:exit']();
 
         endPhase(perfKey, 'programExit');
       },

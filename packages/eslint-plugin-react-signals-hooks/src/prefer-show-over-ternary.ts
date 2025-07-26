@@ -5,6 +5,7 @@ import {
   trackOperation,
   startPhase,
   endPhase,
+  DEFAULT_PERFORMANCE_BUDGET,
 } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
@@ -15,9 +16,8 @@ type MessageIds = 'preferShowOverTernary' | 'suggestShowComponent' | 'addShowImp
 type Options = [
   {
     /** Minimum complexity score to trigger the rule */
-    minComplexity?: number | undefined;
-    /** Performance budget configuration */
-    performance?: PerformanceBudget | undefined;
+    minComplexity: number;
+    performance: PerformanceBudget;
   },
 ];
 
@@ -92,21 +92,17 @@ const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return getRuleDocUrl(name);
 });
 
-/**
- * ESLint rule: prefer-show-over-ternary
- *
- * Prefers Show component over ternary for conditional rendering with signals.
- * This provides better performance and readability for signal-based conditions.
- */
+const ruleName = 'prefer-show-over-ternary';
+
 export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
-  name: 'prefer-show-over-ternary',
+  name: ruleName,
   meta: {
     type: 'suggestion',
     fixable: 'code',
     hasSuggestions: true,
     docs: {
       description: 'Prefer Show component over ternary for conditional rendering with signals',
-      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/prefer-show-over-ternary',
+      url: getRuleDocUrl(ruleName),
     },
     messages: {
       preferShowOverTernary:
@@ -123,6 +119,26 @@ export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
             minimum: 1,
             default: 2,
           },
+          performance: {
+            type: 'object',
+            properties: {
+              maxTime: { type: 'number', minimum: 1 },
+              maxMemory: { type: 'number', minimum: 1 },
+              maxNodes: { type: 'number', minimum: 1 },
+              enableMetrics: { type: 'boolean' },
+              logMetrics: { type: 'boolean' },
+              maxOperations: {
+                type: 'object',
+                properties: Object.fromEntries(
+                  Object.entries(PerformanceOperations).map(([key]) => [
+                    key,
+                    { type: 'number', minimum: 1 },
+                  ])
+                ),
+              },
+            },
+            additionalProperties: false,
+          },
         },
         additionalProperties: false,
       },
@@ -131,52 +147,15 @@ export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
   defaultOptions: [
     {
       minComplexity: 2,
-      performance: {
-        maxTime: 35,
-        maxNodes: 1200,
-        maxMemory: 40 * 1024 * 1024, // 40MB
-        maxOperations: {
-          [PerformanceOperations.signalAccess]: 500,
-          [PerformanceOperations.nodeProcessing]: 5000,
-          [PerformanceOperations.typeCheck]: 300,
-          [PerformanceOperations.identifierResolution]: 1000,
-          [PerformanceOperations.scopeLookup]: 1000,
-        },
-        enableMetrics: false,
-        logMetrics: false,
-      },
+      performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
-  create(context: Readonly<RuleContext<MessageIds, Options>>, [options = {}]) {
+  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
     // Set up performance tracking for this rule
     const perfKey = `prefer-show-over-ternary:${context.filename}`;
 
-    const perfBudget: PerformanceBudget = {
-      // Time and resource limits
-      maxTime: options.performance?.maxTime ?? 35, // ms
-      maxNodes: options.performance?.maxNodes ?? 1200,
-      maxMemory: options.performance?.maxMemory ?? 40 * 1024 * 1024, // 40MB
-
-      // Operation-specific limits
-      maxOperations: {
-        [PerformanceOperations.signalAccess]:
-          options.performance?.maxOperations?.signalAccess ?? 500,
-        [PerformanceOperations.nodeProcessing]:
-          options.performance?.maxOperations?.nodeProcessing ?? 5000,
-        [PerformanceOperations.typeCheck]: options.performance?.maxOperations?.typeCheck ?? 300,
-        [PerformanceOperations.identifierResolution]:
-          options.performance?.maxOperations?.identifierResolution ?? 1000,
-        [PerformanceOperations.scopeLookup]:
-          options.performance?.maxOperations?.scopeLookup ?? 1000,
-      },
-
-      // Metrics and logging
-      enableMetrics: options.performance?.enableMetrics ?? false,
-      logMetrics: options.performance?.logMetrics ?? false,
-    };
-
     // Initialize performance tracking
-    const perf = createPerformanceTracker(perfKey, perfBudget, context);
+    const perf = createPerformanceTracker(perfKey, option.performance, context);
 
     // Track rule initialization
     trackOperation(perfKey, 'ruleInit');
@@ -249,7 +228,7 @@ export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
         const complexity = getComplexity(node);
         trackOperation(perfKey, 'complexityAnalysis');
 
-        if (complexity >= (options?.minComplexity ?? 2)) {
+        if (complexity >= (option?.minComplexity ?? 2)) {
           context.report({
             node,
             messageId: 'preferShowOverTernary',

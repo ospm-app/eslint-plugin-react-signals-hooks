@@ -1,6 +1,9 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import type { SuggestionReportDescriptor } from '@typescript-eslint/utils/ts-eslint';
 
+import { DEFAULT_PERFORMANCE_BUDGET } from './utils/performance.js';
+import { PerformanceOperations } from './utils/performance-constants.js';
+
 type MessageIds = 'preferSignalEffect' | 'suggestEffect' | 'addEffectImport';
 
 type Options = [
@@ -65,13 +68,36 @@ export const preferSignalEffectRule = createRule<Options, MessageIds>({
       {
         type: 'object',
         properties: {
-          // Future configuration properties can be added here
+          performance: {
+            type: 'object',
+            properties: {
+              maxTime: { type: 'number', minimum: 1 },
+              maxMemory: { type: 'number', minimum: 1 },
+              maxNodes: { type: 'number', minimum: 1 },
+              enableMetrics: { type: 'boolean' },
+              logMetrics: { type: 'boolean' },
+              maxOperations: {
+                type: 'object',
+                properties: Object.fromEntries(
+                  Object.entries(PerformanceOperations).map(([key]) => [
+                    key,
+                    { type: 'number', minimum: 1 },
+                  ])
+                ),
+              },
+            },
+            additionalProperties: false,
+          },
         },
         additionalProperties: false,
       },
     ],
   },
-  defaultOptions: [{}],
+  defaultOptions: [
+    {
+      performance: DEFAULT_PERFORMANCE_BUDGET,
+    },
+  ],
   create(context) {
     let hasEffectImport = false;
     const sourceCode = context.sourceCode;

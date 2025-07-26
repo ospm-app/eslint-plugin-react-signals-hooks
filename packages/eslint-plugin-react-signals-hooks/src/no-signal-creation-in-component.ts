@@ -6,14 +6,16 @@ import {
   stopTracking,
   startTracking,
   createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
+  trackOperation,
 } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
 
 type Option = {
-  /** Performance tuning options */
-  performance?: PerformanceBudget | undefined;
+  /** Performance tuning option */
+  performance: PerformanceBudget;
 };
 
 type Options = [Option];
@@ -246,37 +248,19 @@ const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return getRuleDocUrl(name);
 });
 
-/**
- * ESLint rule: no-signal-creation-in-component
- *
- * Prevents direct signal creation inside React components, hooks, or effects.
- * Signals should be created at the module level or in custom hooks.
- */
+const functionStack: Array<{ isComponent: boolean; isHook: boolean }> = [];
+
+let perf:
+  | {
+      trackNode(node: TSESTree.Node): void;
+      'Program:exit'(): void;
+    }
+  | undefined;
+
+const ruleName = 'no-signal-creation-in-component';
+
 export const noSignalCreationInComponentRule = createRule<Options, MessageIds>({
-  name: 'no-signal-creation-in-component',
-  defaultOptions: [
-    {
-      performance: {
-        // Time and resource limits
-        maxTime: 45, // ms
-        maxNodes: 1500, // Maximum AST nodes to process
-        maxMemory: 50 * 1024 * 1024, // 50MB
-
-        // Operation-specific limits
-        maxOperations: {
-          componentCheck: 300, // Maximum number of component checks
-          hookCheck: 400, // Maximum number of hook checks
-          signalCheck: 500, // Maximum number of signal checks
-          scopeLookup: 250, // Maximum number of scope lookups
-          typeCheck: 200, // Maximum number of type checks
-        },
-
-        // Metrics and logging
-        enableMetrics: false, // Whether to enable detailed performance metrics
-        logMetrics: false, // Whether to log performance metrics to console
-      },
-    },
-  ],
+  name: ruleName,
   meta: {
     type: 'problem',
     fixable: 'code',
@@ -300,81 +284,19 @@ export const noSignalCreationInComponentRule = createRule<Options, MessageIds>({
           performance: {
             type: 'object',
             properties: {
-              maxTime: {
-                type: 'number',
-                minimum: 1,
-                default: 45,
-                description: 'Maximum time in milliseconds the rule should take to process a file',
-              },
-              maxNodes: {
-                type: 'number',
-                minimum: 100,
-                default: 1500,
-                description: 'Maximum number of AST nodes the rule should process',
-              },
-              maxMemory: {
-                type: 'number',
-                minimum: 1024 * 1024, // 1MB
-                default: 50 * 1024 * 1024, // 50MB
-                description: 'Maximum memory in bytes the rule should use',
-              },
+              maxTime: { type: 'number', minimum: 1 },
+              maxMemory: { type: 'number', minimum: 1 },
+              maxNodes: { type: 'number', minimum: 1 },
+              enableMetrics: { type: 'boolean' },
+              logMetrics: { type: 'boolean' },
               maxOperations: {
                 type: 'object',
-                properties: {
-                  [PerformanceOperations.signalAccess]: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 1000,
-                    description: 'Maximum number of signal access checks',
-                  },
-                  [PerformanceOperations.signalCheck]: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 500,
-                    description: 'Maximum number of signal checks',
-                  },
-                  [PerformanceOperations.componentCheck]: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 300,
-                    description: 'Maximum number of component checks',
-                  },
-                  [PerformanceOperations.hookCheck]: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 400,
-                    description: 'Maximum number of hook checks',
-                  },
-                  [PerformanceOperations.identifierResolution]: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 1000,
-                    description: 'Maximum number of identifier resolutions',
-                  },
-                  [PerformanceOperations.scopeLookup]: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 1000,
-                    description: 'Maximum number of scope lookups',
-                  },
-                  [PerformanceOperations.typeCheck]: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 500,
-                    description: 'Maximum number of type checks',
-                  },
-                },
-                additionalProperties: false,
-              },
-              enableMetrics: {
-                type: 'boolean',
-                default: false,
-                description: 'Whether to enable detailed performance metrics',
-              },
-              logMetrics: {
-                type: 'boolean',
-                default: false,
-                description: 'Whether to log performance metrics to console',
+                properties: Object.fromEntries(
+                  Object.entries(PerformanceOperations).map(([key]) => [
+                    key,
+                    { type: 'number', minimum: 1 },
+                  ])
+                ),
               },
             },
             additionalProperties: false,
@@ -384,71 +306,64 @@ export const noSignalCreationInComponentRule = createRule<Options, MessageIds>({
       },
     ],
   },
+  defaultOptions: [
+    {
+      performance: DEFAULT_PERFORMANCE_BUDGET,
+    },
+  ],
+  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
+    const perfKey = `${ruleName}:${context.filename}`;
 
-  create(context, [options = {}]): ESLintUtils.RuleListener {
-    const perfKey = 'no-signal-creation-in-component';
+    perf = createPerformanceTracker<Options>(perfKey, option.performance, context);
 
-    // Set up performance tracking for this rule
-    const perf = createPerformanceTracker<Options>(
-      'no-signal-creation-in-component',
-      {
-        // Time and resource limits
-        maxTime: options.performance?.maxTime ?? 45, // ms
-        maxNodes: options.performance?.maxNodes ?? 1500, // Maximum AST nodes to process
-        maxMemory: options.performance?.maxMemory ?? 50 * 1024 * 1024, // 50MB
-
-        // Operation limits using standardized operation names
-        maxOperations: {
-          [PerformanceOperations.signalAccess]:
-            options.performance?.maxOperations?.[PerformanceOperations.signalAccess] ?? 1000,
-          [PerformanceOperations.signalCheck]:
-            options.performance?.maxOperations?.[PerformanceOperations.signalCheck] ?? 500,
-          [PerformanceOperations.componentCheck]:
-            options.performance?.maxOperations?.[PerformanceOperations.componentCheck] ?? 300,
-          [PerformanceOperations.hookCheck]:
-            options.performance?.maxOperations?.[PerformanceOperations.hookCheck] ?? 400,
-          [PerformanceOperations.identifierResolution]:
-            options.performance?.maxOperations?.[PerformanceOperations.identifierResolution] ??
-            1000,
-          [PerformanceOperations.scopeLookup]:
-            options.performance?.maxOperations?.[PerformanceOperations.scopeLookup] ?? 1000,
-          [PerformanceOperations.typeCheck]:
-            options.performance?.maxOperations?.[PerformanceOperations.typeCheck] ?? 500,
-        },
-
-        // Metrics and logging
-        enableMetrics: options.performance?.enableMetrics ?? false,
-        logMetrics: options.performance?.logMetrics ?? false,
-      },
-      context
-    );
-
-    // Enable performance metrics if configured
-    if (options.performance?.enableMetrics) {
-      // Start tracking with the same performance options
-      startTracking(context, 'no-signal-creation-in-component', {
-        maxTime: options.performance.maxTime,
-        maxNodes: options.performance.maxNodes,
-        maxMemory: options.performance.maxMemory,
-        maxOperations: options.performance.maxOperations,
-        enableMetrics: options.performance.enableMetrics,
-        logMetrics: options.performance.logMetrics,
-      });
+    if (option.performance?.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance);
     }
 
-    debug(`Initializing rule for file: ${context.filename}`);
-    debug('Rule configuration:', context.options);
+    console.info(`Initializing rule for file: ${context.filename}`);
+    console.info('Rule configuration:', option);
+
+    let nodeCount = 0;
+
+    // Helper function to check if we should continue processing
+    function shouldContinue(): boolean {
+      nodeCount++;
+
+      // Check if we've exceeded the node budget
+      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+        trackOperation(perfKey, 'nodeBudgetExceeded');
+
+        return false;
+      }
+
+      return true;
+    }
 
     let inComponent = false;
     let inHook = false;
     let inEffect = false;
 
-    const functionStack: Array<{ isComponent: boolean; isHook: boolean }> = [];
-
     return {
-      // Track all nodes for performance monitoring
       '*': (node: TSESTree.Node): void => {
+        if (!perf) {
+          throw new Error('Performance tracker not initialized');
+        }
+
+        // Check if we should continue processing
+        if (!shouldContinue()) {
+          return;
+        }
+
         perf.trackNode(node);
+
+        // Track specific node types that are more expensive to process
+        if (
+          node.type === 'CallExpression' ||
+          node.type === 'MemberExpression' ||
+          node.type === 'Identifier'
+        ) {
+          trackOperation(perfKey, `${node.type}Processing`);
+        }
       },
       'FunctionDeclaration, ArrowFunctionExpression, FunctionExpression'(
         node:

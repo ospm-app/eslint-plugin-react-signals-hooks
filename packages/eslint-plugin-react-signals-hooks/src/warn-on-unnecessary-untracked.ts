@@ -1,6 +1,10 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
+import type { PerformanceBudget } from './utils/types.js';
+import { DEFAULT_PERFORMANCE_BUDGET } from './utils/performance.js';
+import { PerformanceOperations } from './utils/performance-constants.js';
+
 type MessageIds =
   | 'unnecessaryUntracked'
   | 'unnecessaryPeek'
@@ -12,6 +16,7 @@ type Options = [
     allowInEffects?: boolean | undefined;
     allowInEventHandlers?: boolean | undefined;
     allowForSignalWrites?: boolean | undefined;
+    performance?: PerformanceBudget | undefined;
   },
 ];
 
@@ -291,6 +296,26 @@ export const warnOnUnnecessaryUntrackedRule = createRule<Options, MessageIds>({
             description: 'Allow when used to prevent circular dependencies in effects',
             default: true,
           },
+          performance: {
+            type: 'object',
+            properties: {
+              maxTime: { type: 'number', minimum: 1 },
+              maxMemory: { type: 'number', minimum: 1 },
+              maxNodes: { type: 'number', minimum: 1 },
+              enableMetrics: { type: 'boolean' },
+              logMetrics: { type: 'boolean' },
+              maxOperations: {
+                type: 'object',
+                properties: Object.fromEntries(
+                  Object.entries(PerformanceOperations).map(([key]) => [
+                    key,
+                    { type: 'number', minimum: 1 },
+                  ])
+                ),
+              },
+            },
+            additionalProperties: false,
+          },
         },
         additionalProperties: false,
       },
@@ -302,6 +327,7 @@ export const warnOnUnnecessaryUntrackedRule = createRule<Options, MessageIds>({
       allowInEffects: true,
       allowInEventHandlers: true,
       allowForSignalWrites: true,
+      performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
   create(context: Readonly<RuleContext<MessageIds, Options>>) {

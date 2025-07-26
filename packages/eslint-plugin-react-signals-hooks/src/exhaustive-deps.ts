@@ -10,7 +10,9 @@ import {
   stopTracking,
   trackOperation,
   createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
   PerformanceLimitExceededError,
+  startTracking,
 } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
@@ -21,12 +23,12 @@ const createRule = ESLintUtils.RuleCreator((name: string): string => {
 });
 
 type Option = {
-  additionalHooks?: RegExp | undefined;
-  enableDangerousAutofixThisMayCauseInfiniteLoops?: boolean | undefined;
-  experimental_autoDependenciesHooks?: string[] | undefined;
-  requireExplicitEffectDeps?: boolean | undefined;
-  enableAutoFixForMemoAndCallback?: boolean | undefined;
-  performance?: PerformanceBudget | undefined;
+  additionalHooks: string | undefined;
+  enableDangerousAutofixThisMayCauseInfiniteLoops: boolean;
+  experimental_autoDependenciesHooks: string[];
+  requireExplicitEffectDeps: boolean;
+  enableAutoFixForMemoAndCallback: boolean;
+  performance: PerformanceBudget;
 };
 
 type Options = [Option];
@@ -1532,7 +1534,7 @@ function getReactiveHookCallbackIndex(
     }
 
     default: {
-      if (node === calleeNode && options && options.additionalHooks) {
+      if (node === calleeNode && options && typeof options.additionalHooks !== 'undefined') {
         let name: string | undefined;
 
         try {
@@ -3806,15 +3808,10 @@ function visitFunctionWithDependencies(
   }
 }
 
-let perf:
-  | {
-      trackNode(node: TSESTree.Node): void;
-      'Program:exit'(): void;
-    }
-  | undefined;
+const ruleName = 'exhaustive-deps';
 
 export const exhaustiveDepsRule = createRule<Options, MessageIds>({
-  name: 'exhaustive-deps',
+  name: ruleName,
   meta: {
     type: 'suggestion',
     docs: {
@@ -4038,36 +4035,14 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
           },
           performance: {
             type: 'object',
-            additionalProperties: false,
-            description: 'Performance tuning options',
             properties: {
-              maxTime: {
-                type: 'number',
-                minimum: 1,
-                description: 'Maximum execution time in milliseconds',
-              },
-              maxMemory: {
-                type: 'number',
-                minimum: 1,
-                description: 'Maximum memory usage in bytes',
-              },
-              maxNodes: {
-                type: 'number',
-                minimum: 1,
-                description: 'Maximum number of AST nodes to process',
-              },
-              enableMetrics: {
-                type: 'boolean',
-                description: 'Whether to enable detailed performance metrics',
-              },
-              logMetrics: {
-                type: 'boolean',
-                description: 'Whether to log performance metrics to console',
-              },
+              maxTime: { type: 'number', minimum: 1 },
+              maxMemory: { type: 'number', minimum: 1 },
+              maxNodes: { type: 'number', minimum: 1 },
+              enableMetrics: { type: 'boolean' },
+              logMetrics: { type: 'boolean' },
               maxOperations: {
                 type: 'object',
-                additionalProperties: false,
-                description: 'Operation-specific limits',
                 properties: Object.fromEntries(
                   Object.entries(PerformanceOperations).map(([key]) => [
                     key,
@@ -4076,6 +4051,7 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
                 ),
               },
             },
+            additionalProperties: false,
           },
         },
       },
@@ -4088,209 +4064,234 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
       experimental_autoDependenciesHooks: [],
       requireExplicitEffectDeps: false,
       enableAutoFixForMemoAndCallback: false,
-      performance: {
-        maxTime: 1000, // 1 second
-        maxMemory: 100 * 1024 * 1024, // 100MB
-        maxNodes: 10000,
-        enableMetrics: false,
-        logMetrics: false,
-        maxOperations: {
-          [PerformanceOperations.signalAccess]: 1000,
-          [PerformanceOperations.signalUpdate]: 100,
-          [PerformanceOperations.signalCheck]: 1000,
-          [PerformanceOperations.nestedPropertyCheck]: 5000,
-          [PerformanceOperations.identifierResolution]: 5000,
-          [PerformanceOperations.scopeLookup]: 5000,
-          [PerformanceOperations.typeCheck]: 5000,
-          [PerformanceOperations.componentCheck]: 1000,
-          [PerformanceOperations.hookCheck]: 1000,
-          [PerformanceOperations.effectCheck]: 1000,
-          [PerformanceOperations.batchAnalysis]: 500,
-          [PerformanceOperations.nodeProcessing]: 10000,
-        },
-      },
+
+      performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
-  create(context, [option = {}]): ESLintUtils.RuleListener {
-    const perfKey = 'exhaustive-deps';
+  create(context, [option]): ESLintUtils.RuleListener {
+    const perfKey = `${ruleName}:${context.filename}`;
 
-    try {
-      // Set up performance tracking
-      startPhase(perfKey, 'rule-init');
+    startPhase(perfKey, 'rule-init');
 
-      // Initialize performance tracker with config
-      perf = createPerformanceTracker(
-        perfKey,
-        {
-          // Time and resource limits
-          maxTime: option.performance?.maxTime ?? 50, // ms
-          maxNodes: option.performance?.maxNodes ?? 2000,
-          maxMemory: option.performance?.maxMemory ?? 50 * 1024 * 1024, // 50MB
+    const perf = createPerformanceTracker(perfKey, option.performance, context);
 
-          // Operation-specific limits
-          maxOperations: {
-            [PerformanceOperations.hookCheck]: option.performance?.maxOperations?.hookCheck ?? 1000,
-            [PerformanceOperations.effectCheck]:
-              option.performance?.maxOperations?.effectCheck ?? 1000,
-            [PerformanceOperations.signalCheck]:
-              option.performance?.maxOperations?.signalCheck ?? 500,
-            [PerformanceOperations.nodeProcessing]:
-              option.performance?.maxOperations?.nodeProcessing ?? 10000,
-          },
+    if (option.performance?.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance);
+    }
 
-          // Feature toggles
-          enableMetrics: option.performance?.enableMetrics ?? false,
-          logMetrics: option.performance?.logMetrics ?? false,
-        },
-        context
-      );
+    console.info(`Initializing rule for file: ${context.filename}`);
+    console.info('Rule configuration:', option);
 
-      // Record initial metrics
-      recordMetric(perfKey, 'config', {
-        additionalHooks: option.additionalHooks ? 'custom' : 'default',
-        experimental_autoDependenciesHooks: option.experimental_autoDependenciesHooks?.length ?? 0,
-        requireExplicitEffectDeps: option.requireExplicitEffectDeps ?? false,
-        enableAutoFixForMemoAndCallback: option.enableAutoFixForMemoAndCallback ?? false,
-      });
+    let nodeCount = 0;
 
-      endPhase(perfKey, 'rule-init');
+    function shouldContinue(): boolean {
+      nodeCount++;
 
-      // Track rule execution time and memory usage
-      startPhase(perfKey, 'rule-execution');
+      // Check if we've exceeded the node budget
+      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+        trackOperation(perfKey, 'nodeBudgetExceeded');
 
-      try {
-        // Track node processing
-        let nodeCount = 0;
+        return false;
+      }
 
-        // Helper function to check if we should continue processing
-        function shouldContinue(): boolean {
-          nodeCount++;
+      return true;
+    }
 
-          // Check if we've exceeded the node budget
-          if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
-            trackOperation(perfKey, 'nodeBudgetExceeded');
+    recordMetric(perfKey, 'config', {
+      additionalHooks: option.additionalHooks ? 'custom' : 'default',
+      experimental_autoDependenciesHooks: option.experimental_autoDependenciesHooks?.length ?? 0,
+      requireExplicitEffectDeps: option.requireExplicitEffectDeps ?? false,
+      enableAutoFixForMemoAndCallback: option.enableAutoFixForMemoAndCallback ?? false,
+    });
 
-            return false;
-          }
+    endPhase(perfKey, 'rule-init');
 
-          return true;
+    startPhase(perfKey, 'rule-execution');
+
+    return {
+      // Track all nodes for performance monitoring
+      '*': (node: TSESTree.Node): void => {
+        if (!perf) {
+          throw new Error('Performance tracker not initialized');
         }
 
-        return {
-          // Track all nodes for performance monitoring
-          '*': (node: TSESTree.Node): void => {
-            if (!perf) {
-              throw new Error('Performance tracker not initialized');
-            }
+        // Check if we should continue processing
+        if (!shouldContinue()) {
+          return;
+        }
 
-            perf.trackNode(node);
+        perf.trackNode(node);
 
-            if (!shouldContinue()) {
-              return;
-            }
+        // Track specific node types that are more expensive to process
+        if (
+          node.type === 'CallExpression' ||
+          node.type === 'MemberExpression' ||
+          node.type === 'Identifier'
+        ) {
+          trackOperation(perfKey, `${node.type}Processing`);
+        }
+      },
+      CallExpression(node: TSESTree.CallExpression): void {
+        if (!perf) {
+          throw new Error('Performance tracker not initialized');
+        }
 
-            // Track specific node types that are more expensive to process
-            if (
-              node.type === 'CallExpression' ||
-              node.type === 'MemberExpression' ||
-              node.type === 'Identifier'
-            ) {
-              trackOperation(perfKey, `${node.type}Processing`);
-            }
-          },
-          CallExpression(node: TSESTree.CallExpression): void {
-            if (!perf) {
-              throw new Error('Performance tracker not initialized');
-            }
+        perf.trackNode(node);
 
-            perf.trackNode(node);
+        const callbackIndex = getReactiveHookCallbackIndex(node.callee, context, {
+          additionalHooks:
+            typeof option.additionalHooks === 'string'
+              ? new RegExp(option.additionalHooks)
+              : undefined,
+        });
 
-            const callbackIndex = getReactiveHookCallbackIndex(node.callee, context, {
-              additionalHooks:
-                typeof option.additionalHooks === 'string'
-                  ? new RegExp(option.additionalHooks)
-                  : undefined,
+        if (callbackIndex === -1) {
+          return;
+        }
+
+        let callback: TSESTree.CallExpressionArgument | undefined = node.arguments[callbackIndex];
+
+        const nodeWithoutNamespace = getNodeWithoutReactNamespace(node.callee);
+
+        const maybeNode = node.arguments[callbackIndex + 1];
+
+        const declaredDependenciesNode: TSESTree.CallExpressionArgument | undefined =
+          maybeNode && !(maybeNode.type === 'Identifier' && maybeNode.name === 'undefined')
+            ? maybeNode
+            : undefined;
+
+        const isEffect = /Effect($|[^a-z])/g.test(
+          'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : ''
+        );
+
+        if (!callback) {
+          context.report({
+            messageId: 'missingEffectCallback',
+            node: node.callee,
+            data: {
+              hookName: 'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
+            },
+          });
+
+          return;
+        }
+
+        if (!maybeNode && isEffect && option.requireExplicitEffectDeps) {
+          context.report({
+            node: node.callee,
+            data: {
+              hookName: 'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
+            },
+            messageId: 'missingEffectCallback',
+          });
+        }
+
+        const isAutoDepsHook = option.experimental_autoDependenciesHooks?.includes(
+          'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : ''
+        );
+
+        if (
+          (!declaredDependenciesNode ||
+            (isAutoDepsHook &&
+              declaredDependenciesNode.type === 'Literal' &&
+              declaredDependenciesNode.value === null)) &&
+          !isEffect
+        ) {
+          if (
+            ('name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '') === 'useMemo' ||
+            ('name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '') === 'useCallback'
+          ) {
+            // TODO: Can this have a suggestion?
+            context.report({
+              node: node.callee,
+              messageId: 'missingDependencies',
+              data: {
+                hookName: 'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
+              },
             });
+          }
 
-            if (callbackIndex === -1) {
-              return;
-            }
+          return;
+        }
 
-            let callback: TSESTree.CallExpressionArgument | undefined =
-              node.arguments[callbackIndex];
+        while (callback.type === 'TSAsExpression') {
+          callback = callback.expression;
+        }
 
-            const nodeWithoutNamespace = getNodeWithoutReactNamespace(node.callee);
-
-            const maybeNode = node.arguments[callbackIndex + 1];
-
-            const declaredDependenciesNode: TSESTree.CallExpressionArgument | undefined =
-              maybeNode && !(maybeNode.type === 'Identifier' && maybeNode.name === 'undefined')
-                ? maybeNode
-                : undefined;
-
-            const isEffect = /Effect($|[^a-z])/g.test(
-              'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : ''
+        switch (callback.type) {
+          case 'FunctionExpression':
+          case 'ArrowFunctionExpression': {
+            visitFunctionWithDependencies(
+              callback,
+              declaredDependenciesNode,
+              node.callee,
+              'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
+              isEffect,
+              isAutoDepsHook,
+              context
             );
 
-            if (!callback) {
-              context.report({
-                messageId: 'missingEffectCallback',
-                node: node.callee,
-                data: {
-                  hookName: 'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
-                },
-              });
-
+            return;
+          }
+          case 'Identifier': {
+            if (
+              !declaredDependenciesNode ||
+              (isAutoDepsHook &&
+                declaredDependenciesNode.type === 'Literal' &&
+                declaredDependenciesNode.value === null)
+            ) {
               return;
             }
-
-            if (!maybeNode && isEffect && option.requireExplicitEffectDeps) {
-              context.report({
-                node: node.callee,
-                data: {
-                  hookName: 'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
-                },
-                messageId: 'missingEffectCallback',
-              });
-            }
-
-            const isAutoDepsHook = option.experimental_autoDependenciesHooks?.includes(
-              'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : ''
-            );
 
             if (
-              (!declaredDependenciesNode ||
-                (isAutoDepsHook &&
-                  declaredDependenciesNode.type === 'Literal' &&
-                  declaredDependenciesNode.value === null)) &&
-              !isEffect
+              'elements' in declaredDependenciesNode &&
+              declaredDependenciesNode.elements.some(
+                (
+                  el:
+                    | TSESTree.SpreadElement
+                    | TSESTree.Expression
+                    | TSESTree.DestructuringPattern
+                    | null
+                ): boolean => {
+                  return el !== null && el.type === 'Identifier' && el.name === callback.name;
+                }
+              )
             ) {
-              if (
-                ('name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '') === 'useMemo' ||
-                ('name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '') === 'useCallback'
-              ) {
-                // TODO: Can this have a suggestion?
-                context.report({
-                  node: node.callee,
-                  messageId: 'missingDependencies',
-                  data: {
-                    hookName: 'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
-                  },
-                });
-              }
+              return;
+            }
+
+            const variable = context.sourceCode.getScope(callback).set.get(callback.name);
+
+            if (variable?.defs == null) {
+              return;
+            }
+
+            const def: Definition | undefined = variable.defs[0];
+
+            if (!def || !def.node) {
+              break;
+            }
+
+            if (def.type === 'Parameter') {
+              context.report({
+                node: node.callee,
+                data: {
+                  name: 'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
+                },
+                messageId: 'missingEffectCallback',
+              });
 
               return;
             }
 
-            while (callback.type === 'TSAsExpression') {
-              callback = callback.expression;
+            if (def.type !== 'Variable' && def.type !== 'FunctionName') {
+              break;
             }
 
-            switch (callback.type) {
-              case 'FunctionExpression':
-              case 'ArrowFunctionExpression': {
+            switch (def.node.type) {
+              case 'FunctionDeclaration': {
                 visitFunctionWithDependencies(
-                  callback,
+                  def.node,
                   declaredDependenciesNode,
                   node.callee,
                   'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
@@ -4301,65 +4302,19 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
 
                 return;
               }
-              case 'Identifier': {
-                if (
-                  !declaredDependenciesNode ||
-                  (isAutoDepsHook &&
-                    declaredDependenciesNode.type === 'Literal' &&
-                    declaredDependenciesNode.value === null)
-                ) {
-                  return;
+
+              case 'VariableDeclarator': {
+                const init = def.node.init;
+
+                if (init === null) {
+                  break; // Unhandled
                 }
 
-                if (
-                  'elements' in declaredDependenciesNode &&
-                  declaredDependenciesNode.elements.some(
-                    (
-                      el:
-                        | TSESTree.SpreadElement
-                        | TSESTree.Expression
-                        | TSESTree.DestructuringPattern
-                        | null
-                    ): boolean => {
-                      return el !== null && el.type === 'Identifier' && el.name === callback.name;
-                    }
-                  )
-                ) {
-                  return;
-                }
-
-                const variable = context.sourceCode.getScope(callback).set.get(callback.name);
-
-                if (variable?.defs == null) {
-                  return;
-                }
-
-                const def: Definition | undefined = variable.defs[0];
-
-                if (!def || !def.node) {
-                  break;
-                }
-
-                if (def.type === 'Parameter') {
-                  context.report({
-                    node: node.callee,
-                    data: {
-                      name: 'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
-                    },
-                    messageId: 'missingEffectCallback',
-                  });
-
-                  return;
-                }
-
-                if (def.type !== 'Variable' && def.type !== 'FunctionName') {
-                  break;
-                }
-
-                switch (def.node.type) {
-                  case 'FunctionDeclaration': {
+                switch (init.type) {
+                  case 'ArrowFunctionExpression':
+                  case 'FunctionExpression': {
                     visitFunctionWithDependencies(
-                      def.node,
+                      init,
                       declaredDependenciesNode,
                       node.callee,
                       'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
@@ -4370,64 +4325,16 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
 
                     return;
                   }
-
-                  case 'VariableDeclarator': {
-                    const init = def.node.init;
-
-                    if (init === null) {
-                      break; // Unhandled
-                    }
-
-                    switch (init.type) {
-                      case 'ArrowFunctionExpression':
-                      case 'FunctionExpression': {
-                        visitFunctionWithDependencies(
-                          init,
-                          declaredDependenciesNode,
-                          node.callee,
-                          'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
-                          isEffect,
-                          isAutoDepsHook,
-                          context
-                        );
-
-                        return;
-                      }
-                    }
-
-                    break;
-                  }
                 }
 
                 break;
               }
-
-              default: {
-                context.report({
-                  node: node.callee,
-                  messageId: 'missingDependency',
-                  data: {
-                    name: 'name' in callback ? callback.name : callback.type,
-                  },
-                  suggest: [
-                    {
-                      messageId: 'addDependencies',
-                      fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-                        if (!declaredDependenciesNode) {
-                          return null;
-                        }
-
-                        return fixer.replaceText(
-                          declaredDependenciesNode,
-                          `[${'name' in callback ? callback.name : callback.type}]`
-                        );
-                      },
-                    },
-                  ],
-                });
-              }
             }
 
+            break;
+          }
+
+          default: {
             context.report({
               node: node.callee,
               messageId: 'missingDependency',
@@ -4450,167 +4357,39 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
                 },
               ],
             });
-          },
-          'CallExpression:exit'(node: TSESTree.CallExpression): void {
-            if (!perf) {
-              throw new Error('Performance tracker not initialized');
-            }
-
-            perf.trackNode(node);
-          },
-          'Program:exit'(node: TSESTree.Node): void {
-            if (!perf) {
-              throw new Error('Performance tracker not initialized');
-            }
-
-            startPhase(perfKey, 'programExit');
-
-            perf.trackNode(node);
-
-            try {
-              startPhase(perfKey, 'recordMetrics');
-
-              const finalMetrics = stopTracking(perfKey);
-
-              if (finalMetrics) {
-                const { exceededBudget, nodeCount, duration } = finalMetrics;
-                const status = exceededBudget ? 'EXCEEDED' : 'OK';
-
-                console.info(`\n[prefer-batch-updates] Performance Metrics (${status}):`);
-                console.info(`  File: ${context.filename}`);
-                console.info(`  Duration: ${duration?.toFixed(2)}ms`);
-                console.info(`  Nodes Processed: ${nodeCount}`);
-
-                if (exceededBudget) {
-                  console.warn('\n⚠️  Performance budget exceeded!');
-                }
-              }
-            } catch (error: unknown) {
-              console.error('Error recording metrics:', error);
-            } finally {
-              endPhase(perfKey, 'recordMetrics');
-
-              stopTracking(perfKey);
-            }
-
-            perf['Program:exit']();
-
-            endPhase(perfKey, 'programExit');
-          },
-        };
-      } catch (error: unknown) {
-        if (error instanceof PerformanceLimitExceededError) {
-          context.report({
-            loc: { line: 1, column: 0 },
-            messageId: 'performanceLimitExceeded',
-            data: { message: error.message },
-          });
-        } else {
-          // Clean up performance tracking
-          endPhase(perfKey, 'rule-execution');
-          // throw error;
-          console.error(error);
-
-          return {
-            'Program:exit'(node: TSESTree.Node): void {
-              if (!perf) {
-                throw new Error('Performance tracker not initialized');
-              }
-              startPhase(perfKey, 'programExit');
-
-              perf.trackNode(node);
-
-              try {
-                startPhase(perfKey, 'recordMetrics');
-
-                const finalMetrics = stopTracking(perfKey);
-
-                if (finalMetrics) {
-                  const { exceededBudget, nodeCount, duration } = finalMetrics;
-                  const status = exceededBudget ? 'EXCEEDED' : 'OK';
-
-                  console.info(`\n[prefer-batch-updates] Performance Metrics (${status}):`);
-                  console.info(`  File: ${context.filename}`);
-                  console.info(`  Duration: ${duration?.toFixed(2)}ms`);
-                  console.info(`  Nodes Processed: ${nodeCount}`);
-
-                  if (exceededBudget) {
-                    console.warn('\n⚠️  Performance budget exceeded!');
-                  }
-                }
-              } catch (error: unknown) {
-                console.error('Error recording metrics:', error);
-              } finally {
-                endPhase(perfKey, 'recordMetrics');
-
-                stopTracking(perfKey);
-              }
-
-              perf['Program:exit']();
-
-              endPhase(perfKey, 'programExit');
-            },
-          };
+          }
         }
-      }
-    } catch (error: unknown) {
-      if (error instanceof PerformanceLimitExceededError) {
+
         context.report({
-          loc: { line: 1, column: 0 },
-          messageId: 'performanceLimitExceeded',
-          data: { message: error.message },
+          node: node.callee,
+          messageId: 'missingDependency',
+          data: {
+            name: 'name' in callback ? callback.name : callback.type,
+          },
+          suggest: [
+            {
+              messageId: 'addDependencies',
+              fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+                if (!declaredDependenciesNode) {
+                  return null;
+                }
+
+                return fixer.replaceText(
+                  declaredDependenciesNode,
+                  `[${'name' in callback ? callback.name : callback.type}]`
+                );
+              },
+            },
+          ],
         });
-      } else {
-        // Clean up performance tracking
-        endPhase(perfKey, 'rule-execution');
-        // throw error;
-        console.error(error);
-      }
+      },
+      'CallExpression:exit'(node: TSESTree.CallExpression): void {
+        if (!perf) {
+          throw new Error('Performance tracker not initialized');
+        }
 
-      return {
-        'Program:exit'(node: TSESTree.Node): void {
-          if (!perf) {
-            throw new Error('Performance tracker not initialized');
-          }
-
-          startPhase(perfKey, 'programExit');
-
-          perf.trackNode(node);
-
-          try {
-            startPhase(perfKey, 'recordMetrics');
-
-            const finalMetrics = stopTracking(perfKey);
-
-            if (finalMetrics) {
-              const { exceededBudget, nodeCount, duration } = finalMetrics;
-              const status = exceededBudget ? 'EXCEEDED' : 'OK';
-
-              console.info(`\n[prefer-batch-updates] Performance Metrics (${status}):`);
-              console.info(`  File: ${context.filename}`);
-              console.info(`  Duration: ${duration?.toFixed(2)}ms`);
-              console.info(`  Nodes Processed: ${nodeCount}`);
-
-              if (exceededBudget) {
-                console.warn('\n⚠️  Performance budget exceeded!');
-              }
-            }
-          } catch (error: unknown) {
-            console.error('Error recording metrics:', error);
-          } finally {
-            endPhase(perfKey, 'recordMetrics');
-
-            stopTracking(perfKey);
-          }
-
-          perf['Program:exit']();
-
-          endPhase(perfKey, 'programExit');
-        },
-      };
-    }
-
-    return {
+        perf.trackNode(node);
+      },
       'Program:exit'(node: TSESTree.Node): void {
         if (!perf) {
           throw new Error('Performance tracker not initialized');

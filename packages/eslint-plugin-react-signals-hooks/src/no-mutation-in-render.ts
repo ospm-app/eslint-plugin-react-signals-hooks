@@ -6,6 +6,8 @@ import {
   startPhase,
   endPhase,
   stopTracking,
+  DEFAULT_PERFORMANCE_BUDGET,
+  startTracking,
 } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import type { PerformanceBudget } from './utils/types.js';
@@ -25,20 +27,18 @@ type MessageIds =
 
 type Option = {
   /** Custom signal function names (e.g., ['createSignal', 'useSignal']) */
-  signalNames?: string[] | undefined;
+  signalNames: string[];
   /** Patterns where mutations are allowed (e.g., ['^test/', '.spec.ts$']) */
-  allowedPatterns?: string[] | undefined;
+  allowedPatterns: string[];
   /** Custom severity levels for different violation types */
-  severity?:
-    | {
-        signalValueAssignment?: 'error' | 'warn' | 'off' | undefined;
-        signalPropertyAssignment?: 'error' | 'warn' | 'off' | undefined;
-        signalArrayIndexAssignment?: 'error' | 'warn' | 'off' | undefined;
-        signalNestedPropertyAssignment?: 'error' | 'warn' | 'off' | undefined;
-      }
-    | undefined;
+  severity: {
+    signalValueAssignment: 'error' | 'warn' | 'off';
+    signalPropertyAssignment: 'error' | 'warn' | 'off';
+    signalArrayIndexAssignment: 'error' | 'warn' | 'off';
+    signalNestedPropertyAssignment: 'error' | 'warn' | 'off';
+  };
   /** Performance tuning option */
-  performance?: PerformanceBudget | undefined;
+  performance: PerformanceBudget;
 };
 
 type Options = [Option];
@@ -185,14 +185,12 @@ function getSeverity(messageId: MessageIds, option: Option): 'error' | 'warn' | 
   }
 }
 
-/**
- * ESLint rule: no-mutation-in-render
- *
- * Disallows direct signal mutation during render.
- * Signal mutations should occur in effects, event handlers, or other side-effect contexts.
- */
+const resolvedIdentifiers = new Map<string, number>();
+
+const ruleName = 'no-mutation-in-render';
+
 export const noMutationInRenderRule = createRule<Options, MessageIds>({
-  name: 'no-mutation-in-render',
+  name: ruleName,
   meta: {
     type: 'problem',
     docs: {
@@ -250,63 +248,19 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           performance: {
             type: 'object',
             properties: {
-              maxTime: {
-                type: 'number',
-                minimum: 1,
-                default: 50,
-                description: 'Maximum time in milliseconds the rule should take to process a file',
-              },
-              maxNodes: {
-                type: 'number',
-                minimum: 100,
-                default: 2000,
-                description: 'Maximum number of AST nodes the rule should process',
-              },
-              maxMemory: {
-                type: 'number',
-                minimum: 1024 * 1024, // 1MB
-                default: 50 * 1024 * 1024, // 50MB
-                description: 'Maximum memory in bytes the rule should use',
-              },
+              maxTime: { type: 'number', minimum: 1 },
+              maxMemory: { type: 'number', minimum: 1 },
+              maxNodes: { type: 'number', minimum: 1 },
+              enableMetrics: { type: 'boolean' },
+              logMetrics: { type: 'boolean' },
               maxOperations: {
                 type: 'object',
-                properties: {
-                  signalAccess: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 500,
-                    description: 'Maximum number of signal accesses',
-                  },
-                  nestedPropertyCheck: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 200,
-                    description: 'Maximum number of nested property checks',
-                  },
-                  identifierResolution: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 300,
-                    description: 'Maximum number of identifier resolutions',
-                  },
-                  scopeLookup: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 400,
-                    description: 'Maximum number of scope lookups',
-                  },
-                },
-                additionalProperties: false,
-              },
-              enableMetrics: {
-                type: 'boolean',
-                default: false,
-                description: 'Whether to enable detailed performance metrics',
-              },
-              logMetrics: {
-                type: 'boolean',
-                default: false,
-                description: 'Whether to log performance metrics to console',
+                properties: Object.fromEntries(
+                  Object.entries(PerformanceOperations).map(([key]) => [
+                    key,
+                    { type: 'number', minimum: 1 },
+                  ])
+                ),
               },
             },
             additionalProperties: false,
@@ -340,88 +294,25 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
         signalArrayIndexAssignment: 'error',
         signalNestedPropertyAssignment: 'error',
       },
-      performance: {
-        // Time and resource limits
-        maxTime: 50, // ms
-        maxNodes: 2000,
-        maxMemory: 50 * 1024 * 1024, // 50MB
-
-        // Operation limits using standardized operation names
-        maxOperations: {
-          [PerformanceOperations.signalAccess]: 1000,
-          [PerformanceOperations.signalCheck]: 500,
-          [PerformanceOperations.nestedPropertyCheck]: 500,
-          [PerformanceOperations.identifierResolution]: 1000,
-          [PerformanceOperations.scopeLookup]: 1000,
-          [PerformanceOperations.typeCheck]: 500,
-        },
-
-        // Feature toggles
-        enableMetrics: false,
-        logMetrics: false,
-      },
+      performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
-  create(context, [option = {}]): ESLintUtils.RuleListener {
-    // Set up performance tracking for this rule
-    const perfKey = `no-mutation-in-render:${context.filename}`;
+  create(context, [option]): ESLintUtils.RuleListener {
+    const perfKey = `${ruleName}:${context.filename}`;
 
-    const perfBudget: PerformanceBudget = {
-      maxTime: option.performance?.maxTime ?? 50, // ms
-      maxNodes: option.performance?.maxNodes ?? 2000, // Maximum nodes to process
-      maxMemory: option.performance?.maxMemory ?? 50 * 1024 * 1024, // 50MB
-      maxOperations: {
-        [PerformanceOperations.signalAccess]:
-          option.performance?.maxOperations?.signalAccess ?? 1000,
-        [PerformanceOperations.signalCheck]: option.performance?.maxOperations?.signalCheck ?? 500,
-        [PerformanceOperations.nestedPropertyCheck]:
-          option.performance?.maxOperations?.nestedPropertyCheck ?? 500,
-        [PerformanceOperations.identifierResolution]:
-          option.performance?.maxOperations?.identifierResolution ?? 1000,
-        [PerformanceOperations.scopeLookup]: option.performance?.maxOperations?.scopeLookup ?? 1000,
-        [PerformanceOperations.typeCheck]: option.performance?.maxOperations?.typeCheck ?? 500,
-      },
-      enableMetrics: option.performance?.enableMetrics ?? false,
-      logMetrics: option.performance?.logMetrics ?? false,
-    };
+    startPhase(perfKey, 'rule-init');
 
-    // Initialize performance tracking
-    const perf = createPerformanceTracker(perfKey, perfBudget, context);
+    const perf = createPerformanceTracker(perfKey, option.performance, context);
 
-    // Track rule initialization
-    trackOperation(perfKey, 'ruleInit');
-
-    // Default signal names if none provided
-    const signalNames = option.signalNames ?? ['signal', 'useSignal', 'createSignal'];
-
-    const isFileExempt =
-      option.allowedPatterns?.some((pattern): boolean => {
-        try {
-          return new RegExp(pattern).test(context.filename);
-        } catch (e: unknown) {
-          console.error(`Invalid regex pattern: ${pattern}`, e);
-          // Invalid regex pattern, ignore it
-          return false;
-        }
-      }) ?? false;
-
-    // Track file analysis start
-    startPhase(perfKey, 'fileAnalysis');
-
-    // Track signal names being used
-    trackOperation(perfKey, 'signalNames', signalNames.length);
-
-    // Skip rule if file matches any allowed patterns
-    if (isFileExempt) {
-      trackOperation(perfKey, 'fileExempt');
-      endPhase(perfKey, 'fileAnalysis');
-      return {};
+    if (option.performance?.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance);
     }
 
-    // Track node processing
+    console.info(`Initializing rule for file: ${context.filename}`);
+    console.info('Rule configuration:', option);
+
     let nodeCount = 0;
 
-    // Helper function to check if we should continue processing
     function shouldContinue(): boolean {
       nodeCount++;
 
@@ -435,24 +326,52 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
       return true;
     }
 
-    // Track identifier resolution
-    const resolvedIdentifiers = new Map<string, number>();
+    trackOperation(perfKey, 'ruleInit');
+
+    endPhase(perfKey, 'rule-init');
+
+    const signalNames = option.signalNames ?? ['signal', 'useSignal', 'createSignal'];
+
+    const isFileExempt =
+      option.allowedPatterns?.some((pattern: string): boolean => {
+        try {
+          return new RegExp(pattern).test(context.filename);
+        } catch (error: unknown) {
+          console.error(`Invalid regex pattern: ${pattern}`, error);
+          // Invalid regex pattern, ignore it
+          return false;
+        }
+      }) ?? false;
+
+    startPhase(perfKey, 'fileAnalysis');
+
+    trackOperation(perfKey, 'signalNames', signalNames.length);
+
+    if (isFileExempt) {
+      trackOperation(perfKey, 'fileExempt');
+
+      endPhase(perfKey, 'fileAnalysis');
+
+      return {};
+    }
 
     let inRenderContext = false;
     let renderDepth = 0;
     let hookDepth = 0;
-    let functionDepth = 0; // Track nested functions
+    let functionDepth = 0;
 
     return {
-      // Track all nodes for performance monitoring
       '*': (node: TSESTree.Node): void => {
+        if (!perf) {
+          throw new Error('Performance tracker not initialized');
+        }
+
         if (!shouldContinue()) {
           return;
         }
 
         perf.trackNode(node);
 
-        // Track specific node types that are more expensive to process
         if (
           node.type === 'CallExpression' ||
           node.type === 'MemberExpression' ||
@@ -461,36 +380,25 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           trackOperation(perfKey, `${node.type}Processing`);
         }
       },
+
       FunctionDeclaration(node: TSESTree.FunctionDeclaration): void {
-        perf.trackNode(node);
-
-        if (!shouldContinue()) {
-          return;
-        }
-
-        // Track function declaration processing
         trackOperation(perfKey, 'functionDeclaration');
 
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (node.id?.name && /^[A-Z]/.test(node.id.name)) {
           trackOperation(perfKey, 'reactComponentRender');
+
           inRenderContext = true;
+
           renderDepth++;
 
-          // Track component name for analysis
           trackIdentifier(node.id.name, perfKey, resolvedIdentifiers);
 
-          // Start a new phase for this component render
+          startPhase(perfKey, `render:${node.id.name}`);
           startPhase(perfKey, `render:${node.id.name}`);
         }
       },
+
       ArrowFunctionExpression(node: TSESTree.ArrowFunctionExpression): void {
-        perf.trackNode(node);
-
-        if (!shouldContinue()) {
-          return;
-        }
-
         trackOperation(perfKey, 'arrowFunction');
 
         if (
@@ -519,13 +427,8 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
         }
       },
       FunctionExpression(node: TSESTree.FunctionExpression): void {
-        perf.trackNode(node);
-
-        if (!shouldContinue()) {
-          return;
-        }
-
         trackOperation(perfKey, 'functionExpression');
+
         functionDepth++;
 
         // Check if this is a React component
@@ -535,13 +438,13 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           /^[A-Z]/.test(node.parent.id.name)
         ) {
           trackOperation(perfKey, 'reactComponentFunction');
+
           inRenderContext = true;
+
           renderDepth++;
 
-          // Track component name for analysis
           trackIdentifier(node.parent.id.name, perfKey, resolvedIdentifiers);
 
-          // Start a new phase for this component render
           startPhase(perfKey, `render:${node.parent.id.name}`);
         } else if (functionDepth === 1 && renderDepth >= 1) {
           // This is a nested function inside a render method
@@ -549,15 +452,8 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
         }
       },
       CallExpression(node: TSESTree.CallExpression): void {
-        perf.trackNode(node);
-
-        if (!shouldContinue()) {
-          return;
-        }
-
         trackOperation(perfKey, 'callExpression');
 
-        // Track hook usage
         if (
           node.callee.type === 'Identifier' &&
           [
@@ -571,26 +467,23 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           ].includes(node.callee.name)
         ) {
           trackOperation(perfKey, `hook:${node.callee.name}`);
+
           hookDepth++;
+
           if (hookDepth === 1) {
             inRenderContext = false;
+
             trackOperation(perfKey, 'enteredHookContext');
           }
         }
 
-        // Track signal function calls
         if (node.callee.type === 'Identifier' && signalNames.includes(node.callee.name)) {
           trackOperation(perfKey, 'signalFunctionCall');
+
           trackIdentifier(node.callee.name, perfKey, resolvedIdentifiers);
         }
       },
       AssignmentExpression(node: TSESTree.AssignmentExpression): void {
-        perf.trackNode(node);
-
-        if (!shouldContinue()) {
-          return;
-        }
-
         trackOperation(perfKey, 'assignmentExpression');
 
         // Skip if not in a render context or inside hooks/functions
@@ -598,21 +491,19 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           return;
         }
 
-        // Start phase for assignment analysis
         startPhase(perfKey, 'assignmentAnalysis');
 
-        // Track the type of assignment
         const assignmentType = getAssignmentType(node);
 
         trackOperation(perfKey, `assignmentType:${assignmentType}`);
 
         // Check for direct signal value assignment (signal.value = x)
-        const isSignalValueAssignment = isDirectSignalValueAssignment(node, signalNames);
-
-        if (!isSignalValueAssignment) {
-        } else {
+        if (isDirectSignalValueAssignment(node, signalNames)) {
           const severity = getSeverity('signalValueAssignment', option);
-          if (severity === 'off') return;
+
+          if (severity === 'off') {
+            return;
+          }
 
           context.report({
             node,
@@ -691,13 +582,8 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           }
         }
       },
+
       UpdateExpression(node: TSESTree.UpdateExpression): void {
-        perf.trackNode(node);
-
-        if (!shouldContinue()) {
-          return;
-        }
-
         if (!inRenderContext || renderDepth < 1 || hookDepth > 0 || functionDepth > 0) {
           return;
         }
@@ -708,7 +594,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           node.argument.property.type === 'Identifier' &&
           node.argument.property.name === 'value' &&
           node.argument.object.type === 'Identifier' &&
-          signalNames.some((name): boolean => {
+          signalNames.some((name: string): boolean => {
             return (
               ('object' in node.argument &&
                 'object' in node.argument.object &&
@@ -761,9 +647,6 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
         }
       },
       'FunctionDeclaration:exit'(node: TSESTree.FunctionDeclaration): void {
-        perf.trackNode(node);
-
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (node.id?.name && /^[A-Z]/.test(node.id.name)) {
           renderDepth--;
 
@@ -771,8 +654,6 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
         }
       },
       'ArrowFunctionExpression:exit'(node: TSESTree.ArrowFunctionExpression): void {
-        perf.trackNode(node);
-
         // Check if this is the main component arrow function
         if (
           node.parent.type === 'VariableDeclarator' &&
@@ -794,9 +675,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           }
         }
       },
-      'FunctionExpression:exit'(node: TSESTree.FunctionExpression): void {
-        perf.trackNode(node);
-
+      'FunctionExpression:exit'(_node: TSESTree.FunctionExpression): void {
         functionDepth--;
 
         if (functionDepth === 0 && renderDepth >= 1 && hookDepth === 0) {
@@ -804,8 +683,6 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
         }
       },
       'CallExpression:exit'(node: TSESTree.CallExpression): void {
-        perf.trackNode(node);
-
         if (
           node.callee.type === 'Identifier' &&
           [
@@ -819,35 +696,33 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           ].includes(node.callee.name)
         ) {
           hookDepth--;
+
           if (hookDepth === 0 && renderDepth >= 1 && functionDepth === 0) {
             inRenderContext = true;
           }
         }
       },
-      'Program:exit'(node: TSESTree.Program): void {
+      'Program:exit'(_node: TSESTree.Program): void {
         if (!perf) {
           throw new Error('Performance tracker not initialized');
         }
 
         startPhase(perfKey, 'programExit');
 
-        perf.trackNode(node);
-
         try {
           startPhase(perfKey, 'recordMetrics');
 
           const finalMetrics = stopTracking(perfKey);
 
-          if (finalMetrics) {
-            const { exceededBudget, nodeCount, duration } = finalMetrics;
-            const status = exceededBudget ? 'EXCEEDED' : 'OK';
-
-            console.info(`\n[prefer-batch-updates] Performance Metrics (${status}):`);
+          if (typeof finalMetrics !== 'undefined') {
+            console.info(
+              `\n[no-mutation-in-render] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
+            );
             console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${nodeCount}`);
+            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
+            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
 
-            if (exceededBudget) {
+            if (finalMetrics.exceededBudget) {
               console.warn('\n⚠️  Performance budget exceeded!');
             }
           }

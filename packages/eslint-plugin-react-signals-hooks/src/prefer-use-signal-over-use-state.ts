@@ -1,11 +1,16 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
+import type { PerformanceBudget } from './utils/types.js';
+import { DEFAULT_PERFORMANCE_BUDGET } from './utils/performance.js';
+import { PerformanceOperations } from './utils/performance-constants.js';
+
 type MessageIds = 'preferUseSignal';
 
 type Options = [
   {
     ignoreComplexInitializers?: boolean | undefined;
+    performance?: PerformanceBudget | undefined;
   },
 ];
 
@@ -34,13 +39,37 @@ export const preferUseSignalOverUseStateRule = createRule<Options, MessageIds>({
             default: true,
             description: 'Skip non-primitive initializers',
           },
+          performance: {
+            type: 'object',
+            properties: {
+              maxTime: { type: 'number', minimum: 1 },
+              maxMemory: { type: 'number', minimum: 1 },
+              maxNodes: { type: 'number', minimum: 1 },
+              enableMetrics: { type: 'boolean' },
+              logMetrics: { type: 'boolean' },
+              maxOperations: {
+                type: 'object',
+                properties: Object.fromEntries(
+                  Object.entries(PerformanceOperations).map(([key]) => [
+                    key,
+                    { type: 'number', minimum: 1 },
+                  ])
+                ),
+              },
+            },
+            additionalProperties: false,
+          },
         },
         additionalProperties: false,
       },
     ],
     fixable: 'code',
   },
-  defaultOptions: [{}],
+  defaultOptions: [
+    {
+      performance: DEFAULT_PERFORMANCE_BUDGET,
+    },
+  ],
   create(context: Readonly<RuleContext<MessageIds, Options>>) {
     return {
       VariableDeclarator(node: TSESTree.VariableDeclarator) {

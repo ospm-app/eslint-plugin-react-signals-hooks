@@ -1,6 +1,8 @@
 import type { TSESLint, TSESTree } from '@typescript-eslint/utils';
 import { ESLintUtils, AST_NODE_TYPES } from '@typescript-eslint/utils';
 
+import { PerformanceOperations } from './utils/performance-constants';
+
 const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return `https://github.com/ospm-app/eslint-plugin-threejs/docs/rules/${name}.md`;
 });
@@ -13,7 +15,6 @@ export const enforceClippingPlanes = createRule<[], MessageIds>({
     type: 'suggestion',
     docs: {
       description: 'Enforce best practices for using clipping planes in Three.js',
-      recommended: 'recommended',
     },
     fixable: 'code',
     messages: {
@@ -25,9 +26,40 @@ export const enforceClippingPlanes = createRule<[], MessageIds>({
       enableLocalClipping:
         'Material.localClipping should be true when using local clipping planes.',
     },
-    schema: [],
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          performance: {
+            type: 'object',
+            properties: {
+              maxTime: { type: 'number', minimum: 1 },
+              maxMemory: { type: 'number', minimum: 1 },
+              maxNodes: { type: 'number', minimum: 1 },
+              enableMetrics: { type: 'boolean' },
+              logMetrics: { type: 'boolean' },
+              maxOperations: {
+                type: 'object',
+                properties: Object.fromEntries(
+                  Object.entries(PerformanceOperations).map(([key]) => [
+                    key,
+                    { type: 'number', minimum: 1 },
+                  ])
+                ),
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+        additionalProperties: false,
+      },
+    ],
   },
-  defaultOptions: [],
+  defaultOptions: [
+    // {
+    //   // performance: DEFAULT_PERFORMANCE_BUDGET,
+    // },
+  ],
   create(context) {
     // Track renderers and their clipping planes
     const rendererClippingPlanes = new Map<

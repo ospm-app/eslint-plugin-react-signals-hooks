@@ -1,22 +1,20 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 import type { ImportDefaultSpecifier, ImportNamespaceSpecifier, ImportSpecifier } from 'estree';
+
 import {
-  createPerformanceTracker,
-  startPhase,
   endPhase,
+  startPhase,
   stopTracking,
   recordMetric,
+  startTracking,
   trackOperation,
-  PerformanceLimitExceededError,
+  createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
 } from './utils/performance.js';
-import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
-
-const createRule = ESLintUtils.RuleCreator((name: string): string => {
-  return getRuleDocUrl(name);
-});
+import { PerformanceOperations } from './utils/performance-constants.js';
 
 type Option = {
   ignorePattern?: string | undefined;
@@ -49,14 +47,113 @@ type MessageIds =
   | 'suggestConvertToSignal'
   | 'performanceLimitExceeded';
 
-/**
- * ESLint rule: no-non-signal-with-signal-suffix
- *
- * Ensures that variables with 'Signal' suffix are actual signal instances
- * created by `signal()`, `useSignal()`, or other signal creation functions.
- */
+const signalImports = new Set<string>();
+
+function isSignalCreation(
+  node:
+    | TSESTree.ConstDeclaration
+    | TSESTree.LetOrVarDeclaredDeclaration
+    | TSESTree.LetOrVarNonDeclaredDeclaration
+    | TSESTree.AssignmentPattern
+    | TSESTree.TSEmptyBodyFunctionExpression
+    | TSESTree.Expression,
+  hasSignalsImport: boolean,
+  perfKey: string
+): boolean {
+  trackOperation(perfKey, 'isSignalCreation');
+
+  if (node.type !== 'CallExpression' || node.callee.type !== 'Identifier') {
+    return false;
+  }
+
+  if (node.callee.name === 'signal' || signalImports.has(node.callee.name)) {
+    trackOperation(perfKey, 'signalCreationFound');
+    return true;
+  }
+
+  if (hasSignalsImport) {
+    const isSignalHook = [
+      'useSignal',
+      'useComputed',
+      'useSignalEffect',
+      'useSignalState',
+      'useSignalRef',
+    ].includes(node.callee.name);
+
+    if (isSignalHook) {
+      trackOperation(perfKey, `signalHookFound:${node.callee.name}`);
+    }
+
+    return isSignalHook;
+  }
+
+  return false;
+}
+
+function isSignalExpression(
+  node:
+    | TSESTree.ConstDeclaration
+    | TSESTree.LetOrVarDeclaredDeclaration
+    | TSESTree.LetOrVarNonDeclaredDeclaration
+    | TSESTree.Expression
+    | TSESTree.AssignmentPattern
+    | TSESTree.TSEmptyBodyFunctionExpression
+    | null,
+  context: RuleContext<MessageIds, Options>,
+  hasSignalsImport: boolean,
+  perfKey: string
+): boolean {
+  if (node === null) {
+    return false;
+  }
+
+  if (isSignalCreation(node, hasSignalsImport, perfKey)) {
+    return true;
+  }
+
+  if (
+    node.type === 'MemberExpression' &&
+    node.property.type === 'Identifier' &&
+    node.property.name.endsWith('Signal')
+  ) {
+    return true;
+  }
+
+  if (
+    node.type === 'MemberExpression' &&
+    node.property.type === 'Identifier' &&
+    node.property.name.endsWith('Signal')
+  ) {
+    return true;
+  }
+
+  if (node.type === 'Identifier') {
+    const variable = context.sourceCode.getScope(node).variables.find((v): boolean => {
+      return v.name === node.name;
+    });
+
+    if (variable) {
+      return variable.defs.some((def): boolean => {
+        if ('init' in def.node) {
+          return isSignalExpression(def.node.init, context, hasSignalsImport, perfKey);
+        }
+
+        return false;
+      });
+    }
+  }
+
+  return false;
+}
+
+const createRule = ESLintUtils.RuleCreator((name: string): string => {
+  return getRuleDocUrl(name);
+});
+
+const ruleName = 'no-non-signal-with-signal-suffix';
+
 export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
-  name: 'no-non-signal-with-signal-suffix',
+  name: ruleName,
   meta: {
     type: 'suggestion',
     fixable: 'code',
@@ -115,99 +212,25 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
           performance: {
             type: 'object',
             properties: {
-              maxTime: {
-                type: 'number',
-                minimum: 1,
-                default: 35,
-                description: 'Maximum time in milliseconds the rule should take to process a file',
-              },
-              maxNodes: {
-                type: 'number',
-                minimum: 100,
-                default: 1200,
-                description: 'Maximum number of AST nodes the rule should process',
-              },
-              maxMemory: {
-                type: 'number',
-                minimum: 1024 * 1024, // 1MB
-                default: 35 * 1024 * 1024, // 35MB
-                description: 'Maximum memory in bytes the rule should use',
-              },
+              maxTime: { type: 'number', minimum: 1 },
+              maxMemory: { type: 'number', minimum: 1 },
+              maxNodes: { type: 'number', minimum: 1 },
+              enableMetrics: { type: 'boolean' },
+              logMetrics: { type: 'boolean' },
               maxOperations: {
                 type: 'object',
-                properties: {
-                  signalCheck: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 400,
-                    description: 'Maximum number of signal checks',
-                  },
-                  identifierCheck: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 300,
-                    description: 'Maximum number of identifier checks',
-                  },
-                  scopeLookup: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 250,
-                    description: 'Maximum number of scope lookups',
-                  },
-                  typeCheck: {
-                    type: 'number',
-                    minimum: 1,
-                    default: 200,
-                    description: 'Maximum number of type checks',
-                  },
-                },
-                additionalProperties: false,
-              },
-              enableMetrics: {
-                type: 'boolean',
-                default: false,
-                description: 'Whether to enable detailed performance metrics',
-              },
-              logMetrics: {
-                type: 'boolean',
-                default: false,
-                description: 'Whether to log performance metrics to console',
+                properties: Object.fromEntries(
+                  Object.entries(PerformanceOperations).map(([key]) => [
+                    key,
+                    { type: 'number', minimum: 1 },
+                  ])
+                ),
               },
             },
             additionalProperties: false,
           },
         },
         additionalProperties: false,
-      },
-    ],
-    defaultOptions: [
-      {
-        ignorePattern: undefined,
-        performance: {
-          // Time and resource limits
-          maxTime: 35, // ms
-          maxNodes: 1200, // Maximum AST nodes to process
-          maxMemory: 35 * 1024 * 1024, // 35MB
-
-          // Operation-specific limits
-          maxOperations: {
-            signalCheck: 400, // Maximum number of signal checks
-            identifierResolution: 300, // Maximum number of identifier resolutions
-            scopeLookup: 250, // Maximum number of scope lookups
-            typeCheck: 200, // Maximum number of type checks
-          },
-
-          // Metrics and logging
-          enableMetrics: false, // Whether to enable detailed performance metrics
-          logMetrics: false, // Whether to log performance metrics to console
-        },
-        signalNames: ['signal', 'useSignal', 'createSignal'],
-        severity: {
-          variableWithSignalSuffixNotSignal: 'error',
-          parameterWithSignalSuffixNotSignal: 'error',
-          propertyWithSignalSuffixNotSignal: 'error',
-        },
-        ignorePatterns: undefined,
       },
     ],
     messages: {
@@ -233,53 +256,25 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
         parameterWithSignalSuffixNotSignal: 'error',
         propertyWithSignalSuffixNotSignal: 'error',
       },
-      performance: {
-        maxTime: 35,
-        maxNodes: 1200,
-        maxMemory: 35 * 1024 * 1024,
-        maxOperations: {
-          signalCheck: 400,
-          identifierResolution: 300,
-          scopeLookup: 250,
-          typeCheck: 200,
-        },
-        enableMetrics: false,
-        logMetrics: false,
-      },
+      performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
-  create(context: Readonly<RuleContext<MessageIds, Options>>, [option = {}]) {
-    // Set up performance tracking for this rule with a unique key
-    const perfKey = `no-non-signal-with-signal-suffix:${context.filename}`;
+  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
+    const perfKey = `${ruleName}:${context.filename}`;
 
-    // Initialize performance budget with defaults
-    const perfBudget: PerformanceBudget = {
-      // Time and resource limits
-      maxTime: option.performance?.maxTime ?? 35, // ms
-      maxNodes: option.performance?.maxNodes ?? 1200,
-      maxMemory: option.performance?.maxMemory ?? 35 * 1024 * 1024, // 35MB
+    startPhase(perfKey, 'rule-init');
 
-      // Operation-specific limits
-      maxOperations: {
-        [PerformanceOperations.signalCheck]: option.performance?.maxOperations?.signalCheck ?? 400,
-        [PerformanceOperations.identifierResolution]:
-          option.performance?.maxOperations?.identifierResolution ?? 300,
-        [PerformanceOperations.scopeLookup]: option.performance?.maxOperations?.scopeLookup ?? 250,
-        [PerformanceOperations.typeCheck]: option.performance?.maxOperations?.typeCheck ?? 200,
-      },
+    const perf = createPerformanceTracker<Options>(perfKey, option.performance, context);
 
-      // Feature toggles
-      enableMetrics: option.performance?.enableMetrics ?? false,
-      logMetrics: option.performance?.logMetrics ?? false,
-    };
+    if (option.performance?.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance);
+    }
 
-    // Set up performance tracking
-    const perf = createPerformanceTracker<Options>(perfKey, perfBudget, context);
+    console.info(`Initializing rule for file: ${context.filename}`);
+    console.info('Rule configuration:', option);
 
-    // Track node processing
     let nodeCount = 0;
 
-    // Helper function to check if we should continue processing
     function shouldContinue(): boolean {
       nodeCount++;
 
@@ -293,145 +288,37 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
       return true;
     }
 
-    // Initialize rule
-    try {
-      startPhase(perfKey, 'rule-init');
-
-      // Record initial metrics
-      recordMetric(perfKey, 'signalNames', option.signalNames);
-      recordMetric(perfKey, 'ignorePatterns', option.ignorePatterns);
-      recordMetric(perfKey, 'performanceBudget', perfBudget);
-
-      endPhase(perfKey, 'rule-init');
-    } catch (error) {
-      if (error instanceof PerformanceLimitExceededError) {
-        context.report({
-          loc: { line: 1, column: 0 },
-          messageId: 'performanceLimitExceeded',
-          data: { message: error.message },
-        });
-        return {};
-      }
-      throw error; // Re-throw unexpected errors
-    }
-
     const ignorePattern = option?.ignorePattern ? new RegExp(option.ignorePattern) : null;
-
-    const signalImports = new Set<string>();
 
     let hasSignalsImport = false;
 
-    function isSignalCreation(
-      node:
-        | TSESTree.ConstDeclaration
-        | TSESTree.LetOrVarDeclaredDeclaration
-        | TSESTree.LetOrVarNonDeclaredDeclaration
-        | TSESTree.AssignmentPattern
-        | TSESTree.TSEmptyBodyFunctionExpression
-        | TSESTree.Expression
-    ): boolean {
-      trackOperation(perfKey, 'isSignalCreation');
+    recordMetric(perfKey, 'signalNames', option.signalNames);
+    recordMetric(perfKey, 'ignorePatterns', option.ignorePatterns);
+    recordMetric(perfKey, 'performanceBudget', option.performance);
 
-      if (node.type !== 'CallExpression' || node.callee.type !== 'Identifier') {
-        return false;
-      }
-
-      const signalName = node.callee.name;
-
-      if (signalName === 'signal' || signalImports.has(signalName)) {
-        trackOperation(perfKey, 'signalCreationFound');
-        return true;
-      }
-
-      if (hasSignalsImport) {
-        const isSignalHook = [
-          'useSignal',
-          'useComputed',
-          'useSignalEffect',
-          'useSignalState',
-          'useSignalRef',
-        ].includes(signalName);
-
-        if (isSignalHook) {
-          trackOperation(perfKey, `signalHookFound:${signalName}`);
-        }
-
-        return isSignalHook;
-      }
-
-      return false;
-    }
-
-    function isSignalExpression(
-      node:
-        | TSESTree.ConstDeclaration
-        | TSESTree.LetOrVarDeclaredDeclaration
-        | TSESTree.LetOrVarNonDeclaredDeclaration
-        | TSESTree.Expression
-        | TSESTree.AssignmentPattern
-        | TSESTree.TSEmptyBodyFunctionExpression
-        | null
-    ): boolean {
-      if (node === null) {
-        return false;
-      }
-
-      if (isSignalCreation(node)) {
-        return true;
-      }
-
-      if (
-        node.type === 'MemberExpression' &&
-        node.property.type === 'Identifier' &&
-        node.property.name.endsWith('Signal')
-      ) {
-        return true;
-      }
-
-      if (
-        node.type === 'MemberExpression' &&
-        node.property.type === 'Identifier' &&
-        node.property.name.endsWith('Signal')
-      ) {
-        return true;
-      }
-
-      if (node.type === 'Identifier') {
-        const variable = context.sourceCode.getScope(node).variables.find((v): boolean => {
-          return v.name === node.name;
-        });
-
-        if (variable) {
-          return variable.defs.some((def): boolean => {
-            if ('init' in def.node) {
-              return isSignalExpression(def.node.init);
-            }
-
-            return false;
-          });
-        }
-      }
-
-      return false;
-    }
+    endPhase(perfKey, 'rule-init');
 
     return {
       '*': (node: TSESTree.Node): void => {
-        try {
-          perf.trackNode(node);
-        } catch (error) {
-          if (error instanceof PerformanceLimitExceededError) {
-            trackOperation(perfKey, 'nodeTrackingSkipped');
-          }
+        if (!perf) {
+          throw new Error('Performance tracker not initialized');
         }
-      },
-      ImportDeclaration(node: TSESTree.ImportDeclaration): void {
+
         if (!shouldContinue()) {
           return;
         }
 
         perf.trackNode(node);
 
+        if (
+          node.type === 'CallExpression' ||
+          node.type === 'MemberExpression' ||
+          node.type === 'Identifier'
+        ) {
+          trackOperation(perfKey, `${node.type}Processing`);
+        }
+      },
+      ImportDeclaration(node: TSESTree.ImportDeclaration): void {
         startPhase(perfKey, 'import-declaration');
 
         if (node.source.value === '@preact/signals-react') {
@@ -454,42 +341,48 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
       },
 
       VariableDeclarator(node: TSESTree.VariableDeclarator): void {
-        if (!shouldContinue()) {
-          return;
-        }
-
-        perf.trackNode(node);
-
         startPhase(perfKey, 'variable-declarator');
+
         trackOperation(perfKey, 'variableCheck');
 
         try {
           if (node.id.type !== 'Identifier') {
             endPhase(perfKey, 'variable-declarator');
+
             return;
           }
 
           const varName = node.id.name;
           if (!varName.endsWith('Signal')) {
             endPhase(perfKey, 'variable-declarator');
+
             return;
           }
 
           if (ignorePattern?.test(varName)) {
             trackOperation(perfKey, 'ignoredByPattern');
+
             endPhase(perfKey, 'variable-declarator');
+
             return;
           }
 
-          if (node.init !== null && isSignalExpression(node.init)) {
+          if (
+            node.init !== null &&
+            isSignalExpression(node.init, context, hasSignalsImport, perfKey)
+          ) {
             trackOperation(perfKey, 'validSignalFound');
+
             endPhase(perfKey, 'variable-declarator');
+
             return;
           }
 
           if ('typeAnnotation' in node.id && node.id.typeAnnotation) {
             trackOperation(perfKey, 'hasTypeAnnotation');
+
             endPhase(perfKey, 'variable-declarator');
+
             return;
           }
 
@@ -529,18 +422,13 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
       'FunctionDeclaration, FunctionExpression, ArrowFunctionExpression'(
         node: TSESTree.Node
       ): void {
-        if (!shouldContinue()) {
-          return;
-        }
-
-        perf.trackNode(node);
-
         startPhase(perfKey, 'function-declaration');
         trackOperation(perfKey, 'parameterCheck');
 
         try {
           if (!('params' in node) || !node.params || !Array.isArray(node.params)) {
             endPhase(perfKey, 'function-declaration');
+
             return;
           }
 
@@ -615,12 +503,6 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
       },
 
       Property(node: TSESTree.Property): void {
-        if (!shouldContinue()) {
-          return;
-        }
-
-        perf.trackNode(node);
-
         startPhase(perfKey, 'property');
 
         trackOperation(perfKey, 'propertyCheck');
@@ -634,7 +516,7 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
             if (
               node.shorthand &&
               node.value.type === 'Identifier' &&
-              isSignalExpression(node.value)
+              isSignalExpression(node.value, context, hasSignalsImport, perfKey)
             ) {
               trackOperation(perfKey, 'validSignalFound');
               endPhase(perfKey, 'property');
@@ -647,7 +529,7 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
               return;
             }
 
-            if (isSignalExpression(node.value)) {
+            if (isSignalExpression(node.value, context, hasSignalsImport, perfKey)) {
               trackOperation(perfKey, 'validSignalFound');
               endPhase(perfKey, 'property');
               return;

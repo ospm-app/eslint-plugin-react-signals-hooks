@@ -1,5 +1,5 @@
 import { ESLintUtils, type TSESTree } from '@typescript-eslint/utils';
-import type { Scope } from '@typescript-eslint/utils/ts-eslint';
+import type { RuleContext, Scope } from '@typescript-eslint/utils/ts-eslint';
 // import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 // import { createPerformanceTracker } from '../utils/performance';
 
@@ -27,7 +27,7 @@ type Options = [
     maxDistance?: number;
 
     /**
-     * Performance tuning options
+     * Performance tuning option
      */
     performance?: {
       /**
@@ -91,8 +91,8 @@ export const stateColocation = createRule<Options, MessageIds>({
       },
     },
   ],
-  create(context, [options = {}]) {
-    const { maxDistance = 20, ignoreInHooks = true, ignoreContextState = true } = options;
+  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
+    const { maxDistance = 20, ignoreInHooks = true, ignoreContextState = true } = option;
 
     // Track state declarations and their usages
     const stateDeclarations = new Map<
