@@ -60,14 +60,14 @@ function isSignalCreation(
   hasSignalsImport: boolean,
   perfKey: string
 ): boolean {
-  trackOperation(perfKey, 'isSignalCreation');
+  trackOperation(perfKey, PerformanceOperations.isSignalCreation);
 
   if (node.type !== 'CallExpression' || node.callee.type !== 'Identifier') {
     return false;
   }
 
   if (node.callee.name === 'signal' || signalImports.has(node.callee.name)) {
-    trackOperation(perfKey, 'signalCreationFound');
+    trackOperation(perfKey, PerformanceOperations.signalCreationFound);
     return true;
   }
 
@@ -81,7 +81,7 @@ function isSignalCreation(
     ].includes(node.callee.name);
 
     if (isSignalHook) {
-      trackOperation(perfKey, `signalHookFound:${node.callee.name}`);
+      trackOperation(perfKey, PerformanceOperations[`signalHookFound:${node.callee.name}`]);
     }
 
     return isSignalHook;
@@ -260,14 +260,14 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
     },
   ],
   create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
-    const perfKey = `${ruleName}:${context.filename}`;
+    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
     startPhase(perfKey, 'rule-init');
 
     const perf = createPerformanceTracker<Options>(perfKey, option.performance, context);
 
     if (option.performance?.enableMetrics === true) {
-      startTracking(context, perfKey, option.performance);
+      startTracking(context, perfKey, option.performance, ruleName);
     }
 
     console.info(`Initializing rule for file: ${context.filename}`);
@@ -280,7 +280,7 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
 
       // Check if we've exceeded the node budget
       if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
-        trackOperation(perfKey, 'nodeBudgetExceeded');
+        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
       }
@@ -300,10 +300,6 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
 
     return {
       '*': (node: TSESTree.Node): void => {
-        if (!perf) {
-          throw new Error('Performance tracker not initialized');
-        }
-
         if (!shouldContinue()) {
           return;
         }
@@ -315,14 +311,14 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
           node.type === 'MemberExpression' ||
           node.type === 'Identifier'
         ) {
-          trackOperation(perfKey, `${node.type}Processing`);
+          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
         }
       },
       ImportDeclaration(node: TSESTree.ImportDeclaration): void {
         startPhase(perfKey, 'import-declaration');
 
         if (node.source.value === '@preact/signals-react') {
-          trackOperation(perfKey, 'signalsImportFound');
+          trackOperation(perfKey, PerformanceOperations.signalsImportFound);
           hasSignalsImport = true;
 
           node.specifiers.forEach(
@@ -330,7 +326,10 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
               specifier: ImportSpecifier | ImportDefaultSpecifier | ImportNamespaceSpecifier
             ): void => {
               if (specifier.type === 'ImportSpecifier' && 'name' in specifier.imported) {
-                trackOperation(perfKey, `signalImport:${specifier.imported.name}`);
+                trackOperation(
+                  perfKey,
+                  PerformanceOperations[`signalImport:${specifier.imported.name}`]
+                );
                 signalImports.add(specifier.imported.name);
               }
             }
@@ -343,7 +342,7 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
       VariableDeclarator(node: TSESTree.VariableDeclarator): void {
         startPhase(perfKey, 'variable-declarator');
 
-        trackOperation(perfKey, 'variableCheck');
+        trackOperation(perfKey, PerformanceOperations.variableCheck);
 
         try {
           if (node.id.type !== 'Identifier') {
@@ -360,7 +359,7 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
           }
 
           if (ignorePattern?.test(varName)) {
-            trackOperation(perfKey, 'ignoredByPattern');
+            trackOperation(perfKey, PerformanceOperations.ignoredByPattern);
 
             endPhase(perfKey, 'variable-declarator');
 
@@ -371,7 +370,7 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
             node.init !== null &&
             isSignalExpression(node.init, context, hasSignalsImport, perfKey)
           ) {
-            trackOperation(perfKey, 'validSignalFound');
+            trackOperation(perfKey, PerformanceOperations.validSignalFound);
 
             endPhase(perfKey, 'variable-declarator');
 
@@ -379,7 +378,7 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
           }
 
           if ('typeAnnotation' in node.id && node.id.typeAnnotation) {
-            trackOperation(perfKey, 'hasTypeAnnotation');
+            trackOperation(perfKey, PerformanceOperations.hasTypeAnnotation);
 
             endPhase(perfKey, 'variable-declarator');
 
@@ -387,7 +386,7 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
           }
 
           const newName = varName.replace(/Signal$/, '');
-          trackOperation(perfKey, 'reportingIssue');
+          trackOperation(perfKey, PerformanceOperations.reportingIssue);
 
           context.report({
             node: node.id,
@@ -423,7 +422,7 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
         node: TSESTree.Node
       ): void {
         startPhase(perfKey, 'function-declaration');
-        trackOperation(perfKey, 'parameterCheck');
+        trackOperation(perfKey, PerformanceOperations.parameterCheck);
 
         try {
           if (!('params' in node) || !node.params || !Array.isArray(node.params)) {
@@ -443,7 +442,7 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
               }
 
               if (ignorePattern?.test(param.name)) {
-                trackOperation(perfKey, 'ignoredByPattern');
+                trackOperation(perfKey, PerformanceOperations.ignoredByPattern);
                 return;
               }
 
@@ -505,7 +504,7 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
       Property(node: TSESTree.Property): void {
         startPhase(perfKey, 'property');
 
-        trackOperation(perfKey, 'propertyCheck');
+        trackOperation(perfKey, PerformanceOperations.propertyCheck);
 
         try {
           if (
@@ -518,25 +517,25 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
               node.value.type === 'Identifier' &&
               isSignalExpression(node.value, context, hasSignalsImport, perfKey)
             ) {
-              trackOperation(perfKey, 'validSignalFound');
+              trackOperation(perfKey, PerformanceOperations.validSignalFound);
               endPhase(perfKey, 'property');
               return;
             }
 
             if (ignorePattern?.test(node.key.name)) {
-              trackOperation(perfKey, 'ignoredByPattern');
+              trackOperation(perfKey, PerformanceOperations.ignoredByPattern);
               endPhase(perfKey, 'property');
               return;
             }
 
             if (isSignalExpression(node.value, context, hasSignalsImport, perfKey)) {
-              trackOperation(perfKey, 'validSignalFound');
+              trackOperation(perfKey, PerformanceOperations.validSignalFound);
               endPhase(perfKey, 'property');
               return;
             }
 
             const newName = node.key.name.replace(/Signal$/, '');
-            trackOperation(perfKey, 'reportingIssue');
+            trackOperation(perfKey, PerformanceOperations.reportingIssue);
 
             context.report({
               node: node.key,
@@ -562,10 +561,6 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
       },
 
       'Program:exit'(node: TSESTree.Program): void {
-        if (!perf) {
-          throw new Error('Performance tracker not initialized');
-        }
-
         startPhase(perfKey, 'programExit');
 
         perf.trackNode(node);

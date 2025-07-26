@@ -1,17 +1,24 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
-import { DEFAULT_PERFORMANCE_BUDGET } from './utils/performance.js';
-import { PerformanceOperations } from './utils/performance-constants.js';
 import type { PerformanceBudget } from './utils/types.js';
+import {
+  createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
+  startPhase,
+  startTracking,
+  trackOperation,
+} from './utils/performance.js';
+import { PerformanceOperations } from './utils/performance-constants.js';
+import { getRuleDocUrl } from './utils/urls.js';
+
+type Option = {
+  performance: PerformanceBudget;
+};
+
+type Options = [Option];
 
 type MessageIds = 'useValueInNonJSX';
-
-type Options = [
-  {
-    performance?: PerformanceBudget | undefined;
-  },
-];
 
 function isInJSXContext(node: TSESTree.Node): boolean {
   let parent: TSESTree.Node | undefined = node.parent;
@@ -42,17 +49,19 @@ function isInJSXAttribute(node: TSESTree.Node): boolean {
 }
 
 const createRule = ESLintUtils.RuleCreator((name: string): string => {
-  return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}`;
+  return getRuleDocUrl(name);
 });
 
+const ruleName = 'prefer-signal-reads';
+
 export const preferSignalReadsRule = createRule<Options, MessageIds>({
-  name: 'prefer-signal-reads',
+  name: ruleName,
   meta: {
     type: 'suggestion',
     hasSuggestions: true,
     docs: {
       description: 'Enforce using .value when reading signal values in non-JSX contexts',
-      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/prefer-signal-reads',
+      url: getRuleDocUrl(ruleName),
     },
     messages: {
       useValueInNonJSX: 'Use .value to read the current value of the signal in non-JSX context',
@@ -92,10 +101,49 @@ export const preferSignalReadsRule = createRule<Options, MessageIds>({
       performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
-  create(context: Readonly<RuleContext<MessageIds, Options>>): ESLintUtils.RuleListener {
+  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
+    const perfKey = `${ruleName}:${context.filename}`;
+
+    startPhase(perfKey, 'rule-init');
+
+    const perf = createPerformanceTracker(perfKey, option.performance, context);
+
+    if (option.performance?.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    console.info(`Initializing rule for file: ${context.filename}`);
+    console.info('Rule configuration:', option);
+
+    let nodeCount = 0;
+
+    function shouldContinue(): boolean {
+      nodeCount++;
+
+      // Check if we've exceeded the node budget
+      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+
+        return false;
+      }
+
+      return true;
+    }
+
     let isInJSX = false;
 
     return {
+      '*': (node: TSESTree.Node): void => {
+        if (!shouldContinue()) {
+          return;
+        }
+
+        perf.trackNode(node);
+
+        if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
+          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        }
+      },
       JSXElement(): void {
         isInJSX = true;
       },

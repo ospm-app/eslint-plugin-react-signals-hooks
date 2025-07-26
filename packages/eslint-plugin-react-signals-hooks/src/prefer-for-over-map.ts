@@ -25,7 +25,6 @@ const REACT_HOOKS = new Set([
   'useContext',
 ]);
 
-// Cache for signal detection to improve performance
 const signalMapCache = new WeakMap<
   TSESTree.CallExpression,
   { signalName: string; hasValueAccess: boolean } | null
@@ -159,21 +158,17 @@ const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return getRuleDocUrl(name);
 });
 
-/**
- * ESLint rule: prefer-for-over-map
- *
- * Prefers For component over .map() for rendering signal arrays.
- * This provides better performance for reactive array rendering.
- */
+const ruleName = 'prefer-for-over-map';
+
 export const preferForOverMapRule = createRule<Options, MessageIds>({
-  name: 'prefer-for-over-map',
+  name: ruleName,
   meta: {
     type: 'suggestion',
     fixable: 'code',
     hasSuggestions: true,
     docs: {
       description: 'Prefer For component over .map() for rendering signal arrays',
-      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/prefer-for-over-map',
+      url: getRuleDocUrl(ruleName),
     },
     messages: {
       preferForOverMap:
@@ -216,13 +211,9 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
     },
   ],
   create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
-    const perf = createPerformanceTracker(
-      PerformanceOperations.signalAccess,
-      option.performance,
-      context
-    );
+    const perfKey = `${ruleName}:${context.filename}${Date.now()}`;
 
-    const sourceCode = context.sourceCode;
+    const perf = createPerformanceTracker(perfKey, option.performance, context);
 
     let inJSX = false;
     let jsxDepth = 0;
@@ -235,17 +226,19 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
 
     function checkForImport(): boolean {
       if (importCheckCache === null) {
-        importCheckCache = sourceCode.ast.body.some((node): boolean => {
-          return (
-            node.type === 'ImportDeclaration' &&
-            node.source.value === '@preact/signals-react' &&
-            node.specifiers.some((s): boolean => {
-              return (
-                s.type === 'ImportSpecifier' && 'name' in s.imported && s.imported.name === 'For'
-              );
-            })
-          );
-        });
+        importCheckCache = context.sourceCode.ast.body.some(
+          (node: TSESTree.ProgramStatement): boolean => {
+            return (
+              node.type === 'ImportDeclaration' &&
+              node.source.value === '@preact/signals-react' &&
+              node.specifiers.some((s): boolean => {
+                return (
+                  s.type === 'ImportSpecifier' && 'name' in s.imported && s.imported.name === 'For'
+                );
+              })
+            );
+          }
+        );
       }
 
       hasForImport = importCheckCache;
@@ -253,7 +246,6 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
       return hasForImport;
     }
 
-    // Initial check
     checkForImport();
 
     function isInHookContext(): boolean {
@@ -320,7 +312,7 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
           node,
           signalMapInfo.signalName,
           signalMapInfo.hasValueAccess,
-          sourceCode
+          context.sourceCode
         );
 
         if (!replacement) {
@@ -335,7 +327,7 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
               node,
               signalMapInfo.signalName,
               signalMapInfo.hasValueAccess,
-              sourceCode
+              context.sourceCode
             );
 
             if (!replacementResult) {
@@ -349,7 +341,7 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
             if (!hasForImport) {
               const forImport = "import { For } from '@preact/signals-react';\n";
 
-              const firstImport = sourceCode.ast.body.find(
+              const firstImport = context.sourceCode.ast.body.find(
                 (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
                   return n.type === 'ImportDeclaration';
                 }
@@ -358,7 +350,7 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
               if (firstImport) {
                 fixes.push(fixer.insertTextBefore(firstImport, forImport));
               } else {
-                fixes.push(fixer.insertTextBefore(sourceCode.ast.body[0], forImport));
+                fixes.push(fixer.insertTextBefore(context.sourceCode.ast.body[0], forImport));
               }
             }
 
@@ -372,7 +364,7 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
                   node,
                   signalMapInfo.signalName,
                   signalMapInfo.hasValueAccess,
-                  sourceCode
+                  context.sourceCode
                 );
 
                 if (!replacementResult) {
@@ -387,7 +379,7 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
                 if (!checkForImport()) {
                   const forImport = "import { For } from '@preact/signals-react';\n";
 
-                  const firstImport = sourceCode.ast.body.find(
+                  const firstImport = context.sourceCode.ast.body.find(
                     (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
                       return n.type === 'ImportDeclaration';
                     }
@@ -396,7 +388,7 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
                   if (firstImport) {
                     fixes.push(fixer.insertTextBefore(firstImport, forImport));
                   } else {
-                    fixes.push(fixer.insertTextBefore(sourceCode.ast.body[0], forImport));
+                    fixes.push(fixer.insertTextBefore(context.sourceCode.ast.body[0], forImport));
                   }
                 }
 

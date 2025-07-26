@@ -43,20 +43,19 @@ const phaseStack: Array<{
 
 export function startTracking<Options extends unknown[]>(
   context: RuleContext<string, Options>,
-  ruleName: string,
-  budget?: PerformanceBudget
-): string {
+  perfKey: string,
+  budget: PerformanceBudget,
+  ruleName: string
+): void {
   // Validate performance budget if provided
   if (budget) {
-    const validation = validatePerformanceOptions(budget, ruleName);
+    const validation = validatePerformanceOptions(budget, perfKey);
 
     if (!validation.valid) {
       // Log validation errors but don't fail
-      console.warn(`[${ruleName}] Invalid performance options:`, validation.errors.join('; '));
+      console.warn(`[${perfKey}] Invalid performance options:`, validation.errors.join('; '));
     }
   }
-
-  const key = `${ruleName}:${context.filename}:${Date.now()}`;
 
   const startTime = performance.now();
 
@@ -78,14 +77,14 @@ export function startTracking<Options extends unknown[]>(
     memoryDelta: 0,
   };
 
-  performanceMetrics.set(key, initialMetrics);
+  performanceMetrics.set(perfKey, initialMetrics);
 
   // Start with an initial phase if metrics are enabled
-  if (!budget?.enableMetrics) {
-    startPhase(key, 'total');
+  if (budget?.enableMetrics !== true) {
+    startPhase(perfKey, 'total');
   }
 
-  return key;
+  return;
 }
 
 function incrementNodeCount(key: string, nodeType?: string): void {

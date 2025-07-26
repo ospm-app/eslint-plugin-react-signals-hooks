@@ -49,6 +49,6 @@ export const PerformanceOperations = {
   markNodeFailed: 'markNodeFailed',
   nodeBudgetExceeded: 'nodeBudgetExceeded',
   [`${AST_NODE_TYPES}Processing`]: `${AST_NODE_TYPES}Processing`,
-} as const;
+};
 
 export type PerformanceOperation = keyof typeof PerformanceOperations;

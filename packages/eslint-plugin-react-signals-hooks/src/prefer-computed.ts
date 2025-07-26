@@ -11,7 +11,7 @@ import {
   PerformanceLimitExceededError,
 } from './utils/performance.js';
 import { getRuleDocUrl } from './utils/urls.js';
-import type { PerformanceBudget } from './utils/types.js';
+import type { PerformanceBudget, PerformanceMetrics } from './utils/types.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 
 type MessageIds =
@@ -20,7 +20,7 @@ type MessageIds =
   | 'suggestComputed'
   | 'addComputedImport'
   | 'suggestAddComputedImport'
-  | 'perf';
+  | 'performanceLimitExceeded';
 
 type Options = [
   {
@@ -83,19 +83,17 @@ const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return getRuleDocUrl(name);
 });
 
-/**
- * ESLint rule: prefer-computed
- *
- * Prefers computed() over useMemo for signal-derived values.
- * This provides better performance and automatic dependency tracking for signal computations.
- */
+const performanceMetrics = new Map<string, PerformanceMetrics>();
+
+const ruleName = 'prefer-computed';
+
 export const preferComputedRule = createRule<Options, MessageIds>({
-  name: 'prefer-computed',
+  name: ruleName,
   meta: {
     type: 'suggestion',
     docs: {
       description: 'Prefer computed() over useMemo for signal-derived values',
-      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/prefer-computed',
+      url: getRuleDocUrl(ruleName),
     },
     fixable: 'code',
     hasSuggestions: true,
@@ -107,7 +105,8 @@ export const preferComputedRule = createRule<Options, MessageIds>({
       suggestComputed: 'Replace `useMemo` with `computed()`',
       addComputedImport: 'Add `computed` import from @preact/signals-react',
       suggestAddComputedImport: 'Add missing import for `computed`',
-      perf: 'Performance limit exceeded',
+      performanceLimitExceeded:
+        'Performance limit exceeded: {{message}}. Some checks may have been skipped.',
     },
     schema: [
       {
@@ -144,27 +143,9 @@ export const preferComputedRule = createRule<Options, MessageIds>({
     },
   ],
   create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
-    // Set up performance tracking with a unique key
-    const filePath = context.filename;
-    const perfKey = `prefer-computed:${filePath}:${Date.now()}`;
+    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
-    // Initialize performance tracking
-    const perf = createPerformanceTracker(
-      PerformanceOperations.signalAccess,
-      option.performance,
-      context
-    );
-
-    // Track rule initialization metrics
-    const metrics = {
-      totalSignalChecks: 0,
-      useMemoCalls: 0,
-      signalDependenciesFound: 0,
-      importChecks: 0,
-      fixOperations: 0,
-      lastSignalCheckTime: 0,
-      signalCheckIntervals: [] as number[],
-    };
+    const perf = createPerformanceTracker(perfKey, option.performance, context);
 
     let hasComputedImport = false;
     let program: TSESTree.Program | null = null;
@@ -178,11 +159,10 @@ export const preferComputedRule = createRule<Options, MessageIds>({
 
         try {
           program = node;
-          metrics.importChecks++;
 
           hasComputedImport = program.body.some(
             (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
-              trackOperation(perfKey, 'importCheck');
+              trackOperation(perfKey, PerformanceOperations.importCheck);
 
               return (
                 n.type === 'ImportDeclaration' &&
@@ -197,18 +177,17 @@ export const preferComputedRule = createRule<Options, MessageIds>({
             }
           );
 
-          recordMetric(perfKey, 'importChecks', metrics.importChecks);
-
           endPhase(perfKey, 'program-analysis');
-        } catch (error) {
-          // Handle performance-related errors
+        } catch (error: unknown) {
           if (error instanceof PerformanceLimitExceededError) {
             performanceBudgetExceeded = true;
+
             context.report({
               loc: { line: 1, column: 0 },
-              messageId: 'perf',
+              messageId: 'performanceLimitExceeded',
               data: {
-                message: `Performance limit exceeded during program analysis: ${error.message}`,
+                message: error.message,
+                ruleName,
               },
             });
           } else {
@@ -224,10 +203,29 @@ export const preferComputedRule = createRule<Options, MessageIds>({
           return;
         }
 
-        metrics.useMemoCalls++;
-        trackOperation(perfKey, 'callExpressionCheck');
+        // Track the number of useMemo calls analyzed
+        recordMetric(perfKey, 'useMemoCallsAnalyzed', 1);
 
-        // Basic validation
+        if (performanceBudgetExceeded) {
+          return;
+        }
+
+        trackOperation(perfKey, PerformanceOperations.callExpressionCheck);
+
+        // Track the depth of nested call expressions
+        let depth = 0;
+
+        let parent: TSESTree.Node | undefined = node.parent;
+
+        while (parent) {
+          if (parent.type === 'CallExpression') depth++;
+
+          parent = parent.parent;
+        }
+
+        // Track the maximum nested call depth
+        recordMetric(perfKey, 'currentCallDepth', depth);
+
         if (
           node.callee.type !== 'Identifier' ||
           node.callee.name !== 'useMemo' ||
@@ -242,53 +240,47 @@ export const preferComputedRule = createRule<Options, MessageIds>({
         try {
           const signalDeps = [];
 
-          // Process dependencies with performance tracking
           for (const dep of node.arguments[1].elements) {
-            trackOperation(perfKey, 'dependencyCheck');
-            metrics.totalSignalChecks++;
+            trackOperation(perfKey, PerformanceOperations.dependencyCheck);
 
             const depInfo = getSignalDependencyInfo(dep);
+
             if (depInfo) {
               signalDeps.push(depInfo);
-              metrics.signalDependenciesFound++;
-
-              // Track timing between signal checks
-              const now = performance.now();
-              if (metrics.lastSignalCheckTime > 0) {
-                metrics.signalCheckIntervals.push(now - metrics.lastSignalCheckTime);
-              }
-              metrics.lastSignalCheckTime = now;
-            }
-
-            // Check performance budget periodically
-            if (metrics.totalSignalChecks % 10 === 0) {
-              trackOperation(perfKey, 'batch-dependency-check');
+              recordMetric(perfKey, 'totalSignalDependencies', signalDeps.length);
             }
           }
-
-          recordMetric(perfKey, 'totalSignalChecks', metrics.totalSignalChecks);
-          recordMetric(perfKey, 'signalDependenciesFound', metrics.signalDependenciesFound);
 
           if (signalDeps.length === 0) {
             endPhase(perfKey, 'signal-analysis');
+
             return;
           }
 
-          // Get unique signal names for the message
-          const uniqueSignals = [
-            ...new Set(signalDeps.map((d: SignalDependencyInfo): string => d.signalName)),
-          ];
+          recordMetric(perfKey, 'useMemoCallsWithSignals', 1);
 
-          trackOperation(perfKey, 'report-generation');
+          const uniqueSignalNames = [...new Set(signalDeps.map((s) => s.signalName))];
+
+          const hasMultipleSignals = uniqueSignalNames.length > 1;
+
+          recordMetric(perfKey, 'uniqueSignalsPerUseMemo', uniqueSignalNames.length);
+          if (hasMultipleSignals) {
+            recordMetric(perfKey, 'useMemoWithMultipleSignals', 1);
+          }
+
+          const suggestionType = hasMultipleSignals ? 'multipleSignals' : 'singleSignal';
+          recordMetric(perfKey, `suggestions.${suggestionType}`, 1);
+
+          trackOperation(perfKey, PerformanceOperations.reportGeneration);
 
           context.report({
             node,
-            messageId:
-              uniqueSignals.length === 1 ? 'preferComputedWithSignal' : 'preferComputedWithSignals',
+            messageId: hasMultipleSignals
+              ? 'preferComputedWithSignals'
+              : 'preferComputedWithSignal',
             data: {
-              signalName: uniqueSignals[0],
-              signalNames: uniqueSignals.join(', '),
-              count: uniqueSignals.length,
+              signalName: uniqueSignalNames[0],
+              signalNames: uniqueSignalNames.join(', '),
             },
             suggest: [
               {
@@ -316,11 +308,22 @@ export const preferComputedRule = createRule<Options, MessageIds>({
                     node,
                     messageId: 'suggestAddComputedImport',
                     fix: (fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null => {
-                      const signalsImport = getOrCreateComputedImport(context.sourceCode, program);
+                      const computedImport = getOrCreateComputedImport(
+                        context.getSourceCode(),
+                        program
+                      );
+                      const hasComputedImport = !!computedImport;
 
-                      if (signalsImport) {
+                      // Track computed import status
+                      recordMetric(
+                        perfKey,
+                        'computedImportStatus',
+                        hasComputedImport ? 'present' : 'missing'
+                      );
+
+                      if (computedImport) {
                         // Check if 'computed' is already imported
-                        const hasComputed = signalsImport.specifiers.some(
+                        const hasComputed = computedImport.specifiers.some(
                           (s: TSESTree.ImportClause): boolean => {
                             return (
                               s.type === 'ImportSpecifier' &&
@@ -334,22 +337,21 @@ export const preferComputedRule = createRule<Options, MessageIds>({
                           return null;
                         }
 
-                        // Add 'computed' to existing import
-                        const lastSpecifier =
-                          signalsImport.specifiers[signalsImport.specifiers.length - 1];
-
-                        return [fixer.insertTextAfter(lastSpecifier, ', computed')];
+                        return [
+                          fixer.insertTextAfter(
+                            computedImport.specifiers[computedImport.specifiers.length - 1],
+                            ', computed'
+                          ),
+                        ];
                       }
 
-                      const before = program?.body[0];
-
-                      if (typeof before === 'undefined') {
+                      if (typeof program?.body[0] === 'undefined') {
                         return null;
                       }
                       // No existing import, add a new one at the top
                       return [
                         fixer.insertTextBefore(
-                          before,
+                          program.body[0],
                           "import { computed } from '@preact/signals-react';\n"
                         ),
                       ];
@@ -359,15 +361,16 @@ export const preferComputedRule = createRule<Options, MessageIds>({
               },
             ],
           });
-        } catch (error) {
-          // Handle performance-related errors
+        } catch (error: unknown) {
           if (error instanceof PerformanceLimitExceededError) {
             performanceBudgetExceeded = true;
+
             context.report({
               loc: { line: 1, column: 0 },
-              messageId: 'perf',
+              messageId: 'performanceLimitExceeded',
               data: {
-                message: `Performance limit exceeded during program analysis: ${error.message}`,
+                message: error.message,
+                ruleName,
               },
             });
           } else {
@@ -376,23 +379,104 @@ export const preferComputedRule = createRule<Options, MessageIds>({
         }
       },
 
-      // Handle program exit with metrics collection
       'Program:exit'(node: TSESTree.Node): void {
         perf.trackNode(node);
 
-        // Record final metrics
-        recordMetric(perfKey, 'useMemoCalls', metrics.useMemoCalls);
-        recordMetric(perfKey, 'totalSignalChecks', metrics.totalSignalChecks);
+        perf['Program:exit']();
 
-        if (metrics.signalCheckIntervals.length > 0) {
-          const avgInterval =
-            metrics.signalCheckIntervals.reduce((sum, interval) => sum + interval, 0) /
-            metrics.signalCheckIntervals.length;
-          recordMetric(perfKey, 'avgSignalCheckInterval', avgInterval);
+        // Record final metrics
+        if (!performanceBudgetExceeded) {
+          const metrics = performanceMetrics.get(perfKey);
+
+          if (metrics) {
+            const useMemoCallsAnalyzed =
+              typeof metrics.customMetrics?.useMemoCallsAnalyzed === 'number'
+                ? metrics.customMetrics.useMemoCallsAnalyzed
+                : 0;
+
+            const useMemoCallsWithSignals =
+              typeof metrics.customMetrics?.useMemoCallsWithSignals === 'number'
+                ? metrics.customMetrics.useMemoCallsWithSignals
+                : 0;
+
+            if (useMemoCallsAnalyzed > 0) {
+              const signalUsagePercentage = (useMemoCallsWithSignals / useMemoCallsAnalyzed) * 100;
+              recordMetric(
+                perfKey,
+                'signalUsagePercentage',
+                `${signalUsagePercentage.toFixed(2)}%`
+              );
+            }
+
+            // Record memory usage
+            const memoryUsage = process.memoryUsage();
+            recordMetric(perfKey, 'memory.heapUsed', memoryUsage.heapUsed);
+            recordMetric(perfKey, 'memory.heapTotal', memoryUsage.heapTotal);
+            recordMetric(perfKey, 'memory.rss', memoryUsage.rss);
+
+            // Record timing information
+            const totalTime = performance.now() - metrics.startTime;
+            recordMetric(perfKey, 'performance.totalTimeMs', totalTime);
+
+            // Record nodes per millisecond as a performance metric
+            if (totalTime > 0) {
+              const nodesPerMs = metrics.nodeCount / totalTime;
+              recordMetric(perfKey, 'performance.nodesPerMs', nodesPerMs.toFixed(2));
+            }
+          }
         }
 
-        // Delegate to the perf instance's Program:exit handler
-        perf['Program:exit']();
+        // Record final metrics
+        if (!performanceBudgetExceeded) {
+          const metrics = performanceMetrics.get(perfKey);
+
+          if (metrics) {
+            // Calculate and record some derived metrics
+            const useMemoCallsAnalyzed =
+              typeof metrics.customMetrics?.useMemoCallsAnalyzed === 'number'
+                ? metrics.customMetrics.useMemoCallsAnalyzed
+                : 0;
+
+            const useMemoCallsWithSignals =
+              typeof metrics.customMetrics?.useMemoCallsWithSignals === 'number'
+                ? metrics.customMetrics.useMemoCallsWithSignals
+                : 0;
+
+            if (useMemoCallsAnalyzed > 0) {
+              const signalUsagePercentage = (useMemoCallsWithSignals / useMemoCallsAnalyzed) * 100;
+
+              recordMetric(
+                perfKey,
+                'signalUsagePercentage',
+                `${signalUsagePercentage.toFixed(2)}%`
+              );
+            }
+
+            // Record memory usage
+            const memoryUsage = process.memoryUsage();
+            recordMetric(perfKey, 'heapUsed', memoryUsage.heapUsed);
+            recordMetric(perfKey, 'heapTotal', memoryUsage.heapTotal);
+            recordMetric(perfKey, 'rss', memoryUsage.rss);
+
+            // Record timing information
+            const totalTime = performance.now() - metrics.startTime;
+            recordMetric(perfKey, 'totalProcessingTimeMs', totalTime);
+
+            // Record nodes per millisecond as a performance metric
+            if (totalTime > 0) {
+              const nodesPerMs = metrics.nodeCount / totalTime;
+              recordMetric(perfKey, 'nodesProcessedPerMs', nodesPerMs.toFixed(2));
+            }
+          }
+        }
+
+        // Cleanup phase tracking
+        endPhase(perfKey, 'total');
+
+        // Log metrics if enabled
+        if (option.performance?.logMetrics) {
+          console.info(`Metrics for ${perfKey}:`, performanceMetrics.get(perfKey));
+        }
       },
     };
   },

@@ -152,7 +152,7 @@ function trackIdentifier(
 
   if (count === 0) {
     // Only count unique identifier resolutions
-    trackOperation(perfKey, 'identifierResolution');
+    trackOperation(perfKey, PerformanceOperations.identifierResolution);
   }
 }
 
@@ -305,7 +305,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
     if (option.performance?.enableMetrics === true) {
-      startTracking(context, perfKey, option.performance);
+      startTracking(context, perfKey, option.performance, ruleName);
     }
 
     console.info(`Initializing rule for file: ${context.filename}`);
@@ -318,7 +318,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
 
       // Check if we've exceeded the node budget
       if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
-        trackOperation(perfKey, 'nodeBudgetExceeded');
+        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
       }
@@ -326,7 +326,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
       return true;
     }
 
-    trackOperation(perfKey, 'ruleInit');
+    trackOperation(perfKey, PerformanceOperations.ruleInit);
 
     endPhase(perfKey, 'rule-init');
 
@@ -345,10 +345,10 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
 
     startPhase(perfKey, 'fileAnalysis');
 
-    trackOperation(perfKey, 'signalNames', signalNames.length);
+    trackOperation(perfKey, PerformanceOperations.signalNames, signalNames.length);
 
     if (isFileExempt) {
-      trackOperation(perfKey, 'fileExempt');
+      trackOperation(perfKey, PerformanceOperations.fileExempt);
 
       endPhase(perfKey, 'fileAnalysis');
 
@@ -362,10 +362,6 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
 
     return {
       '*': (node: TSESTree.Node): void => {
-        if (!perf) {
-          throw new Error('Performance tracker not initialized');
-        }
-
         if (!shouldContinue()) {
           return;
         }
@@ -377,15 +373,15 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           node.type === 'MemberExpression' ||
           node.type === 'Identifier'
         ) {
-          trackOperation(perfKey, `${node.type}Processing`);
+          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
         }
       },
 
       FunctionDeclaration(node: TSESTree.FunctionDeclaration): void {
-        trackOperation(perfKey, 'functionDeclaration');
+        trackOperation(perfKey, PerformanceOperations.functionDeclaration);
 
         if (node.id?.name && /^[A-Z]/.test(node.id.name)) {
-          trackOperation(perfKey, 'reactComponentRender');
+          trackOperation(perfKey, PerformanceOperations.reactComponentRender);
 
           inRenderContext = true;
 
@@ -399,7 +395,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
       },
 
       ArrowFunctionExpression(node: TSESTree.ArrowFunctionExpression): void {
-        trackOperation(perfKey, 'arrowFunction');
+        trackOperation(perfKey, PerformanceOperations.arrowFunction);
 
         if (
           node.parent?.type === 'VariableDeclarator' &&
@@ -407,7 +403,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           /^[A-Z]/.test(node.parent.id.name)
         ) {
           // This is a React component
-          trackOperation(perfKey, 'reactComponentArrow');
+          trackOperation(perfKey, PerformanceOperations.reactComponentArrow);
           inRenderContext = true;
 
           renderDepth++;
@@ -427,7 +423,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
         }
       },
       FunctionExpression(node: TSESTree.FunctionExpression): void {
-        trackOperation(perfKey, 'functionExpression');
+        trackOperation(perfKey, PerformanceOperations.functionExpression);
 
         functionDepth++;
 
@@ -437,7 +433,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           node.parent.id?.type === 'Identifier' &&
           /^[A-Z]/.test(node.parent.id.name)
         ) {
-          trackOperation(perfKey, 'reactComponentFunction');
+          trackOperation(perfKey, PerformanceOperations.reactComponentFunction);
 
           inRenderContext = true;
 
@@ -452,7 +448,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
         }
       },
       CallExpression(node: TSESTree.CallExpression): void {
-        trackOperation(perfKey, 'callExpression');
+        trackOperation(perfKey, PerformanceOperations.callExpression);
 
         if (
           node.callee.type === 'Identifier' &&
@@ -466,36 +462,36 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
             'computed', // @preact/signals-core computed
           ].includes(node.callee.name)
         ) {
-          trackOperation(perfKey, `hook:${node.callee.name}`);
+          trackOperation(perfKey, PerformanceOperations[`hook:${node.callee.name}`]);
 
           hookDepth++;
 
           if (hookDepth === 1) {
             inRenderContext = false;
 
-            trackOperation(perfKey, 'enteredHookContext');
+            trackOperation(perfKey, PerformanceOperations.enteredHookContext);
           }
         }
 
         if (node.callee.type === 'Identifier' && signalNames.includes(node.callee.name)) {
-          trackOperation(perfKey, 'signalFunctionCall');
+          trackOperation(perfKey, PerformanceOperations.signalFunctionCall);
 
           trackIdentifier(node.callee.name, perfKey, resolvedIdentifiers);
         }
       },
       AssignmentExpression(node: TSESTree.AssignmentExpression): void {
-        trackOperation(perfKey, 'assignmentExpression');
+        trackOperation(perfKey, PerformanceOperations.assignmentExpression);
 
         // Skip if not in a render context or inside hooks/functions
         if (!inRenderContext || renderDepth < 1 || hookDepth > 0 || functionDepth > 0) {
           return;
         }
 
-        startPhase(perfKey, 'assignmentAnalysis');
+        startPhase(perfKey, PerformanceOperations.assignmentAnalysis);
 
         const assignmentType = getAssignmentType(node);
 
-        trackOperation(perfKey, `assignmentType:${assignmentType}`);
+        trackOperation(perfKey, PerformanceOperations[`assignmentType:${assignmentType}`]);
 
         // Check for direct signal value assignment (signal.value = x)
         if (isDirectSignalValueAssignment(node, signalNames)) {
@@ -703,10 +699,6 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
         }
       },
       'Program:exit'(_node: TSESTree.Program): void {
-        if (!perf) {
-          throw new Error('Performance tracker not initialized');
-        }
-
         startPhase(perfKey, 'programExit');
 
         try {

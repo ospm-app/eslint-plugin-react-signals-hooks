@@ -1,4 +1,9 @@
-import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
+import {
+  AST_NODE_TYPES,
+  ESLintUtils,
+  type TSESLint,
+  type TSESTree,
+} from '@typescript-eslint/utils';
 import type { SuggestionReportDescriptor, RuleContext } from '@typescript-eslint/utils/ts-eslint';
 import {
   createPerformanceTracker,
@@ -6,20 +11,29 @@ import {
   startPhase,
   endPhase,
   DEFAULT_PERFORMANCE_BUDGET,
+  startTracking,
+  PerformanceLimitExceededError,
 } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
+import type { Definition } from '@typescript-eslint/scope-manager';
 
-type MessageIds = 'preferShowOverTernary' | 'suggestShowComponent' | 'addShowImport';
+type Option = {
+  /** Minimum complexity score to trigger the rule */
+  minComplexity: number;
+  /** Custom signal function names (e.g., ['createSignal', 'useSignal']) */
+  signalNames: string[];
+  performance: PerformanceBudget;
+};
 
-type Options = [
-  {
-    /** Minimum complexity score to trigger the rule */
-    minComplexity: number;
-    performance: PerformanceBudget;
-  },
-];
+type Options = [Option];
+
+type MessageIds =
+  | 'preferShowOverTernary'
+  | 'suggestShowComponent'
+  | 'addShowImport'
+  | 'performanceLimitExceeded';
 
 const childProperties = [
   'body',
@@ -109,6 +123,7 @@ export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
         'Prefer using the `<Show>` component instead of ternary for better performance with signal conditions.',
       suggestShowComponent: 'Replace ternary with `<Show>` component',
       addShowImport: 'Add `Show` import from @preact/signals-react',
+      performanceLimitExceeded: 'Performance limit exceeded ',
     },
     schema: [
       {
@@ -118,6 +133,11 @@ export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
             type: 'number',
             minimum: 1,
             default: 2,
+          },
+          signalNames: {
+            type: 'array',
+            items: { type: 'string' },
+            default: ['signal', 'useSignal', 'createSignal'],
           },
           performance: {
             type: 'object',
@@ -147,20 +167,45 @@ export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
   defaultOptions: [
     {
       minComplexity: 2,
+      signalNames: ['signal', 'useSignal', 'createSignal'],
       performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
   create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
-    // Set up performance tracking for this rule
-    const perfKey = `prefer-show-over-ternary:${context.filename}`;
+    const perfKey = `${ruleName}:${context.filename}${Date.now()}`;
 
-    // Initialize performance tracking
+    trackOperation(perfKey, PerformanceOperations.ruleInit);
+
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
-    // Track rule initialization
-    trackOperation(perfKey, 'ruleInit');
+    if (option.performance?.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    console.info(`Initializing rule for file: ${context.filename}`);
+    console.info('Rule configuration:', option);
+
+    let nodeCount = 0;
+    const signalNames = option.signalNames ?? ['signal', 'useSignal', 'createSignal'];
+    const signalNameSet = new Set(signalNames);
+
+    // Helper function to check if we should continue processing
+    function shouldContinue(): boolean {
+      nodeCount++;
+
+      // Check if we've exceeded the node budget
+      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+
+        return false;
+      }
+
+      return true;
+    }
 
     let hasShowImport = false;
+
+    const signalVariables = new Set<string>();
 
     hasShowImport = context.sourceCode.ast.body.some(
       (node: TSESTree.ProgramStatement): node is TSESTree.ImportDeclaration => {
@@ -182,6 +227,65 @@ export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
     );
 
     return {
+      '*': (node: TSESTree.Node): void => {
+        if (!perf) {
+          throw new Error('Performance tracker not initialized');
+        }
+
+        // Check if we should continue processing
+        if (!shouldContinue()) {
+          return;
+        }
+
+        perf.trackNode(node);
+
+        // Track specific node types that are more expensive to process
+        if (
+          node.type === 'CallExpression' ||
+          node.type === 'MemberExpression' ||
+          node.type === 'Identifier'
+        ) {
+          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        }
+
+        // Handle function declarations and variables
+        if (
+          node.type === AST_NODE_TYPES.FunctionDeclaration ||
+          node.type === AST_NODE_TYPES.FunctionExpression ||
+          node.type === AST_NODE_TYPES.ArrowFunctionExpression
+        ) {
+          try {
+            const scope = context.getScope();
+
+            for (const variable of scope.variables) {
+              if (
+                variable.defs.some((def: Definition) => {
+                  trackOperation(perfKey, PerformanceOperations.signalCheck);
+                  return (
+                    'init' in def.node &&
+                    def.node.init?.type === AST_NODE_TYPES.CallExpression &&
+                    def.node.init.callee.type === AST_NODE_TYPES.Identifier &&
+                    signalNameSet.has(def.node.init.callee.name)
+                  );
+                })
+              ) {
+                signalVariables.add(variable.name);
+              }
+            }
+          } catch (error: unknown) {
+            if (error instanceof PerformanceLimitExceededError) {
+              context.report({
+                node,
+                messageId: 'performanceLimitExceeded',
+                data: { message: error.message, ruleName },
+              });
+            } else {
+              throw error;
+            }
+          }
+        }
+      },
+
       Program(node: TSESTree.Program): void {
         // Track node processing
         perf.trackNode(node);
@@ -222,11 +326,23 @@ export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
           return;
         }
 
+        // Check if the condition contains any signal variables
+        const testText = context.sourceCode.getText(node.test);
+
+        const containsSignal = [...signalVariables].some((signal) => {
+          return new RegExp(`\\b${signal}\\b`).test(testText);
+        });
+
+        // Skip if no signal variables are found in the condition
+        if (!containsSignal) {
+          return;
+        }
+
         // Track conditional analysis
-        trackOperation(perfKey, 'conditionalAnalysis');
+        trackOperation(perfKey, PerformanceOperations.conditionalAnalysis);
 
         const complexity = getComplexity(node);
-        trackOperation(perfKey, 'complexityAnalysis');
+        trackOperation(perfKey, PerformanceOperations.complexityAnalysis);
 
         if (complexity >= (option?.minComplexity ?? 2)) {
           context.report({
@@ -300,10 +416,7 @@ export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
         }
       },
 
-      'Program:exit'(node: TSESTree.Program): void {
-        perf.trackNode(node);
-
-        // End all performance tracking
+      'Program:exit'(_node: TSESTree.Program): void {
         endPhase(perfKey, 'ruleExecution');
 
         perf['Program:exit']();

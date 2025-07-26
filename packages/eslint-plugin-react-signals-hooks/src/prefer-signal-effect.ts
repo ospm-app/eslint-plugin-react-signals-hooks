@@ -3,13 +3,13 @@ import type { SuggestionReportDescriptor } from '@typescript-eslint/utils/ts-esl
 
 import { DEFAULT_PERFORMANCE_BUDGET } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
+import type { PerformanceBudget } from './utils/types.js';
 
 type MessageIds = 'preferSignalEffect' | 'suggestEffect' | 'addEffectImport';
 
 type Options = [
-  // biome-ignore lint/complexity/noBannedTypes: todo
   {
-    // Future configuration options can be added here
+    performance: PerformanceBudget;
   },
 ];
 
@@ -38,9 +38,9 @@ function isSignalDependency(dep: TSESTree.Expression | TSESTree.SpreadElement | 
   return false;
 }
 
-const createRule = ESLintUtils.RuleCreator(
-  (name) => `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}`
-);
+const createRule = ESLintUtils.RuleCreator((name: string) => {
+  return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}`;
+});
 
 /**
  * ESLint rule: prefer-signal-effect

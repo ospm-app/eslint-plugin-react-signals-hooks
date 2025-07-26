@@ -8,15 +8,15 @@ import {
   startPhase,
   recordMetric,
   stopTracking,
+  startTracking,
   trackOperation,
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
   PerformanceLimitExceededError,
-  startTracking,
 } from './utils/performance.js';
-import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
+import { PerformanceOperations } from './utils/performance-constants.js';
 
 const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return getRuleDocUrl(name);
@@ -24,7 +24,7 @@ const createRule = ESLintUtils.RuleCreator((name: string): string => {
 
 type Option = {
   additionalHooks: string | undefined;
-  enableDangerousAutofixThisMayCauseInfiniteLoops: boolean;
+  unsafeAutofix: boolean;
   experimental_autoDependenciesHooks: string[];
   requireExplicitEffectDeps: boolean;
   enableAutoFixForMemoAndCallback: boolean;
@@ -291,20 +291,12 @@ function analyzePropertyChain(
     | TSESTree.Super
     | TSESTree.PrivateIdentifier,
   optionalChains: Map<string, boolean> | null,
-  context: Readonly<RuleContext<MessageIds, Options>>
+  context: Readonly<RuleContext<MessageIds, Options>>,
+  perfKey: string
 ): string {
-  const perfKey = 'exhaustive-deps';
-  const metrics = {
-    nodeProcessing: 0,
-    errors: 0,
-    performanceLimitExceeded: 0,
-  };
-
   try {
     trackOperation(perfKey, PerformanceOperations.nodeProcessing);
-    metrics.nodeProcessing++;
 
-    // Handle identifier nodes
     if (node.type === 'Identifier' || node.type === 'JSXIdentifier') {
       const result = node.name;
 
@@ -319,19 +311,20 @@ function analyzePropertyChain(
     if (node.type === 'MemberExpression') {
       // Non-computed property access (obj.prop)
       if (!node.computed) {
-        const object = analyzePropertyChain(node.object, optionalChains, context);
+        const result = `${analyzePropertyChain(
+          node.object,
+          optionalChains,
+          context,
+          perfKey
+        )}.${analyzePropertyChain(node.property, null, context, perfKey)}`;
 
-        const property = analyzePropertyChain(node.property, null, context);
-
-        const result = `${object}.${property}`;
-
-        markNode(node, optionalChains, result);
+        markNode(node, optionalChains, result, perfKey);
 
         return result;
       }
 
       // Computed property access (obj[prop])
-      const object = analyzePropertyChain(node.object, optionalChains, context);
+      const object = analyzePropertyChain(node.object, optionalChains, context, perfKey);
 
       let computedResult: string;
 
@@ -345,17 +338,18 @@ function analyzePropertyChain(
       }
       // Handle computed property access result
       const result = `${object}[${computedResult}]`;
-      markNode(node, optionalChains, result);
+
+      markNode(node, optionalChains, result, perfKey);
+
       return result;
     }
 
     // For all other node types, return the source text
     return context.sourceCode.getText(node);
   } catch (error) {
-    metrics.errors++;
     if (error instanceof PerformanceLimitExceededError) {
-      metrics.performanceLimitExceeded++;
-      trackOperation(perfKey, 'analyzePropertyChainFailed');
+      trackOperation(perfKey, PerformanceOperations.analyzePropertyChainFailed);
+
       // Return a fallback value to allow processing to continue
       return error instanceof Error ? error.message : 'unknown';
     }
@@ -1451,7 +1445,7 @@ function getDependency(
     return node;
   } catch (error: unknown) {
     if (error instanceof PerformanceLimitExceededError) {
-      trackOperation(perfKey, 'getDependencyFailed');
+      trackOperation(perfKey, PerformanceOperations.getDependencyFailed);
 
       return node; // Return the node as is on performance limit exceeded
     }
@@ -1463,10 +1457,9 @@ function getDependency(
 function markNode(
   node: TSESTree.Node | TSESTree.MemberExpression,
   optionalChains: Map<string, boolean> | null,
-  result: string
+  result: string,
+  perfKey: string
 ): void {
-  const perfKey = 'exhaustive-deps';
-
   try {
     trackOperation(perfKey, PerformanceOperations.nodeProcessing);
 
@@ -1481,7 +1474,8 @@ function markNode(
     }
   } catch (error: unknown) {
     if (error instanceof PerformanceLimitExceededError) {
-      trackOperation(perfKey, 'markNodeFailed');
+      trackOperation(perfKey, PerformanceOperations.markNodeFailed);
+
       // Continue execution even if marking fails
     } else {
       throw error;
@@ -1508,12 +1502,11 @@ function getNodeWithoutReactNamespace(
 function getReactiveHookCallbackIndex(
   calleeNode: TSESTree.Expression | TSESTree.Super,
   context: TSESLint.RuleContext<MessageIds, Options>,
-  options?:
-    | {
-        additionalHooks: RegExp | undefined;
-        enableDangerousAutofixThisMayCauseInfiniteLoops?: boolean;
-      }
-    | undefined
+  options: {
+    additionalHooks: RegExp | undefined;
+    unsafeAutofix: boolean;
+  },
+  perfKey: string
 ): 0 | -1 | 1 {
   const node = getNodeWithoutReactNamespace(calleeNode);
 
@@ -1538,7 +1531,7 @@ function getReactiveHookCallbackIndex(
         let name: string | undefined;
 
         try {
-          name = analyzePropertyChain(node, null, context);
+          name = analyzePropertyChain(node, null, context, perfKey);
         } catch (error: unknown) {
           if (error instanceof Error && /Unsupported node type/.test(error.message)) {
             return 0;
@@ -1614,10 +1607,9 @@ function visitFunctionWithDependencies(
   reactiveHookName: string,
   isEffect: boolean,
   isAutoDepsHook: boolean | undefined,
-  context: TSESLint.RuleContext<MessageIds, Options>
+  context: TSESLint.RuleContext<MessageIds, Options>,
+  perfKey: string
 ): void {
-  const perfKey = 'exhaustive-deps';
-
   // Track function analysis
   startPhase(perfKey, 'function-analysis');
   trackOperation(perfKey, PerformanceOperations.hookCheck);
@@ -2107,7 +2099,7 @@ function visitFunctionWithDependencies(
           }
         } else {
           try {
-            const computedPath = analyzePropertyChain(currentNode.parent, null, context);
+            const computedPath = analyzePropertyChain(currentNode.parent, null, context, perfKey);
 
             fullPath = computedPath;
 
@@ -2340,7 +2332,7 @@ function visitFunctionWithDependencies(
       }
 
       // Always use analyzePropertyChain to avoid duplication issues
-      const dependency = analyzePropertyChain(dependencyNode, optionalChains, context);
+      const dependency = analyzePropertyChain(dependencyNode, optionalChains, context, perfKey);
 
       if (
         'parent' in dependencyNode &&
@@ -2922,7 +2914,7 @@ function visitFunctionWithDependencies(
         }
 
         try {
-          declaredDependency = analyzePropertyChain(declaredDependencyNode, null, context);
+          declaredDependency = analyzePropertyChain(declaredDependencyNode, null, context, perfKey);
         } catch (error: unknown) {
           if (error instanceof Error && /Unsupported node type/.test(error.message)) {
             if (declaredDependencyNode.type === 'Literal') {
@@ -3816,7 +3808,7 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
     type: 'suggestion',
     docs: {
       description: 'Verifies the list of dependencies for Hooks like useEffect and similar',
-      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/exhaustive-deps',
+      url: getRuleDocUrl(ruleName),
     },
     messages: {
       missingDependencies:
@@ -4013,7 +4005,7 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
             type: 'string',
             description: 'Pattern for additional hooks that should be checked',
           },
-          enableDangerousAutofixThisMayCauseInfiniteLoops: {
+          unsafeAutofix: {
             type: 'boolean',
             description: 'Enable potentially dangerous autofixes that might cause infinite loops',
           },
@@ -4059,8 +4051,8 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
   },
   defaultOptions: [
     {
+      unsafeAutofix: false,
       additionalHooks: undefined,
-      enableDangerousAutofixThisMayCauseInfiniteLoops: false,
       experimental_autoDependenciesHooks: [],
       requireExplicitEffectDeps: false,
       enableAutoFixForMemoAndCallback: false,
@@ -4068,15 +4060,15 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
       performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
-  create(context, [option]): ESLintUtils.RuleListener {
-    const perfKey = `${ruleName}:${context.filename}`;
+  create(context: RuleContext<MessageIds, Options>, [option]): ESLintUtils.RuleListener {
+    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
     startPhase(perfKey, 'rule-init');
 
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
     if (option.performance?.enableMetrics === true) {
-      startTracking(context, perfKey, option.performance);
+      startTracking(context, perfKey, option.performance, ruleName);
     }
 
     console.info(`Initializing rule for file: ${context.filename}`);
@@ -4089,7 +4081,7 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
 
       // Check if we've exceeded the node budget
       if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
-        trackOperation(perfKey, 'nodeBudgetExceeded');
+        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
       }
@@ -4109,41 +4101,35 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
     startPhase(perfKey, 'rule-execution');
 
     return {
-      // Track all nodes for performance monitoring
       '*': (node: TSESTree.Node): void => {
-        if (!perf) {
-          throw new Error('Performance tracker not initialized');
-        }
-
-        // Check if we should continue processing
         if (!shouldContinue()) {
           return;
         }
 
         perf.trackNode(node);
 
-        // Track specific node types that are more expensive to process
         if (
           node.type === 'CallExpression' ||
           node.type === 'MemberExpression' ||
           node.type === 'Identifier'
         ) {
-          trackOperation(perfKey, `${node.type}Processing`);
+          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
         }
       },
       CallExpression(node: TSESTree.CallExpression): void {
-        if (!perf) {
-          throw new Error('Performance tracker not initialized');
-        }
-
         perf.trackNode(node);
 
-        const callbackIndex = getReactiveHookCallbackIndex(node.callee, context, {
-          additionalHooks:
-            typeof option.additionalHooks === 'string'
+        const callbackIndex = getReactiveHookCallbackIndex(
+          node.callee,
+          context,
+          {
+            unsafeAutofix: option.unsafeAutofix,
+            additionalHooks: option.additionalHooks
               ? new RegExp(option.additionalHooks)
               : undefined,
-        });
+          },
+          perfKey
+        );
 
         if (callbackIndex === -1) {
           return;
@@ -4228,7 +4214,8 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
               'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
               isEffect,
               isAutoDepsHook,
-              context
+              context,
+              perfKey
             );
 
             return;
@@ -4297,7 +4284,8 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
                   'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
                   isEffect,
                   isAutoDepsHook,
-                  context
+                  context,
+                  perfKey
                 );
 
                 return;
@@ -4320,7 +4308,8 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
                       'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
                       isEffect,
                       isAutoDepsHook,
-                      context
+                      context,
+                      perfKey
                     );
 
                     return;
@@ -4384,17 +4373,9 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
         });
       },
       'CallExpression:exit'(node: TSESTree.CallExpression): void {
-        if (!perf) {
-          throw new Error('Performance tracker not initialized');
-        }
-
         perf.trackNode(node);
       },
       'Program:exit'(node: TSESTree.Node): void {
-        if (!perf) {
-          throw new Error('Performance tracker not initialized');
-        }
-
         startPhase(perfKey, 'programExit');
 
         perf.trackNode(node);

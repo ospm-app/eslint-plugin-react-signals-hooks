@@ -2,20 +2,20 @@ import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/ut
 import { AST_NODE_TYPES } from '@typescript-eslint/utils';
 
 import {
-  startPhase,
   endPhase,
+  startPhase,
   stopTracking,
   recordMetric,
   trackOperation,
-  createPerformanceTracker,
-  PerformanceLimitExceededError,
-  DEFAULT_PERFORMANCE_BUDGET,
   startTracking,
+  createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
+  PerformanceLimitExceededError,
 } from './utils/performance.js';
-import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
-import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 import type { PerformanceBudget } from './utils/types.js';
+import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
+import { PerformanceOperations } from './utils/performance-constants.js';
 
 type Option = {
   /** Custom signal function names (e.g., ['createSignal', 'useSignal']) */
@@ -102,28 +102,40 @@ function isSignalAssignment(
     if (
       !node.computed &&
       node.property.type === AST_NODE_TYPES.Identifier &&
-      node.property.name === 'value'
+      node.property.name === 'value' &&
+      node.object.type === AST_NODE_TYPES.Identifier
     ) {
-      // Get the object being accessed (the signal variable)
       const object = node.object;
+      const cacheKey = `${object.name}:${signalNames.join(',')}`;
 
-      if (object.type === AST_NODE_TYPES.Identifier) {
-        const cacheKey = `${object.name}:${signalNames.join(',')}`;
+      // Check if we've already identified this as a signal variable
+      if (signalVariables.has(object.name)) {
+        return true;
+      }
 
-        // Check cache first
-        if (signalNameCache.has(cacheKey)) {
-          return signalNameCache.get(cacheKey) ?? false;
+      // Check cache next
+      if (signalNameCache.has(cacheKey)) {
+        const cached = signalNameCache.get(cacheKey) ?? false;
+
+        if (cached) {
+          signalVariables.add(object.name);
         }
 
-        // Check if the variable name matches any signal names
-        const isSignal = signalNames.some((name: string): boolean => {
-          return object.name.endsWith(name);
-        });
-
-        signalNameCache.set(cacheKey, isSignal);
-
-        return isSignal;
+        return cached;
       }
+
+      // Check if the variable name matches any signal names
+      const isSignal = signalNames.some((name: string): boolean => {
+        return object.name.endsWith(name);
+      });
+
+      signalNameCache.set(cacheKey, isSignal);
+
+      if (isSignal) {
+        signalVariables.add(object.name);
+      }
+
+      return isSignal;
     }
 
     return false;
@@ -174,6 +186,23 @@ function visitNode(
   signalNames: string[],
   perfKey: string
 ) {
+  // Track variable declarations that might be signals
+  if (
+    node.type === AST_NODE_TYPES.VariableDeclarator &&
+    node.init?.type === AST_NODE_TYPES.CallExpression &&
+    node.init.callee.type === AST_NODE_TYPES.Identifier &&
+    signalNames.some((name: string): boolean => {
+      return (
+        node.init !== null &&
+        'callee' in node.init &&
+        'name' in node.init.callee &&
+        node.init.callee.name.endsWith(name)
+      );
+    }) &&
+    node.id.type === AST_NODE_TYPES.Identifier
+  ) {
+    signalVariables.add(node.id.name);
+  }
   if (!node || effectStack.length === 0) {
     return;
   }
@@ -340,12 +369,12 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
     },
   ],
   create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): TSESLint.RuleListener {
-    const perfKey = `${ruleName}:${context.filename}`;
+    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
     if (option.performance?.enableMetrics === true) {
-      startTracking(context, perfKey, option.performance);
+      startTracking(context, perfKey, option.performance, ruleName);
     }
 
     console.info(`Initializing rule for file: ${context.filename}`);
@@ -359,7 +388,7 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
 
       // Check if we've exceeded the node budget
       if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
-        trackOperation(perfKey, 'nodeBudgetExceeded');
+        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
       }
@@ -367,7 +396,7 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
       return true;
     }
 
-    trackOperation(perfKey, 'ruleInit');
+    trackOperation(perfKey, PerformanceOperations.ruleInit);
 
     const signalNames = option.signalNames ?? ['signal', 'useSignal', 'createSignal'];
     const signalNameSet = new Set(signalNames);
@@ -439,7 +468,7 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
             node.type === 'MemberExpression' ||
             node.type === 'Identifier'
           ) {
-            trackOperation(perfKey, `${node.type}Processing`);
+            trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
           }
 
           // Handle function declarations and variables
@@ -471,7 +500,7 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
                 context.report({
                   node,
                   messageId: 'performanceLimitExceeded',
-                  data: { message: error.message },
+                  data: { message: error.message, ruleName },
                 });
               } else {
                 throw error;
@@ -530,7 +559,7 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
               context.report({
                 node,
                 messageId: 'performanceLimitExceeded',
-                data: { message: error.message },
+                data: { message: error.message, ruleName },
               });
             } else {
               throw error;
@@ -664,7 +693,7 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
               context.report({
                 node,
                 messageId: 'performanceLimitExceeded',
-                data: { message: error.message },
+                data: { message: error.message, ruleName },
               });
             } else {
               throw error;
@@ -691,7 +720,7 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
               context.report({
                 node,
                 messageId: 'performanceLimitExceeded',
-                data: { message: error.message },
+                data: { message: error.message, ruleName },
               });
             } else {
               throw error;
@@ -707,6 +736,7 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
           messageId: 'performanceLimitExceeded',
           data: {
             message: error.message,
+            ruleName,
           },
         });
 

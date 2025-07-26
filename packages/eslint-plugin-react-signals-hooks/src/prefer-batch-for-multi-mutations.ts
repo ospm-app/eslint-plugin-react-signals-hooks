@@ -14,7 +14,7 @@ import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 
-type MessageIds = 'useBatch' | 'suggestBatch' | 'addBatchImport' | 'perf';
+type MessageIds = 'useBatch' | 'suggestBatch' | 'addBatchImport' | 'performanceLimitExceeded';
 
 type Option = {
   minMutations: number;
@@ -27,35 +27,28 @@ type Options = [Option];
 function isSignalMutation(
   node: TSESTree.Node
 ): node is TSESTree.AssignmentExpression | TSESTree.UpdateExpression {
-  // Fast path: check node type first
   if (node.type !== 'AssignmentExpression' && node.type !== 'UpdateExpression') {
     return false;
   }
 
-  // Common pattern for both node types
   const memberExpr = node.type === 'AssignmentExpression' ? node.left : node.argument;
 
-  // Fast path: check member expression structure
   if (
-    memberExpr?.type !== 'MemberExpression' ||
+    memberExpr.type !== 'MemberExpression' ||
     memberExpr.property?.type !== 'Identifier' ||
     memberExpr.property.name !== 'value'
   ) {
     return false;
   }
 
-  // Check object identifier and its name
-  const obj = memberExpr.object;
-  if (obj.type !== 'Identifier') {
+  if (memberExpr.object.type !== 'Identifier') {
     return false;
   }
 
-  // Check if the name ends with a signal suffix
-  const name = obj.name;
-
   for (const suffix of new Set(['Signal', 'signal'])) {
-    if (name.endsWith(suffix)) return true;
+    if (memberExpr.object.name.endsWith(suffix)) return true;
   }
+
   return false;
 }
 
@@ -63,27 +56,23 @@ const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return getRuleDocUrl(name);
 });
 
-let perf:
-  | {
-      trackNode(node: TSESTree.Node): void;
-      'Program:exit'(): void;
-    }
-  | undefined;
+const ruleName = 'prefer-batch-for-multi-mutations';
 
 export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>({
-  name: 'prefer-batch-for-multi-mutations',
+  name: ruleName,
   meta: {
     type: 'suggestion',
     docs: {
       description: 'Enforce using batch() for multiple signal mutations in the same scope',
-      url: getRuleDocUrl('prefer-batch-for-multi-mutations'),
+      url: getRuleDocUrl(ruleName),
     },
     messages: {
       useBatch:
         'Multiple signal mutations detected. Use `batch()` to optimize performance by reducing renders.',
       suggestBatch: 'Wrap with `batch()`',
       addBatchImport: "Add `batch` import from '@preact/signals-react'",
-      perf: '{{ message }}',
+      performanceLimitExceeded:
+        '`Maximum number of signal mutations ({{ maxMutations }}) exceeded. Consider using batch() for better performance.`',
     },
     hasSuggestions: true,
     schema: [
@@ -128,14 +117,14 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
     },
   ],
   create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
-    const perfKey = `prefer-batch-for-multi-mutations:${context.filename}:${Date.now()}`;
+    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
     startPhase(perfKey, 'perf-init');
 
-    perf = createPerformanceTracker(perfKey, option.performance, context);
+    const perf = createPerformanceTracker(perfKey, option.performance, context);
 
     if (option.performance?.enableMetrics === true) {
-      startTracking(context, perfKey, option.performance);
+      startTracking(context, perfKey, option.performance, ruleName);
     }
 
     console.info(`Initializing rule for file: ${context.filename}`);
@@ -143,13 +132,11 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
 
     let nodeCount = 0;
 
-    // Helper function to check if we should continue processing
     function shouldContinue(): boolean {
       nodeCount++;
 
-      // Check if we've exceeded the node budget
       if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
-        trackOperation(perfKey, 'nodeBudgetExceeded');
+        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
       }
@@ -157,7 +144,7 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
       return true;
     }
 
-    trackOperation(perfKey, 'rule-init');
+    trackOperation(perfKey, PerformanceOperations.ruleInit);
 
     endPhase(perfKey, 'perf-init');
 
@@ -169,11 +156,12 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
     let currentFunction: TSESTree.FunctionLike | null = null;
 
     const signalMutations: TSESTree.Node[] = [];
+
     const importCheckStart = performance.now();
 
-    trackOperation(perfKey, 'import-check-start');
+    trackOperation(perfKey, PerformanceOperations.importCheckStart);
 
-    trackOperation(perfKey, 'pre-import-analysis');
+    trackOperation(perfKey, PerformanceOperations.preImportAnalysis);
 
     let importCheckCount = 0;
 
@@ -181,7 +169,7 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
       (node: TSESTree.ProgramStatement): boolean => {
         importCheckCount++;
 
-        trackOperation(perfKey, `import-check-${node.type}`);
+        trackOperation(perfKey, PerformanceOperations[`importCheck${node.type}`]);
 
         return (
           node.type === 'ImportDeclaration' &&
@@ -202,7 +190,7 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
     function checkAndReportMutations(option: Option): void {
       const checkStart = performance.now();
 
-      trackOperation(perfKey, 'mutation-check-start');
+      trackOperation(perfKey, PerformanceOperations.mutationCheckStart);
 
       const currentCheckId = `check-${performance.now()}`;
 
@@ -213,7 +201,7 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
       recordMetric(perfKey, 'mutationCheckDuration', checkDuration);
 
       if (signalMutations.length >= option.minMutations) {
-        trackOperation(perfKey, `batch-mutation-${signalMutations.length}`);
+        trackOperation(perfKey, PerformanceOperations[`batchMutation${signalMutations.length}`]);
 
         recordMetric(perfKey, 'mutationCount', signalMutations.length);
 
@@ -288,15 +276,10 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
 
     endPhase(perfKey, 'import-analysis');
 
-    trackOperation(perfKey, 'post-import-analysis');
+    trackOperation(perfKey, PerformanceOperations.postImportAnalysis);
 
     return {
       '*': (node: TSESTree.Node): void => {
-        if (!perf) {
-          throw new Error('Performance tracker not initialized');
-        }
-
-        // Check if we should continue processing
         if (!shouldContinue()) {
           return;
         }
@@ -309,7 +292,7 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
           node.type === 'MemberExpression' ||
           node.type === 'Identifier'
         ) {
-          trackOperation(perfKey, `${node.type}Processing`);
+          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
         }
       },
       'FunctionDeclaration:exit': (_node: TSESTree.FunctionDeclaration): void => {
@@ -378,7 +361,7 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
           signalMutations.length = 0; // Reset mutations for new function
           mutationLimitExceeded = false; // Reset the limit flag for new function
           // Track function analysis
-          trackOperation(perfKey, 'typeCheck');
+          trackOperation(perfKey, PerformanceOperations.typeCheck);
         }
       },
 
@@ -391,7 +374,7 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
           node === currentFunction
         ) {
           // Track function exit
-          trackOperation(perfKey, 'functionExit');
+          trackOperation(perfKey, PerformanceOperations.functionExit);
 
           // Don't check if we're already inside a batch
           if (
@@ -414,7 +397,7 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
       },
 
       AssignmentExpression(node: TSESTree.AssignmentExpression): void {
-        trackOperation(perfKey, 'check-assignment');
+        trackOperation(perfKey, PerformanceOperations.checkAssignment);
 
         // Skip if we've already exceeded the mutation limit
         if (mutationLimitExceeded) {
@@ -422,18 +405,21 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
         }
 
         if (currentFunction && isSignalMutation(node)) {
-          trackOperation(perfKey, 'signal-assignment-found');
+          trackOperation(perfKey, PerformanceOperations.signalAssignmentFound);
 
           // Check if we're about to exceed the limit
           if (signalMutations.length >= (option.maxMutations ?? 100)) {
             mutationLimitExceeded = true;
+
             context.report({
               node,
-              messageId: 'perf',
+              messageId: 'performanceLimitExceeded',
               data: {
-                message: `Maximum number of signal mutations (${option.maxMutations}) exceeded. Consider using batch() for better performance.`,
+                ruleName,
+                maxMutations: option.maxMutations,
               },
             });
+
             return;
           }
 
@@ -442,7 +428,7 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
       },
 
       UpdateExpression(node: TSESTree.UpdateExpression): void {
-        trackOperation(perfKey, 'check-update');
+        trackOperation(perfKey, PerformanceOperations.checkUpdate);
 
         // Skip if we've already exceeded the mutation limit
         if (mutationLimitExceeded) {
@@ -450,16 +436,18 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
         }
 
         if (currentFunction && isSignalMutation(node)) {
-          trackOperation(perfKey, 'signal-update-found');
+          trackOperation(perfKey, PerformanceOperations.signalUpdateFound);
 
           // Check if we're about to exceed the limit
           if (signalMutations.length >= option.maxMutations) {
             mutationLimitExceeded = true;
+
             context.report({
               node,
-              messageId: 'perf',
+              messageId: 'performanceLimitExceeded',
               data: {
-                message: `Maximum number of signal mutations (${option.maxMutations}) exceeded. Consider using batch() for better performance.`,
+                maxMutations: option.maxMutations,
+                ruleName,
               },
             });
             return;
@@ -471,10 +459,6 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
 
       // Handle program exit with comprehensive cleanup
       'Program:exit'(): void {
-        if (!perf) {
-          throw new Error('Performance tracker not initialized');
-        }
-
         startPhase(perfKey, 'programExit');
 
         try {

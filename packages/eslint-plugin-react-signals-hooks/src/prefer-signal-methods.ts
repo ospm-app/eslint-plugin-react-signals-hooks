@@ -1,9 +1,9 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
+import type { PerformanceBudget } from './utils/types.js';
 import { DEFAULT_PERFORMANCE_BUDGET } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
-import type { PerformanceBudget } from './utils/types.js';
 
 type MessageIds =
   | 'usePeekInEffect'
