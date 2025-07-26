@@ -1,0 +1,82 @@
+{
+  "name": "@ospm/eslint-plugin-threejs",
+  "version": "0.0.1",
+  "description": "ESLint plugin for Three.js best practices and performance optimizations",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "docs"
+  ],
+  "scripts": {
+    "build": "run-s clean build:types build:esm build:cjs",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
+    "build:esm": "tsc -p tsconfig.esm.json",
+    "build:types": "tsc -p tsconfig.types.json",
+    "clean": "rimraf dist",
+    "dev": "tsc -w -p tsconfig.esm.json",
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "pretest": "npm run build",
+    "type-check": "tsc --noEmit",
+    "type-check:watch": "npm run type-check -- --watch"
+  },
+  "keywords": [
+    "eslint",
+    "eslintplugin",
+    "eslint-plugin",
+    "three",
+    "three.js",
+    "3d",
+    "webgl",
+    "performance",
+    "best-practices"
+  ],
+  "author": {
+    "name": "Alexey Lyakhov",
+    "url": "https://github.com/JustFly1984",
+    "email": "justfly1984@gmail.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ospm-app/eslint-plugin-threejs"
+  },
+  "bugs": {
+    "url": "https://github.com/ospm-app/eslint-plugin-threejs/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "eslint": "^8.57.1 || ^9.31.0",
+    "typescript": ">=5.8.3"
+  },
+  "devDependencies": {
+    "@typescript-eslint/utils": "^8.38.0",
+    "@babel/core": "^7.28.0",
+    "@babel/preset-env": "^7.28.0",
+    "@types/estree": "^1.0.8",
+    "@types/node": "^24.1.0",
+    "@types/three": "^0.178.1",
+    "@typescript-eslint/eslint-plugin": "^8.38.0",
+    "@typescript-eslint/parser": "^8.38.0",
+    "eslint": "^9.31.0",
+    "eslint-plugin-eslint-plugin": "^6.5.0",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-n": "^17.21.0",
+    "npm-run-all": "^4.1.5",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.8.3"
+  }
+}

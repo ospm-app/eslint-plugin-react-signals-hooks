@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist/cjs",
+    "module": "es2015",
+    "moduleResolution": "bundler",
+
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": true,
+
+    "types": ["estree", "node", "eslint"]
+  }
+}

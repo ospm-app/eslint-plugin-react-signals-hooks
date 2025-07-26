@@ -1,0 +1,51 @@
+{
+	"name": "eslint-plugin-vibecoder-rasp",
+	"version": "0.1.0",
+	"description": "ESLint plugin with strict React and TypeScript rules for better code quality and maintainability",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"scripts": {
+		"build": "tsc",
+		"lint": "eslint . --ext .ts"
+	},
+	"peerDependencies": {
+		"eslint": "^8.57.1 || ^9.31.0",
+		"typescript": "^5.8.3"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.1.2",
+		"@types/node": "24.1.0",
+		"@types/eslint": "^9.6.1",
+		"@types/estree-jsx": "1.0.5",
+		"@typescript-eslint/eslint-plugin": "^8.38.0",
+		"@typescript-eslint/parser": "^8.38.0",
+		"@typescript-eslint/utils": "^8.38.0",
+		"eslint": "^9.31.0",
+		"typescript": "^5.8.3"
+	},
+	"keywords": [
+		"eslint",
+		"eslintplugin",
+		"react",
+		"typescript",
+		"linting",
+		"code-quality"
+	],
+	"author": "Alexey Lyakhov",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/tree/main/packages/eslint-plugin-vibecoder-rasp"
+	},
+	"bugs": {
+		"url": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/issues"
+	},
+	"homepage": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/tree/main/packages/eslint-plugin-vibecoder-rasp#readme",
+	"engines": {
+		"node": ">=16.0.0"
+	}
+}

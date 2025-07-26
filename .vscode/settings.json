@@ -39,5 +39,19 @@
     "editor.formatOnSave": true,
     "editor.formatOnPaste": true
   },
-  "cSpell.words": ["ospm", "oxlint", "Pressable", "TSES"]
+  "cSpell.words": [
+    "Alexey",
+    "arktype",
+    "GLTF",
+    "Lyakhov",
+    "nodenext",
+    "ospm",
+    "oxlint",
+    "Pressable",
+    "quasis",
+    "threejs",
+    "TSES",
+    "Unmemoized",
+    "vibecoder"
+  ]
 }

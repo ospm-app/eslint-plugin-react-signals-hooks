@@ -10,10 +10,12 @@ import optimizeRegexPlugin from 'eslint-plugin-optimize-regex';
 import oxlintPlugin from 'eslint-plugin-oxlint';
 import promisePlugin from 'eslint-plugin-promise';
 import globals from 'globals';
+import eslintPlugin from 'eslint-plugin-eslint-plugin';
 
-import reactSignalsHooksPlugin from './dist/cjs/index.js';
+import reactSignalsHooksPlugin from './packages/eslint-plugin-react-signals-hooks/dist/cjs/index.js';
 
 const commonRules = {
+  // Disabled rules
   'n/no-missing-import': 'off',
   'n/no-extraneous-import': 'off',
   indent: 'off',
@@ -31,8 +33,59 @@ const commonRules = {
   camelcase: 'off',
   'no-useless-return': 'off',
   'sort-requires/sort-requires': 'off',
-  'no-console': ['error', { allow: ['warn', 'error', 'info', 'table', 'debug', 'clear'] }],
   'no-unused-vars': 'off',
+
+  // Import rules
+  'import/order': [
+    'error',
+    {
+      groups: ['builtin', 'external', 'internal', 'parent', 'sibling', 'index'],
+      'newlines-between': 'always',
+      alphabetize: { order: 'asc', caseInsensitive: true },
+    },
+  ],
+  'import/no-cycle': 'error',
+  'import/no-unused-modules': ['error', { unusedExports: true }],
+
+  // Enabled rules
+  'no-console': ['error', { allow: ['warn', 'error', 'info', 'table', 'debug', 'clear'] }],
+  'optimize-regex/optimize-regex': 'warn',
+  'es-x/no-async-iteration': 'error',
+  'es-x/no-malformed-template-literals': 'error',
+
+  // JSX Accessibility rules
+  'jsx-a11y/no-static-element-interactions': [
+    'error',
+    {
+      handlers: ['onClick', 'onMouseDown', 'onMouseUp', 'onKeyPress', 'onKeyDown', 'onKeyUp'],
+    },
+  ],
+  'jsx-a11y/click-events-have-key-events': 'error',
+  'jsx-a11y/label-has-associated-control': 'error',
+
+  // Promise rules
+  'promise/no-return-wrap': 'error',
+  'promise/prefer-await-to-then': 'error',
+  'promise/no-nesting': 'warn',
+  'promise/always-return': 'error',
+  'promise/catch-or-return': 'error',
+  'promise/param-names': 'error',
+
+  // Security
+  'security/detect-object-injection': 'error',
+  'xss/no-mixed-html': 'error',
+  'xss/no-location-href-assign': 'error',
+
+  // Performance
+  'perf-standard/no-instanceof-array': 'error',
+  'perf-standard/no-self-in-array-methods': 'warn',
+
+  // TypeScript specific
+  '@typescript-eslint/await-thenable': 'error',
+  '@typescript-eslint/no-floating-promises': 'error',
+  '@typescript-eslint/consistent-type-imports': 'error',
+  '@typescript-eslint/no-explicit-any': 'warn',
+
   'no-restricted-globals': [
     'error',
     {
@@ -48,9 +101,6 @@ const commonRules = {
       message: 'Do not commit fdescribe. Use describe instead.',
     },
   ],
-  'optimize-regex/optimize-regex': 'warn',
-  'es-x/no-async-iteration': 'error',
-  'es-x/no-malformed-template-literals': 'error',
   'es-x/no-regexp-lookbehind-assertions': 'error',
   'es-x/no-regexp-named-capture-groups': 'error',
   'es-x/no-regexp-s-flag': 'error',
@@ -193,8 +243,15 @@ const jsonConfig = {
 //   },
 // };
 
-/** @type {import('eslint').Linter.FlatConfig[]} */
+/** @type {import('eslint').Linter.Config[]} */
 export default [
+  {
+    files: ['lib/rules/*.{js,ts}'],
+    ...eslintPlugin.configs['flat/recommended'],
+    rules: {
+      'n/no-missing-import': 'off',
+    },
+  },
   {
     files: ['**/eslint.config.js'],
     languageOptions: {

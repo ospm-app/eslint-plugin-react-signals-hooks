@@ -1,0 +1,369 @@
+import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
+import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
+
+type MessageIds =
+  | 'unnecessaryUntracked'
+  | 'unnecessaryPeek'
+  | 'suggestRemoveUntracked'
+  | 'suggestRemovePeek';
+
+type Options = [
+  {
+    allowInEffects?: boolean | undefined;
+    allowInEventHandlers?: boolean | undefined;
+    allowForSignalWrites?: boolean | undefined;
+  },
+];
+
+const createRule = ESLintUtils.RuleCreator((name: string): string => {
+  return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}`;
+});
+
+function containsSignalAccess(node: TSESTree.Node): boolean {
+  if (
+    [
+      'FunctionDeclaration',
+      'FunctionExpression',
+      'ArrowFunctionExpression',
+      'ClassMethod',
+      'ClassPrivateMethod',
+      'ObjectMethod',
+    ].includes(node.type)
+  ) {
+    return false;
+  }
+
+  if (
+    node.type === 'MemberExpression' &&
+    node.property.type === 'Identifier' &&
+    node.property.name === 'value' &&
+    node.object.type === 'Identifier' &&
+    (node.object.name.endsWith('Signal') || node.object.name.endsWith('signal'))
+  ) {
+    return true;
+  }
+
+  if ('children' in node && Array.isArray(node.children)) {
+    return node.children.some(
+      (child) =>
+        child && typeof child === 'object' && 'type' in child && containsSignalAccess(child)
+    );
+  }
+
+  if ('properties' in node && Array.isArray(node.properties)) {
+    return node.properties.some(
+      (
+        prop:
+          | TSESTree.PropertyComputedName
+          | TSESTree.PropertyNonComputedName
+          | TSESTree.RestElement
+          | TSESTree.SpreadElement
+      ) => {
+        return containsSignalAccess(prop);
+      }
+    );
+  }
+
+  if ('elements' in node && Array.isArray(node.elements)) {
+    return node.elements.some(
+      (element) =>
+        element && typeof element === 'object' && 'type' in element && containsSignalAccess(element)
+    );
+  }
+
+  for (const key of Object.keys(node)) {
+    if (['parent', 'loc', 'range', 'type'].includes(key)) {
+      continue;
+    }
+
+    const value = node[key as keyof typeof node];
+
+    if (Array.isArray(value)) {
+      if (
+        value.some(
+          (item) => item && typeof item === 'object' && 'type' in item && containsSignalAccess(item)
+        )
+      ) {
+        return true;
+      }
+    } else if (
+      value !== null &&
+      typeof value === 'object' &&
+      'type' in value &&
+      containsSignalAccess(value)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isSignalNode(node: TSESTree.Node): boolean {
+  return (
+    node.type === 'Identifier' && (node.name.endsWith('Signal') || node.name.endsWith('signal'))
+  );
+}
+
+function isPeekAccess(node: TSESTree.Node): boolean {
+  return (
+    node.type === 'CallExpression' &&
+    node.callee.type === 'MemberExpression' &&
+    node.callee.property.type === 'Identifier' &&
+    node.callee.property.name === 'peek' &&
+    node.arguments.length === 0 &&
+    node.callee.object.type === 'MemberExpression' &&
+    node.callee.object.property.type === 'Identifier' &&
+    node.callee.object.property.name === 'value' &&
+    isSignalNode(node.callee.object.object)
+  );
+}
+
+function isUnnecessaryUntrackedCall(node: TSESTree.CallExpression): boolean {
+  return (
+    node.callee.type === 'Identifier' &&
+    node.callee.name === 'untracked' &&
+    node.arguments.length === 1 &&
+    node.arguments[0].type === 'ArrowFunctionExpression' &&
+    node.arguments[0].params.length === 0 &&
+    containsSignalAccess(node.arguments[0].body)
+  );
+}
+
+function isInReactiveContext(
+  node: TSESTree.Node,
+  context: RuleContext<MessageIds, Options>
+): boolean {
+  // Check if we're in a component or hook
+  if (!isInComponentOrHook(node)) {
+    return false;
+  }
+
+  // Check if we're in an effect or event handler (based on options)
+  const options = context.options[0] || {};
+  const allowInEffects = options.allowInEffects !== false;
+  const allowInEventHandlers = options.allowInEventHandlers !== false;
+
+  // Check if we're in an effect
+  if (!allowInEffects) {
+    let parent = node.parent;
+    while (parent) {
+      if (
+        parent.type === 'CallExpression' &&
+        parent.callee.type === 'Identifier' &&
+        parent.callee.name === 'useSignalEffect'
+      ) {
+        return false;
+      }
+      parent = parent.parent;
+    }
+  }
+
+  // Check if we're in an event handler
+  if (!allowInEventHandlers) {
+    let parent = node.parent;
+    while (parent) {
+      if (
+        parent.type === 'JSXAttribute' &&
+        parent.name.type === 'JSXIdentifier' &&
+        parent.name.name.startsWith('on') &&
+        parent.name.name[2] === parent.name.name[2].toUpperCase()
+      ) {
+        return false;
+      }
+      parent = parent.parent;
+    }
+  }
+
+  return true;
+}
+
+function isInSignalWriteContext(node: TSESTree.Node): boolean {
+  // Check if this node is part of an assignment to a signal
+  let parent: TSESTree.Node | undefined = node.parent;
+
+  while (parent) {
+    // Check for direct assignment to signal.value
+    if (
+      parent.type === 'AssignmentExpression' &&
+      parent.left.type === 'MemberExpression' &&
+      parent.left.property.type === 'Identifier' &&
+      parent.left.property.name === 'value' &&
+      parent.left.object.type === 'Identifier' &&
+      (parent.left.object.name.endsWith('Signal') || parent.left.object.name.endsWith('signal'))
+    ) {
+      return true;
+    }
+
+    // Check for increment/decrement operators
+    if (
+      (parent.type === 'UpdateExpression' || parent.type === 'UnaryExpression') &&
+      parent.argument.type === 'MemberExpression' &&
+      parent.argument.property.type === 'Identifier' &&
+      parent.argument.property.name === 'value' &&
+      parent.argument.object.type === 'Identifier' &&
+      (parent.argument.object.name.endsWith('Signal') ||
+        parent.argument.object.name.endsWith('signal'))
+    ) {
+      return true;
+    }
+
+    // Stop at function boundaries
+    if (
+      [
+        'FunctionDeclaration',
+        'FunctionExpression',
+        'ArrowFunctionExpression',
+        'ClassMethod',
+        'ClassPrivateMethod',
+        'ObjectMethod',
+      ].includes(parent.type)
+    ) {
+      break;
+    }
+
+    parent = parent.parent;
+  }
+
+  return false;
+}
+
+function isInComponentOrHook(node: TSESTree.Node): boolean {
+  let currentNode: TSESTree.Node | null = node;
+
+  while (currentNode) {
+    if (
+      ['FunctionDeclaration', 'ArrowFunctionExpression', 'FunctionExpression'].includes(
+        currentNode.type
+      )
+    ) {
+      let functionName = 'anonymous';
+
+      if (currentNode.type === 'FunctionDeclaration' && currentNode.id) {
+        functionName = currentNode.id.name;
+      } else if (
+        currentNode.parent?.type === 'VariableDeclarator' &&
+        currentNode.parent.id.type === 'Identifier'
+      ) {
+        functionName = currentNode.parent.id.name;
+      }
+
+      return /^[A-Z]/.test(functionName) || functionName.startsWith('use');
+    }
+
+    currentNode = currentNode.parent || null;
+  }
+
+  return false;
+}
+
+export const warnOnUnnecessaryUntrackedRule = createRule<Options, MessageIds>({
+  name: 'warn-on-unnecessary-untracked',
+  meta: {
+    type: 'suggestion',
+    docs: {
+      description:
+        'Warn about unnecessary untracked() calls and .peek() usage in reactive contexts',
+      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/warn-on-unnecessary-untracked',
+    },
+    messages: {
+      unnecessaryUntracked: "Avoid unnecessary 'untracked()' in reactive context",
+      unnecessaryPeek: "Avoid unnecessary '.peek()' in reactive context",
+      suggestRemoveUntracked: "Remove unnecessary 'untracked()' wrapper",
+      suggestRemovePeek: "Use '.value' instead of '.peek()'",
+    },
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          allowInEffects: {
+            type: 'boolean',
+            description: 'Allow in useSignalEffect callbacks',
+            default: true,
+          },
+          allowInEventHandlers: {
+            type: 'boolean',
+            description: 'Allow in DOM event handlers',
+            default: true,
+          },
+          allowForSignalWrites: {
+            type: 'boolean',
+            description: 'Allow when used to prevent circular dependencies in effects',
+            default: true,
+          },
+        },
+        additionalProperties: false,
+      },
+    ],
+    hasSuggestions: true,
+  },
+  defaultOptions: [
+    {
+      allowInEffects: true,
+      allowInEventHandlers: true,
+      allowForSignalWrites: true,
+    },
+  ],
+  create(context: Readonly<RuleContext<MessageIds, Options>>) {
+    const options = context.options[0] || {};
+    const sourceCode = context.sourceCode;
+
+    return {
+      CallExpression(node: TSESTree.CallExpression): void {
+        // Check for unnecessary untracked()
+        if (
+          node.callee.type === 'Identifier' &&
+          node.callee.name === 'untracked' &&
+          isUnnecessaryUntrackedCall(node) &&
+          isInReactiveContext(node, context)
+        ) {
+          context.report({
+            node,
+            messageId: 'unnecessaryUntracked',
+            suggest: [
+              {
+                messageId: 'suggestRemoveUntracked',
+                fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+                  const arg = node.arguments[0];
+
+                  if (!('body' in arg)) {
+                    return null;
+                  }
+
+                  return fixer.replaceText(node, sourceCode.getText(arg.body));
+                },
+              },
+            ],
+          });
+        }
+        // Check for .peek() usage
+        else if (isPeekAccess(node) && isInReactiveContext(node, context)) {
+          // Check if this is a signal write operation
+          const isSignalWrite = isInSignalWriteContext(node);
+
+          if (!isSignalWrite || !options.allowForSignalWrites) {
+            context.report({
+              node,
+              messageId: 'unnecessaryPeek',
+              suggest: [
+                {
+                  messageId: 'suggestRemovePeek',
+                  fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+                    if ('object' in node.callee) {
+                      return fixer.replaceText(
+                        node,
+                        `${sourceCode.getText(node.callee.object)}.value`
+                      );
+                    }
+
+                    return null;
+                  },
+                },
+              ],
+            });
+          }
+        }
+      },
+    };
+  },
+});
