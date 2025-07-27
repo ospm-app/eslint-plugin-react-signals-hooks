@@ -1,6 +1,6 @@
+import type { Pattern } from 'estree';
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import type { Definition, Reference, Scope, Variable } from '@typescript-eslint/scope-manager';
-import type { Pattern } from 'estree';
 import type { RuleContext, SuggestionReportDescriptor } from '@typescript-eslint/utils/ts-eslint';
 
 import {
@@ -17,10 +17,6 @@ import {
 import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
-
-const createRule = ESLintUtils.RuleCreator((name: string): string => {
-  return getRuleDocUrl(name);
-});
 
 type Option = {
   additionalHooks: string | undefined;
@@ -3799,6 +3795,10 @@ function visitFunctionWithDependencies(
     }
   }
 }
+
+const createRule = ESLintUtils.RuleCreator((name: string): string => {
+  return getRuleDocUrl(name);
+});
 
 const ruleName = 'exhaustive-deps';
 

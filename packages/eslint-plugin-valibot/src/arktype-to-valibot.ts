@@ -20,7 +20,7 @@ export const arktypeToValibotRule: Rule.RuleModule = {
           context.report({
             node,
             messageId: 'convertToValibot',
-            fix(fixer) {
+            fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix {
               return fixer.replaceText(node.source, "'valibot'");
             },
           });

@@ -1,5 +1,5 @@
 import { stateColocation } from './state-colocation/state-coloration.js';
-import { noPropDrilling } from './no-prop-drilling/no-prop-drilling.js';
+import { noPropDrilling } from './no-prop-drilling.js';
 import { derivedStateMemo } from './derived-state-memo/derived-state-memo.js';
 import { noStateMutation } from './no-state-mutation/no-state-mutation.js';
 import { requireCleanup } from './require-cleanup/require-cleanup.js';
@@ -11,8 +11,8 @@ import { requireKeys } from './require-keys/require-keys.js';
 import { noAny } from './no-any/no-any.js';
 import { explicitReturnTypes } from './explicit-return-types/explicit-return-types.js';
 import { noTsIgnore } from './no-ts-ignore/no-ts-ignore.js';
-import { mergeImports } from './merge-imports/merge-imports.js';
-import { autoFixTypeImports } from './auto-fix-type-imports/auto-fix-type-imports.js';
+import { mergeImports } from './merge-imports.js';
+import { autoFixTypeImports } from './auto-fix-type-imports.js';
 
 export const rules = {
   'state-colocation': stateColocation,
