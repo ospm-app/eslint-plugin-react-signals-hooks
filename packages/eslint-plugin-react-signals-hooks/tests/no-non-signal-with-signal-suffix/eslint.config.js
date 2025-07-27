@@ -13,22 +13,27 @@ export default [
       'react-signals-hooks/no-non-signal-with-signal-suffix': [
         'error',
         {
-          // onConfigured(options) {
-          //   console.info('Rule options:', JSON.stringify(options, null, 2));
-          //   return options;
-          // },
+          // Pattern to ignore (e.g., for private members with underscore)
+          ignorePattern: '^_',
+          // Custom signal function names to recognize
+          signalNames: ['signal', 'createSignal', 'useSignal'],
+          // Patterns to ignore (regex as strings)
+          ignorePatterns: ['^_'],
+          // Severity levels for different violation types
+          severity: {
+            variableWithSignalSuffixNotSignal: 'error',
+            parameterWithSignalSuffixNotSignal: 'error',
+            propertyWithSignalSuffixNotSignal: 'error',
+          },
+          // Performance budget configuration
           performance: {
-            maxTime: 5000,
-            maxNodes: 2000,
+            enableMetrics: false,
+            maxTime: 5_000,
+            maxNodes: 5_000,
+            maxOperations: 10_000,
+            trackOperations: false,
             maxMemory: 50 * 1024 * 1024, // 50MB
-            enableMetrics: true,
-            logMetrics: true,
-            maxOperations: {
-              signalCheck: 400,
-              scopeLookup: 250,
-              typeCheck: 200,
-              identifierCheck: 300,
-            },
+            logMetrics: false,
           },
         },
       ],

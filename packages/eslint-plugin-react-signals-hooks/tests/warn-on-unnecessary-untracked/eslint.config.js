@@ -9,7 +9,25 @@ export default [
       'react-signals-hooks': reactSignalsHooksPlugin,
     },
     rules: {
-      'react-signals-hooks/warn-on-unnecessary-untracked': 'error',
+      'react-signals-hooks/warn-on-unnecessary-untracked': [
+        'error',
+        {
+          // Allow untracked in useEffect/useLayoutEffect callbacks
+          allowInEffects: false,
+          // Allow untracked in event handlers
+          allowInEventHandlers: true,
+          // Allow untracked when writing to signals
+          allowForSignalWrites: true,
+          // Performance budget configuration
+          performance: {
+            enableMetrics: false,
+            maxTime: 1_000,
+            maxNodes: 5_000,
+            maxOperations: 10_000,
+            trackOperations: false,
+          },
+        },
+      ],
 
       'react-signals-hooks/exhaustive-deps': 'warn',
       'react-signals-hooks/require-use-signals': 'warn',

@@ -9,20 +9,22 @@ export default [
       'react-signals-hooks': reactSignalsHooksPlugin,
     },
     rules: {
-      // Only enable the rule we want to test with minimal configuration
-      'react-signals-hooks/exhaustive-deps': [
+      'react-signals-hooks/no-non-signal-with-signal-suffix': [
         'error',
         {
-          unsafeAutofix: false,
-          additionalHooks: undefined,
-          experimental_autoDependenciesHooks: [],
-          requireExplicitEffectDeps: true,
-          enableAutoFixForMemoAndCallback: true,
+          ignorePattern: '^_',
+          signalNames: ['signal', 'createSignal', 'useSignal'],
+          ignorePatterns: ['^_'],
+          severity: {
+            variableWithSignalSuffixNotSignal: 'error',
+            parameterWithSignalSuffixNotSignal: 'error',
+            propertyWithSignalSuffixNotSignal: 'error',
+          },
           performance: {
             enableMetrics: false,
-            maxNodes: 5_000,
             maxTime: 1_000,
-            maxOperations: 10_000,
+            maxNodes: 5_000,
+            maxOperations: 1_0000,
             trackOperations: false,
           },
         },

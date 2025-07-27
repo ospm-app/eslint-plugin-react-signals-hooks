@@ -10,7 +10,30 @@ export default [
     },
     rules: {
       // Core rules
-      'react-signals-hooks/no-mutation-in-render': 'error',
+      'react-signals-hooks/no-mutation-in-render': [
+        'error',
+        {
+          // Custom signal function names
+          signalNames: ['signal', 'useSignal', 'createSignal'],
+          // Patterns where mutations are allowed (e.g., test files)
+          allowedPatterns: ['.test.tsx?$'],
+          // Custom severity levels for different violation types
+          severity: {
+            signalValueAssignment: 'error',
+            signalPropertyAssignment: 'error',
+            signalArrayIndexAssignment: 'error',
+            signalNestedPropertyAssignment: 'error',
+          },
+          // Performance budget configuration
+          performance: {
+            enableMetrics: false,
+            maxNodes: 5_000,
+            maxTime: 1_000,
+            maxOperations: 10_000,
+            trackOperations: false,
+          },
+        },
+      ],
 
       'react-signals-hooks/exhaustive-deps': 'warn',
       'react-signals-hooks/require-use-signals': 'warn',

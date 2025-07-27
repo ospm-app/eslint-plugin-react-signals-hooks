@@ -177,6 +177,8 @@ const tsConfig = {
     'react-signals-hooks/prefer-signal-effect': 'warn',
     'react-signals-hooks/prefer-computed': 'warn',
 
+    'react-signals-hooks/consistent-rule-structure': 'warn',
+
     '@typescript-eslint/array-type': ['error', { default: 'generic' }],
     'no-shadow': 'off',
     '@typescript-eslint/strict-boolean-expressions': 'error',

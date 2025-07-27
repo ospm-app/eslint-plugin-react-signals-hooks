@@ -9,7 +9,21 @@ export default [
       'react-signals-hooks': reactSignalsHooksPlugin,
     },
     rules: {
-      'react-signals-hooks/prefer-use-signal-over-use-state': 'error',
+      'react-signals-hooks/prefer-use-signal-over-use-state': [
+        'error',
+        {
+          // Whether to ignore complex initializers in useState calls
+          ignoreComplexInitializers: false,
+          // Performance budget configuration
+          performance: {
+            enableMetrics: false,
+            maxTime: 1_000,
+            maxNodes: 5_000,
+            maxOperations: 10_000,
+            trackOperations: false,
+          },
+        },
+      ],
 
       'react-signals-hooks/exhaustive-deps': 'warn',
       'react-signals-hooks/require-use-signals': 'warn',

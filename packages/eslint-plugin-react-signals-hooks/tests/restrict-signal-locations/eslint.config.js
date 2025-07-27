@@ -13,9 +13,20 @@ export default [
       'react-signals-hooks/restrict-signal-locations': [
         'error',
         {
+          // List of glob patterns for directories where signals are allowed
           allowedDirs: ['**/allowed-dir/**'],
+          // Whether to allow computed signals in components
           allowComputedInComponents: false,
+          // Pattern to identify custom hooks
           customHookPattern: '^use[A-Z]',
+          // Performance budget configuration
+          performance: {
+            enableMetrics: false,
+            maxTime: 1_000,
+            maxNodes: 5_000,
+            maxOperations: 10_000,
+            trackOperations: false,
+          },
         },
       ],
 

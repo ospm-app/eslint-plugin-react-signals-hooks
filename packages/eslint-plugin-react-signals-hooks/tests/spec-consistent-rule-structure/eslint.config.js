@@ -9,7 +9,27 @@ export default [
       'react-signals-hooks': reactSignalsHooksPlugin,
     },
     rules: {
-      'react-signals-hooks/consistent-rule-structure': 'error',
+      'react-signals-hooks/consistent-rule-structure': [
+        'error',
+        {
+          // Whether to require performance tracking in rules
+          requirePerformanceTracking: true,
+          // Whether to require documentation URL in rule meta
+          requireDocumentationUrl: true,
+          // Whether to enforce consistent naming conventions
+          enforceNamingConvention: true,
+          // List of rule names that are exempt from these checks
+          exemptRules: [],
+          // Performance budget configuration
+          performance: {
+            enableMetrics: false,
+            maxTime: 1_000,
+            maxNodes: 5_000,
+            maxOperations: 10_000,
+            trackOperations: false,
+          },
+        },
+      ],
 
       'react-signals-hooks/exhaustive-deps': 'warn',
       'react-signals-hooks/require-use-signals': 'warn',

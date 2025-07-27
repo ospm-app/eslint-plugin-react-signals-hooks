@@ -11,7 +11,19 @@ export default [
     },
     rules: {
       // Core rules
-      'react-signals-hooks/prefer-signal-effect': 'error',
+      'react-signals-hooks/prefer-signal-effect': [
+        'error',
+        {
+          // Performance budget configuration
+          performance: {
+            enableMetrics: false,
+            maxTime: 1_000,
+            maxNodes: 5_000,
+            maxOperations: 10_000,
+            trackOperations: false,
+          },
+        },
+      ],
 
       'react-signals-hooks/exhaustive-deps': 'warn',
       'react-signals-hooks/require-use-signals': 'warn',

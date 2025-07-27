@@ -9,19 +9,16 @@ export default [
       'react-signals-hooks': reactSignalsHooksPlugin,
     },
     rules: {
-      // Only enable the rule we want to test with minimal configuration
-      'react-signals-hooks/exhaustive-deps': [
+      'react-signals-hooks/warn-on-unnecessary-untracked': [
         'error',
         {
-          unsafeAutofix: false,
-          additionalHooks: undefined,
-          experimental_autoDependenciesHooks: [],
-          requireExplicitEffectDeps: true,
-          enableAutoFixForMemoAndCallback: true,
+          allowInEffects: false,
+          allowInEventHandlers: true,
+          allowForSignalWrites: true,
           performance: {
             enableMetrics: false,
-            maxNodes: 5_000,
             maxTime: 1_000,
+            maxNodes: 5_000,
             maxOperations: 10_000,
             trackOperations: false,
           },

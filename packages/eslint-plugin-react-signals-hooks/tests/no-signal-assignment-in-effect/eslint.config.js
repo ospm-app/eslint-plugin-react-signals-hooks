@@ -10,7 +10,24 @@ export default [
     },
     rules: {
       // Core rules
-      'react-signals-hooks/no-signal-assignment-in-effect': 'error',
+      'react-signals-hooks/no-signal-assignment-in-effect': [
+        'error',
+        {
+          signalNames: ['signal', 'useSignal', 'createSignal'],
+          allowedPatterns: ['.test.tsx?$'],
+          severity: {
+            signalAssignmentInEffect: 'error',
+            signalAssignmentInLayoutEffect: 'error',
+          },
+          performance: {
+            enableMetrics: false,
+            maxTime: 1_000,
+            maxNodes: 5_000,
+            maxOperations: 10_000,
+            trackOperations: false,
+          },
+        },
+      ],
 
       'react-signals-hooks/exhaustive-deps': 'warn',
       'react-signals-hooks/require-use-signals': 'warn',

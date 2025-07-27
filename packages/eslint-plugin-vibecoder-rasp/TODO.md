@@ -43,6 +43,12 @@
 - Enforce `React.memo` for components that don't use context
 - Prevent large component trees in render methods
 
+## Error Handling
+
+### Try/Catch Best Practices
+
+- [ ] Require catch blocks for all try statements - Prevents unhandled promise rejections and runtime errors
+
 ## TypeScript Specific
 
 ### Type Safety

@@ -9,7 +9,21 @@ export default [
       'react-signals-hooks': reactSignalsHooksPlugin,
     },
     rules: {
-      'react-signals-hooks/require-use-signals': 'error',
+      'react-signals-hooks/require-use-signals': [
+        'error',
+        {
+          // List of component names to ignore (e.g., ['MyComponent', 'AnotherComponent'])
+          ignoreComponents: [],
+          // Performance budget configuration
+          performance: {
+            enableMetrics: false,
+            maxTime: 1_000,
+            maxNodes: 5_000,
+            maxOperations: 10_000,
+            trackOperations: false,
+          },
+        },
+      ],
 
       'react-signals-hooks/exhaustive-deps': 'warn',
       'react-signals-hooks/signal-variable-name': 'warn',

@@ -9,19 +9,16 @@ export default [
       'react-signals-hooks': reactSignalsHooksPlugin,
     },
     rules: {
-      // Only enable the rule we want to test with minimal configuration
-      'react-signals-hooks/exhaustive-deps': [
+      'react-signals-hooks/restrict-signal-locations': [
         'error',
         {
-          unsafeAutofix: false,
-          additionalHooks: undefined,
-          experimental_autoDependenciesHooks: [],
-          requireExplicitEffectDeps: true,
-          enableAutoFixForMemoAndCallback: true,
+          allowedDirs: ['**/allowed-dir/**'],
+          allowComputedInComponents: false,
+          customHookPattern: '^use[A-Z]',
           performance: {
             enableMetrics: false,
-            maxNodes: 5_000,
             maxTime: 1_000,
+            maxNodes: 5_000,
             maxOperations: 10_000,
             trackOperations: false,
           },

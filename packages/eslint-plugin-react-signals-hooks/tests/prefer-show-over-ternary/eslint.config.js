@@ -9,7 +9,23 @@ export default [
       'react-signals-hooks': reactSignalsHooksPlugin,
     },
     rules: {
-      'react-signals-hooks/prefer-show-over-ternary': 'error',
+      'react-signals-hooks/prefer-show-over-ternary': [
+        'error',
+        {
+          // Minimum complexity score to trigger the rule (1-10)
+          minComplexity: 3,
+          // Custom signal function names to recognize
+          signalNames: ['signal', 'useSignal', 'createSignal'],
+          // Performance budget configuration
+          performance: {
+            enableMetrics: false,
+            maxTime: 1_000,
+            maxNodes: 5_000,
+            maxOperations: 10_000,
+            trackOperations: false,
+          },
+        },
+      ],
 
       'react-signals-hooks/exhaustive-deps': 'warn',
       'react-signals-hooks/require-use-signals': 'warn',

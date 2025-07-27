@@ -10,7 +10,21 @@ export default [
     },
     rules: {
       // Core rules
-      'react-signals-hooks/prefer-batch-updates': 'warn',
+      'react-signals-hooks/prefer-batch-updates': [
+        'warn',
+        {
+          // Minimum number of signal updates to trigger the rule
+          minUpdates: 2,
+          // Performance budget configuration
+          performance: {
+            enableMetrics: false,
+            maxTime: 1_000,
+            maxNodes: 5_000,
+            maxOperations: 10_000,
+            trackOperations: false,
+          },
+        },
+      ],
       'react-signals-hooks/exhaustive-deps': 'warn',
       'react-signals-hooks/require-use-signals': 'warn',
       'react-signals-hooks/restrict-signal-locations': 'warn',

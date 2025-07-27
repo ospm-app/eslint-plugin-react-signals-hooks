@@ -10,7 +10,23 @@ export default [
     },
     rules: {
       // Core rules
-      'react-signals-hooks/prefer-batch-for-multi-mutations': 'error',
+      'react-signals-hooks/prefer-batch-for-multi-mutations': [
+        'error',
+        {
+          // Minimum number of mutations to trigger the rule
+          minMutations: 2,
+          // Maximum number of mutations to analyze (for performance)
+          maxMutations: 10,
+          // Performance budget configuration
+          performance: {
+            enableMetrics: false,
+            maxTime: 1_000,
+            maxNodes: 5_000,
+            maxOperations: 10_000,
+            trackOperations: false,
+          },
+        },
+      ],
 
       'react-signals-hooks/exhaustive-deps': 'warn',
       'react-signals-hooks/require-use-signals': 'warn',

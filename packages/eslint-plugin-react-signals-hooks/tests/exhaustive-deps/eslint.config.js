@@ -9,7 +9,34 @@ export default [
       'react-signals-hooks': reactSignalsHooksPlugin,
     },
     rules: {
-      'react-signals-hooks/exhaustive-deps': 'error',
+      'react-signals-hooks/exhaustive-deps': [
+        'error',
+        {
+          // Enable unsafe autofixes (use with caution, may produce incorrect results)
+          unsafeAutofix: false,
+          // Additional hooks that should be treated as effect hooks (regex pattern as string)
+          additionalHooks: undefined,
+          // Experimental: Auto-detect effect hooks with specific patterns
+          experimental_autoDependenciesHooks: [],
+          // Require explicit dependencies for all effects
+          requireExplicitEffectDeps: true, // More strict in tests
+          // Enable autofix for useMemo and useCallback
+          enableAutoFixForMemoAndCallback: true, // Enable for test cases
+          // Performance budget configuration
+          performance: {
+            // Enable performance metrics collection
+            enableMetrics: false,
+            // Maximum number of nodes to process before bailing out
+            maxNodes: 5_000, // Higher for tests
+            // Maximum time in milliseconds to spend on a single file
+            maxTime: 1_000, // 1 second
+            // Maximum number of operations before bailing out
+            maxOperations: 10_000,
+            // Whether to track detailed operation metrics
+            trackOperations: false,
+          },
+        },
+      ],
 
       'react-signals-hooks/require-use-signals': 'warn',
       'react-signals-hooks/signal-variable-name': 'warn',

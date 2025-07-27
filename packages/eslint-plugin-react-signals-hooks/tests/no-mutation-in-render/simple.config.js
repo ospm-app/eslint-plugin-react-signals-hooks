@@ -9,15 +9,17 @@ export default [
       'react-signals-hooks': reactSignalsHooksPlugin,
     },
     rules: {
-      // Only enable the rule we want to test with minimal configuration
-      'react-signals-hooks/exhaustive-deps': [
+      'react-signals-hooks/no-mutation-in-render': [
         'error',
         {
-          unsafeAutofix: false,
-          additionalHooks: undefined,
-          experimental_autoDependenciesHooks: [],
-          requireExplicitEffectDeps: true,
-          enableAutoFixForMemoAndCallback: true,
+          signalNames: ['signal', 'useSignal', 'createSignal'],
+          allowedPatterns: ['.test.tsx?$'],
+          severity: {
+            signalValueAssignment: 'error',
+            signalPropertyAssignment: 'error',
+            signalArrayIndexAssignment: 'error',
+            signalNestedPropertyAssignment: 'error',
+          },
           performance: {
             enableMetrics: false,
             maxNodes: 5_000,
