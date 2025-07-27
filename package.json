@@ -83,12 +83,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ospm/eslint-plugin-react-signals-hooks.git"
+    "url": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks.git"
   },
   "bugs": {
-    "url": "https://github.com/ospm/eslint-plugin-react-signals-hooks/issues"
+    "url": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/issues"
   },
-  "homepage": "https://github.com/ospm/eslint-plugin-react-signals-hooks#readme",
+  "homepage": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks#readme",
   "peerDependencies": {
     "react": "^18.2.0 || ^19.0.0",
     "@types/react": "^18.2.0 || ^19.0.0",
