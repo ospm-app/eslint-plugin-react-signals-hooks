@@ -32,6 +32,7 @@ import { noSignalAssignmentInEffectRule } from './no-signal-assignment-in-effect
 import { noSignalCreationInComponentRule } from './no-signal-creation-in-component.js';
 import { noNonSignalWithSignalSuffixRule } from './no-non-signal-with-signal-suffix.js';
 import { requireUseSignalsRule } from './require-use-signals.js';
+import { restrictSignalLocations } from './restrict-signal-locations.js';
 
 // Performance optimization rules
 import { preferBatchUpdatesRule } from './prefer-batch-updates.js';
@@ -57,6 +58,7 @@ const rules = {
   'no-non-signal-with-signal-suffix': noNonSignalWithSignalSuffixRule,
   'no-signal-creation-in-component': noSignalCreationInComponentRule,
   'require-use-signals': requireUseSignalsRule,
+  'restrict-signal-locations': restrictSignalLocations,
 
   // Performance optimization rules
   'prefer-batch-updates': preferBatchUpdatesRule,

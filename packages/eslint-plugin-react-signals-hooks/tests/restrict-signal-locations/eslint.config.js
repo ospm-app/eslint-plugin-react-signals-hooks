@@ -9,10 +9,17 @@ export default [
       'react-signals-hooks': reactSignalsHooksPlugin,
     },
     rules: {
-      // we test it only here, cos it usually require a lot of refactoring involved, but provides a better control over signals layer.
-      'react-signals-hooks/restrict-signal-locations': 'error',
+      // Default configuration
+      'react-signals-hooks/restrict-signal-locations': [
+        'error',
+        {
+          allowedDirs: ['**/allowed-dir/**'],
+          allowComputedInComponents: false,
+          customHookPattern: '^use[A-Z]',
+        },
+      ],
 
-      'react-signals-hooks/exhaustive-deps': 'warn',
+      // Other rules with minimal configuration
       'react-signals-hooks/require-use-signals': 'warn',
       'react-signals-hooks/signal-variable-name': 'warn',
       'react-signals-hooks/warn-on-unnecessary-untracked': 'warn',

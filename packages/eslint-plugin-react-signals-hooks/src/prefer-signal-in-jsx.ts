@@ -1,16 +1,26 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 
-import { PerformanceOperations } from './utils/performance-constants.js';
-import { DEFAULT_PERFORMANCE_BUDGET } from './utils/performance.js';
+import {
+  endPhase,
+  startPhase,
+  stopTracking,
+  startTracking,
+  trackOperation,
+  createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
+} from './utils/performance.js';
+import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
+import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
+import { PerformanceOperations } from './utils/performance-constants.js';
+
+type Option = {
+  performance: PerformanceBudget;
+};
+
+type Options = [Option];
 
 type MessageIds = 'preferDirectSignalUsage';
-
-type Options = [
-  {
-    performance: PerformanceBudget;
-  },
-];
 
 function isInJSXAttribute(node: TSESTree.Node): boolean {
   let current: TSESTree.Node | undefined = node.parent;
@@ -79,35 +89,33 @@ function isSignalValueAccess(node: TSESTree.MemberExpression): node is TSESTree.
 }
 
 function shouldSkipNode(node: TSESTree.Node): boolean {
-  const skipExpressionTypes = [
-    'MemberExpression',
-    'ChainExpression',
-    'OptionalMemberExpression',
-    'BinaryExpression',
-    'UnaryExpression',
-    'LogicalExpression',
-  ] as const;
-
-  return skipExpressionTypes.some((type) => node.parent?.type === type);
+  return (
+    [
+      'MemberExpression',
+      'ChainExpression',
+      'OptionalMemberExpression',
+      'BinaryExpression',
+      'UnaryExpression',
+      'LogicalExpression',
+    ] as const
+  ).some((type): boolean => {
+    return typeof node.parent !== 'undefined' && node.parent?.type === type;
+  });
 }
 
 const createRule = ESLintUtils.RuleCreator((name: string): string => {
-  return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}`;
+  return getRuleDocUrl(name);
 });
 
-/**
- * ESLint rule: prefer-signal-in-jsx
- *
- * This rule enforces direct usage of signals in JSX without .value access.
- * In JSX, signals can be used directly for better readability.
- */
+const ruleName = 'prefer-signal-in-jsx';
+
 export const preferSignalInJsxRule = createRule<Options, MessageIds>({
-  name: 'prefer-signal-in-jsx',
+  name: ruleName,
   meta: {
     type: 'suggestion',
     docs: {
       description: 'Prefer direct signal usage in JSX over .value access',
-      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/prefer-signal-in-jsx',
+      url: getRuleDocUrl(ruleName),
     },
     fixable: 'code',
     messages: {
@@ -148,10 +156,54 @@ export const preferSignalInJsxRule = createRule<Options, MessageIds>({
       performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
-  create(context) {
+  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
+    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
+
+    startPhase(perfKey, 'rule-init');
+
+    const perf = createPerformanceTracker(perfKey, option.performance, context);
+
+    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+    console.info(`${ruleName}: Rule configuration:`, option);
+
+    let nodeCount = 0;
+
+    function shouldContinue(): boolean {
+      nodeCount++;
+
+      // Check if we've exceeded the node budget
+      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+
+        return false;
+      }
+
+      return true;
+    }
+
+    if (option.performance.enableMetrics) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    trackOperation(perfKey, PerformanceOperations.ruleInitialization);
+
     let jsxDepth = 0;
 
+    endPhase(perfKey, 'rule-init');
+
     return {
+      '*': (node: TSESTree.Node): void => {
+        if (!shouldContinue()) {
+          return;
+        }
+
+        perf.trackNode(node);
+
+        if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
+          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        }
+      },
+
       // Track JSX depth to determine if we're inside JSX
       JSXElement(): void {
         jsxDepth++;
@@ -194,6 +246,40 @@ export const preferSignalInJsxRule = createRule<Options, MessageIds>({
             return fixer.replaceText(node, node.object.name);
           },
         });
+      },
+
+      // Clean up
+      'Program:exit'(): void {
+        startPhase(perfKey, 'programExit');
+
+        try {
+          startPhase(perfKey, 'recordMetrics');
+
+          const finalMetrics = stopTracking(perfKey);
+
+          if (finalMetrics) {
+            console.info(
+              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
+            );
+            console.info(`  File: ${context.filename}`);
+            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
+            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+
+            if (finalMetrics.exceededBudget) {
+              console.warn('\n⚠️  Performance budget exceeded!');
+            }
+          }
+        } catch (error: unknown) {
+          console.error('Error recording metrics:', error);
+        } finally {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+        }
+
+        perf['Program:exit']();
+
+        endPhase(perfKey, 'programExit');
       },
     };
   },

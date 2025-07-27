@@ -1,28 +1,33 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
+import {
+  endPhase,
+  startPhase,
+  stopTracking,
+  startTracking,
+  trackOperation,
+  createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
+} from './utils/performance.js';
+import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
-import { DEFAULT_PERFORMANCE_BUDGET } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
+
+type Option = {
+  allowInEffects: boolean;
+  allowInEventHandlers: boolean;
+  allowForSignalWrites: boolean;
+  performance: PerformanceBudget;
+};
+
+type Options = [Option];
 
 type MessageIds =
   | 'unnecessaryUntracked'
   | 'unnecessaryPeek'
   | 'suggestRemoveUntracked'
   | 'suggestRemovePeek';
-
-type Options = [
-  {
-    allowInEffects?: boolean | undefined;
-    allowInEventHandlers?: boolean | undefined;
-    allowForSignalWrites?: boolean | undefined;
-    performance?: PerformanceBudget | undefined;
-  },
-];
-
-const createRule = ESLintUtils.RuleCreator((name: string): string => {
-  return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}`;
-});
 
 function containsSignalAccess(node: TSESTree.Node): boolean {
   if (
@@ -49,10 +54,9 @@ function containsSignalAccess(node: TSESTree.Node): boolean {
   }
 
   if ('children' in node && Array.isArray(node.children)) {
-    return node.children.some(
-      (child) =>
-        child && typeof child === 'object' && 'type' in child && containsSignalAccess(child)
-    );
+    return node.children.some((child: TSESTree.JSXChild): boolean => {
+      return child && typeof child === 'object' && 'type' in child && containsSignalAccess(child);
+    });
   }
 
   if ('properties' in node && Array.isArray(node.properties)) {
@@ -70,10 +74,14 @@ function containsSignalAccess(node: TSESTree.Node): boolean {
   }
 
   if ('elements' in node && Array.isArray(node.elements)) {
-    return node.elements.some(
-      (element) =>
-        element && typeof element === 'object' && 'type' in element && containsSignalAccess(element)
-    );
+    return node.elements.some((element: TSESTree.Node | null): boolean => {
+      return (
+        element !== null &&
+        typeof element === 'object' &&
+        'type' in element &&
+        containsSignalAccess(element)
+      );
+    });
   }
 
   for (const key of Object.keys(node)) {
@@ -144,13 +152,8 @@ function isInReactiveContext(
     return false;
   }
 
-  // Check if we're in an effect or event handler (based on options)
-  const options = context.options[0] || {};
-  const allowInEffects = options.allowInEffects !== false;
-  const allowInEventHandlers = options.allowInEventHandlers !== false;
-
   // Check if we're in an effect
-  if (!allowInEffects) {
+  if (context.options[0].allowInEffects === false) {
     let parent = node.parent;
     while (parent) {
       if (
@@ -165,7 +168,7 @@ function isInReactiveContext(
   }
 
   // Check if we're in an event handler
-  if (!allowInEventHandlers) {
+  if (context.options[0].allowInEventHandlers === false) {
     let parent = node.parent;
     while (parent) {
       if (
@@ -262,14 +265,20 @@ function isInComponentOrHook(node: TSESTree.Node): boolean {
   return false;
 }
 
+const createRule = ESLintUtils.RuleCreator((name: string): string => {
+  return getRuleDocUrl(name);
+});
+
+const ruleName = 'warn-on-unnecessary-untracked';
+
 export const warnOnUnnecessaryUntrackedRule = createRule<Options, MessageIds>({
-  name: 'warn-on-unnecessary-untracked',
+  name: ruleName,
   meta: {
     type: 'suggestion',
     docs: {
       description:
         'Warn about unnecessary untracked() calls and .peek() usage in reactive contexts',
-      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/warn-on-unnecessary-untracked',
+      url: getRuleDocUrl(ruleName),
     },
     messages: {
       unnecessaryUntracked: "Avoid unnecessary 'untracked()' in reactive context",
@@ -330,11 +339,52 @@ export const warnOnUnnecessaryUntrackedRule = createRule<Options, MessageIds>({
       performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
-  create(context: Readonly<RuleContext<MessageIds, Options>>) {
-    const options = context.options[0] || {};
-    const sourceCode = context.sourceCode;
+  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
+    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
+
+    startPhase(perfKey, 'rule-init');
+
+    const perf = createPerformanceTracker(perfKey, option.performance, context);
+
+    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+    console.info(`${ruleName}: Rule configuration:`, option);
+
+    let nodeCount = 0;
+
+    // Helper function to check if we should continue processing
+    function shouldContinue(): boolean {
+      nodeCount++;
+
+      // Check if we've exceeded the node budget
+      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+
+        return false;
+      }
+
+      return true;
+    }
+
+    if (option.performance.enableMetrics) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    trackOperation(perfKey, PerformanceOperations.ruleInitialization);
+
+    endPhase(perfKey, 'rule-init');
 
     return {
+      '*': (node: TSESTree.Node): void => {
+        if (!shouldContinue()) {
+          return;
+        }
+
+        perf.trackNode(node);
+
+        if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
+          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        }
+      },
       CallExpression(node: TSESTree.CallExpression): void {
         // Check for unnecessary untracked()
         if (
@@ -356,7 +406,7 @@ export const warnOnUnnecessaryUntrackedRule = createRule<Options, MessageIds>({
                     return null;
                   }
 
-                  return fixer.replaceText(node, sourceCode.getText(arg.body));
+                  return fixer.replaceText(node, context.sourceCode.getText(arg.body));
                 },
               },
             ],
@@ -367,7 +417,7 @@ export const warnOnUnnecessaryUntrackedRule = createRule<Options, MessageIds>({
           // Check if this is a signal write operation
           const isSignalWrite = isInSignalWriteContext(node);
 
-          if (!isSignalWrite || !options.allowForSignalWrites) {
+          if (!isSignalWrite || !option.allowForSignalWrites) {
             context.report({
               node,
               messageId: 'unnecessaryPeek',
@@ -378,7 +428,7 @@ export const warnOnUnnecessaryUntrackedRule = createRule<Options, MessageIds>({
                     if ('object' in node.callee) {
                       return fixer.replaceText(
                         node,
-                        `${sourceCode.getText(node.callee.object)}.value`
+                        `${context.sourceCode.getText(node.callee.object)}.value`
                       );
                     }
 
@@ -389,6 +439,40 @@ export const warnOnUnnecessaryUntrackedRule = createRule<Options, MessageIds>({
             });
           }
         }
+      },
+
+      // Clean up
+      'Program:exit'(): void {
+        startPhase(perfKey, 'programExit');
+
+        try {
+          startPhase(perfKey, 'recordMetrics');
+
+          const finalMetrics = stopTracking(perfKey);
+
+          if (finalMetrics) {
+            const status = finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK';
+
+            console.info(`\n[${ruleName}] Performance Metrics (${status}):`);
+            console.info(`  File: ${context.filename}`);
+            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
+            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+
+            if (finalMetrics.exceededBudget) {
+              console.warn('\n⚠️  Performance budget exceeded!');
+            }
+          }
+        } catch (error: unknown) {
+          console.error('Error recording metrics:', error);
+        } finally {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+        }
+
+        perf['Program:exit']();
+
+        endPhase(perfKey, 'programExit');
       },
     };
   },

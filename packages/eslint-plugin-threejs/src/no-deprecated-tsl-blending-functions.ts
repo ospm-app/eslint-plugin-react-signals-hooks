@@ -103,7 +103,8 @@ function isThreeMemberExpression(
     isDeprecatedBlendingProperty(node.property.name)
   ) {
     // Check if the object is an import of THREE
-    const scope = context.sourceCode.getScope?.(node) || context.getScope();
+    const scope = context.sourceCode.getScope(node);
+
     const variable = scope.variables.find((v): boolean => {
       return 'name' in node.object && v.name === node.object.name;
     });

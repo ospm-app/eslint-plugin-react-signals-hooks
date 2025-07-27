@@ -1,45 +1,48 @@
-# Performance Guide for ESLint Rules
+# Performance Optimization Guide for ESLint Rules
 
-This guide explains how to integrate performance tracking and optimization into ESLint rules for the `eslint-plugin-react-signals-hooks` package.
+This guide provides best practices and patterns for implementing high-performance ESLint rules, based on the patterns used in this codebase.
 
-## Performance Integration
+## Table of Contents
 
-### 1. Performance Budget
+- [Performance Optimization Guide for ESLint Rules](#performance-optimization-guide-for-eslint-rules)
+  - [Table of Contents](#table-of-contents)
+  - [Performance Budget](#performance-budget)
+  - [Performance Tracking](#performance-tracking)
+    - [1. Initialize Performance Tracking](#1-initialize-performance-tracking)
+    - [2. Set Up Rule with Performance Tracking](#2-set-up-rule-with-performance-tracking)
+  - [Rule Structure](#rule-structure)
+    - [1. Node Counting and Early Exit](#1-node-counting-and-early-exit)
+    - [2. Track Operations](#2-track-operations)
+  - [Optimization Techniques](#optimization-techniques)
+    - [1. Early Returns](#1-early-returns)
+    - [2. Cache Results](#2-cache-results)
+    - [3. Selective Visitor Implementation](#3-selective-visitor-implementation)
+  - [Common Pitfalls](#common-pitfalls)
+  - [Performance Testing](#performance-testing)
+  - [Conclusion](#conclusion)
 
-Each rule should accept an optional `performance` option in its configuration with these common settings:
+## Performance Budget
+
+Each rule should define a performance budget to prevent excessive resource usage. The default budget is provided in `DEFAULT_PERFORMANCE_BUDGET`:
 
 ```typescript
-interface PerformanceBudget {
-  // Time limit in milliseconds per file
-  maxTime?: number;  // Default: 50ms
-  
-  // Maximum number of nodes to process
-  maxNodes?: number;  // Default: 2000
-  
-  // Memory limit in bytes
-  maxMemory?: number;  // Default: 50MB
-  
-  // Operation-specific limits
-  maxOperations?: {
-    [PerformanceOperations.signalAccess]?: number;    // Default: 1000
-    [PerformanceOperations.signalCheck]?: number;     // Default: 500
-    [PerformanceOperations.effectCheck]?: number;     // Default: 500
-    [PerformanceOperations.identifierResolution]?: number;  // Default: 1000
-    [PerformanceOperations.scopeLookup]?: number;     // Default: 1000
-    [PerformanceOperations.typeCheck]?: number;       // Default: 500
-  };
-  
-  // Enable detailed performance metrics
-  enableMetrics?: boolean;  // Default: false
-  
-  // Log performance metrics to console
-  logMetrics?: boolean;     // Default: false
-}
+const DEFAULT_PERFORMANCE_BUDGET = {
+  maxNodeCount: 10_000, // Maximum number of nodes to process
+  maxNodeCountPerRun: 1_000, // Maximum nodes per run
+  maxFixCount: 100, // Maximum number of fixes per run
+  maxFixCountPerRun: 10, // Maximum fixes per run
+  maxFixIterations: 5, // Maximum fix iterations
+  maxFixTimeMs: 1000, // Maximum time spent on fixes (ms)
+  maxTotalTimeMs: 5000, // Maximum total time (ms)
+  enableMetrics: false, // Enable detailed metrics
+};
 ```
 
-### 2. Performance Tracking Utilities
+## Performance Tracking
 
-Import and use these performance tracking utilities from `./utils/performance.js`:
+### 1. Initialize Performance Tracking
+
+Start by importing the necessary utilities:
 
 ```typescript
 import {
@@ -47,263 +50,173 @@ import {
   trackOperation,
   startPhase,
   endPhase,
-  recordMetric,
   stopTracking,
-  PerformanceLimitExceededError,
-} from './utils/performance.js';
-import { PerformanceOperations } from './utils/performance-constants.js';
+  startTracking,
+  DEFAULT_PERFORMANCE_BUDGET,
+} from './utils/performance';
+import { PerformanceOperations } from './utils/performance-constants';
 ```
 
-## Rule Implementation Pattern
+### 2. Set Up Rule with Performance Tracking
 
-### 1. Basic Rule Structure
+In your rule's `create` function, initialize performance tracking:
 
 ```typescript
-export const rule = createRule<Options, MessageIds>({
-  name: 'rule-name',
-  meta: {
-    type: 'problem',
-    docs: {
-      description: 'Rule description',
-      recommended: 'recommended',
-    },
-    messages: {
-      performanceLimitExceeded: 'Performance limit exceeded: {{message}}',
-      // other messages
-    },
-    schema: [
-      // Rule schema
-    ],
-  },
-
-  defaultOptions: [{
-    // Default options including performance settings
-    performance: {
-      maxTime: 50,        // ms
-      maxNodes: 2000,     // nodes
-      maxMemory: 50 * 1024 * 1024,  // 50MB
-      logMetrics: false,
-    },
-  }],
-
-  create(context, [options = {}]) {
-    // Set up performance tracking with a unique key
-    const perfKey = `rule-name:${context.filename}`;
-
-    // Initialize performance budget with defaults
-    const perfBudget: PerformanceBudget = {
-      maxTime: options.performance?.maxTime ?? 50,
-      maxNodes: options.performance?.maxNodes ?? 2000,
-      maxMemory: options.performance?.maxMemory ?? 50 * 1024 * 1024,
-      maxOperations: {
-        [PerformanceOperations.signalAccess]: 1000,
-        [PerformanceOperations.signalCheck]: 500,
-        // ... other operations
-      },
-      enableMetrics: options.performance?.enableMetrics ?? false,
-      logMetrics: options.performance?.logMetrics ?? false,
-    };
-
-    // Create performance tracker
-    const perf = createPerformanceTracker(perfKey, perfBudget, context);
-    
-    // Track node processing
-    let nodeCount = 0;
-
-    // Helper function to check if we should continue processing
-    function shouldContinue(): boolean {
-      nodeCount++;
-
-      // Check if we've exceeded the node budget
-      if (nodeCount > (options.performance?.maxNodes ?? 2000)) {
-        trackOperation(perfKey, 'nodeBudgetExceeded');
-
-        return false;
-      }
-
-      return true;
-    }
-
-    // Track the operation
-    try {
-      trackOperation(perfKey, operation);
-      return true;
-    } catch (error) {
-      if (error instanceof PerformanceLimitExceededError) {
-        context.report({
-          node: { type: 'Program' } as TSESTree.Node,
-          messageId: 'performanceLimitExceeded',
-          data: { message: error.message },
-        });
-
-        return false;
-      }
-
-      throw error;
-    }
-    
-    // Rule implementation
-    return {
-      // Track all nodes
-      '*': (node: TSESTree.Node) => {
-        perf.trackNode(node);
-
-        if (!shouldContinue('nodeProcessing')) { 
-          return;
-        }
-
-        // Rule-specific node handling
-        // ...
-      },
-
-      // Clean up on program exit
-      'Program:exit'(node: TSESTree.Node): void {
-         if (!perf) {
-          throw new Error('Performance tracker not initialized');
-        }
-
-        startPhase(perfKey, 'programExit');
-
-        perf.trackNode(node);
-
-        try {
-          startPhase(perfKey, 'recordMetrics');
-
-          const finalMetrics = stopTracking(perfKey);
-
-          if (finalMetrics) {
-            const { exceededBudget, nodeCount, duration } = finalMetrics;
-            const status = exceededBudget ? 'EXCEEDED' : 'OK';
-
-            console.info(`\n[prefer-batch-updates] Performance Metrics (${status}):`);
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${nodeCount}`);
-
-            if (exceededBudget) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
-        }
-
-        perf['Program:exit']();
-
-        endPhase(perfKey, 'programExit');
-      }
-    };
-  },
-});
+create(context, [option]): ESLintUtils.RuleListener {
+  const perfKey = `${ruleName}:${context.filename}`;
+  
+  // Start performance tracking phase
+  startPhase(perfKey, 'rule-init');
+  
+  // Create performance tracker with options
+  const perf = createPerformanceTracker(perfKey, option.performance, context);
+  
+  // Enable metrics if specified
+  if (option.performance?.enableMetrics === true) {
+    startTracking(context, perfKey, option.performance, ruleName);
+  }
+  
+  // Track operations
+  trackOperation(perfKey, PerformanceOperations.ruleInitialization);
+  
+  // ... rest of your rule implementation
+  
+  // End phase when done
+  endPhase(perfKey, 'rule-init');
+  
+  return {
+    // Your rule visitors
+  };
+}
 ```
 
-### 2. Tracking Operations
+## Rule Structure
+
+### 1. Node Counting and Early Exit
+
+Implement node counting to prevent excessive processing:
+
+```typescript
+let nodeCount = 0;
+
+function shouldContinue(): boolean {
+  nodeCount++;
+  
+  // Check if we've exceeded the node budget
+  if (nodeCount > (option.performance?.maxNodeCount ?? DEFAULT_PERFORMANCE_BUDGET.maxNodeCount)) {
+    context.report({
+      node: context.sourceCode.ast,
+      messageId: 'performanceLimitExceeded',
+      data: {
+        nodeCount,
+        maxNodeCount: option.performance?.maxNodeCount ?? DEFAULT_PERFORMANCE_BUDGET.maxNodeCount,
+      },
+    });
+    return false;
+  }
+  
+  return true;
+}
+```
+
+### 2. Track Operations
 
 Use `trackOperation` to measure specific operations:
 
 ```typescript
-function checkSignalAccess(node: TSESTree.Node) {
-  return trackOperation(perfKey, PerformanceOperations.signalAccess, () => {
-    metrics.signalChecks++;
-    // Expensive signal check logic
-  });
-}
+// Track specific operations
+trackOperation(perfKey, PerformanceOperations.signalDetection);
+
+// Time a specific phase
+startPhase(perfKey, 'signal-detection');
+// ... operation to measure
+endPhase(perfKey, 'signal-detection');
 ```
 
-### 3. Using Phases
+## Optimization Techniques
 
-Group related operations into phases for better metrics:
+### 1. Early Returns
+
+Use early returns to skip unnecessary processing:
 
 ```typescript
-function analyzeComponent(node: TSESTree.FunctionDeclaration) {
-  startPhase(perfKey, 'componentAnalysis');
-  try {
-    // Analysis code
-    startPhase(perfKey, 'signalDetection');
-    try {
-      // Signal detection logic
-    } finally {
-      endPhase(perfKey, 'signalDetection');
-    }
-  } finally {
-    endPhase(perfKey, 'componentAnalysis');
-  }
+if (!shouldContinue()) {
+  return;
+}
+
+// Only proceed if we're in a component or hook
+if (!inComponent && !inHook) {
+  return;
 }
 ```
 
-## Performance Budget Recommendations
+### 2. Cache Results
 
-| Rule Type | maxTime (ms) | maxNodes | maxMemory |
-|-----------|-------------|----------|-----------|
-| Simple    | 20-30       | 1000     | 20MB      |
-| Medium    | 40-60       | 2000     | 50MB      |
-| Complex   | 60-100      | 5000     | 100MB     |
+Cache expensive operations:
 
-## Common Performance Operations
+```typescript
+// At the module level
+const signalImportCache = new Map<string, boolean>();
 
-Use these standard operation names from `PerformanceOperations`:
+// In your rule
+function hasSignalImport(sourceCode: SourceCode): boolean {
+  if (signalImportCache.has(sourceCode.text)) {
+    return signalImportCache.get(sourceCode.text)!;
+  }
+  
+  const hasImport = sourceCode.ast.body.some(node => 
+    node.type === 'ImportDeclaration' &&
+    node.source.value === '@preact/signals-react'
+  );
+  
+  signalImportCache.set(sourceCode.text, hasImport);
+  return hasImport;
+}
+```
 
-- `signalAccess`: Accessing signal values
-- `signalUpdate`: Updating signal values
-- `signalCheck`: Checking if something is a signal
-- `effectCheck`: Analyzing effect hooks
-- `scopeLookup`: Scope analysis operations
-- `typeCheck`: Type checking operations
-- `nodeProcessing`: General AST node processing
+### 3. Selective Visitor Implementation
 
-## Best Practices
+Only implement the visitor methods you need:
 
-1. **Measure First**: Always profile the rule with realistic codebases to identify bottlenecks.
-2. **Set Realistic Limits**: Configure default performance budgets based on real-world usage.
-3. **Fail Fast**: Stop processing as soon as a performance limit is exceeded.
-4. **Use Caching**: Cache expensive computations when possible.
-5. **Be Selective**: Only track operations that are likely to be expensive.
-6. **Document Performance Characteristics**: Add JSDoc comments explaining the time/space complexity of complex operations.
+```typescript
+return {
+  // Only implement necessary visitors
+  'CallExpression': handleCallExpression,
+  'VariableDeclarator': handleVariableDeclarator,
+  // ... other visitors
+};
+```
+
+## Common Pitfalls
+
+1. **Excessive AST Traversal**: Avoid traversing the entire AST when possible. Use specific selectors to target only relevant nodes.
+
+2. **Memory Leaks**: Clear caches and remove event listeners when they're no longer needed.
+
+3. **Inefficient Fixes**: When providing fixes, ensure they're as minimal as possible and don't trigger additional linting passes unnecessarily.
+
+4. **Blocking Operations**: Avoid synchronous operations that could block the main thread, especially when processing large codebases.
 
 ## Performance Testing
 
-Add performance tests to ensure the rule remains efficient:
+Test your rule's performance with various codebase sizes:
+
+1. **Small Files**: Ensure the rule works correctly with small files.
+2. **Large Files**: Test with large files to identify performance bottlenecks.
+3. **Real-world Codebases**: Test with actual project code to ensure realistic performance.
+
+Use the performance metrics to identify and optimize slow operations:
 
 ```typescript
-describe('performance', () => {
-  it('should handle large files efficiently', () => {
-    const largeCode = generateLargeCode();
-    const ruleTester = new RuleTester({
-      parser: require.resolve('@typescript-eslint/parser'),
-    });
-    
-    const start = process.hrtime.bigint();
-    ruleTester.run('rule-name', rule, {
-      valid: [],
-      invalid: [
-        {
-          code: largeCode,
-          options: [{
-            performance: {
-              maxTime: 1000, // 1 second limit
-              logMetrics: true,
-            },
-          }],
-          errors: [{ messageId: 'performanceLimitExceeded' }],
-        },
-      ],
-    });
-    const end = process.hrtime.bigint();
-    const durationMs = Number(end - start) / 1e6;
-    
-    expect(durationMs).toBeLessThan(2000); // Test should complete within 2 seconds
-  });
-});
+// Enable detailed metrics
+const options = {
+  performance: {
+    enableMetrics: true,
+    // ... other performance options
+  }
+};
 ```
 
-## Performance Tuning
+## Conclusion
 
-1. **Optimize Hot Paths**: Focus on the most frequently executed code paths.
-2. **Reduce AST Traversals**: Minimize the number of times you traverse the AST.
-3. **Use Early Returns**: Exit early when possible to avoid unnecessary work.
-4. **Lazy Evaluation**: Only compute what's needed when it's needed.
-5. **Memory Management**: Be mindful of memory usage, especially with large codebases.
+By following these patterns and best practices, you can create ESLint rules that are both powerful and performant. Always profile your rules with realistic codebases to identify and address any performance issues early in development.

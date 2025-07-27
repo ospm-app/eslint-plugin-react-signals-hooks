@@ -1,16 +1,17 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import type { RuleContext, SourceCode } from '@typescript-eslint/utils/ts-eslint';
+
 import {
   endPhase,
   startPhase,
   stopTracking,
   startTracking,
+  trackOperation,
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
-  trackOperation,
 } from './utils/performance.js';
-import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
+import { PerformanceOperations } from './utils/performance-constants.js';
 import type { PerformanceBudget } from './utils/types.js';
 
 type Option = {
@@ -27,26 +28,15 @@ type MessageIds =
   | 'moveToModuleLevel'
   | 'createCustomHook';
 
-function isReactComponentName(name: string): boolean {
-  return /^[A-Z]/.test(name);
-}
-
-function isHookName(name: string): boolean {
-  return name.startsWith('use') && name.length > 3 && name[3] === name[3].toUpperCase();
-}
-
 function getSignalInfo(node: TSESTree.CallExpression, sourceCode: Readonly<SourceCode>) {
-  const signalName = node.callee.type === 'Identifier' ? node.callee.name : 'signal';
-
   return {
-    signalName,
+    signalName: node.callee.type === 'Identifier' ? node.callee.name : 'signal',
     signalValue: node.arguments.length > 0 ? sourceCode.getText(node.arguments[0]) : 'undefined',
-    varName: signalName === 'signal' ? 'value' : 'computedValue',
+    varName:
+      (node.callee.type === 'Identifier' ? node.callee.name : 'signal') === 'signal'
+        ? 'value'
+        : 'computedValue',
   };
-}
-
-function getNewLine(sourceCode: Readonly<SourceCode>): string {
-  return sourceCode.getText().includes('\r\n') ? '\r\n' : '\n';
 }
 
 function generateUniqueHookName(
@@ -105,14 +95,6 @@ function getLeadingCommentsText(
   };
 }
 
-function isSignalCreation(node: TSESTree.Node): boolean {
-  return (
-    node.type === 'CallExpression' &&
-    node.callee.type === 'Identifier' &&
-    (node.callee.name === 'signal' || node.callee.name === 'computed')
-  );
-}
-
 function isReactComponent(
   node:
     | TSESTree.ArrowFunctionExpression
@@ -121,11 +103,11 @@ function isReactComponent(
   parent: TSESTree.Node | undefined
 ): boolean {
   if (node.type === 'FunctionDeclaration' && node.id) {
-    return isReactComponentName(node.id.name);
+    return /^[A-Z]/.test(node.id.name);
   }
 
   if (parent?.type === 'VariableDeclarator' && parent.id?.type === 'Identifier') {
-    return isReactComponentName(parent.id.name);
+    return /^[A-Z]/.test(parent.id.name);
   }
 
   return false;
@@ -140,11 +122,19 @@ function isHookFunction(node: TSESTree.Node): boolean {
 
   // For function declarations, check the name directly first
   if (node.type === 'FunctionDeclaration' && node.id) {
-    return isHookName(node.id.name);
+    return (
+      node.id.name.startsWith('use') &&
+      node.id.name.length > 3 &&
+      node.id.name[3] === node.id.name[3].toUpperCase()
+    );
   }
 
   if (node.parent?.type === 'VariableDeclarator' && node.parent.id.type === 'Identifier') {
-    return isHookName(node.parent.id.name);
+    return (
+      node.parent.id.name.startsWith('use') &&
+      node.parent.id.name.length > 3 &&
+      node.parent.id.name[3] === node.parent.id.name[3].toUpperCase()
+    );
   }
 
   return false;
@@ -260,6 +250,7 @@ export const noSignalCreationInComponentRule = createRule<Options, MessageIds>({
           trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
         }
       },
+
       'FunctionDeclaration, ArrowFunctionExpression, FunctionExpression'(
         node:
           | TSESTree.ArrowFunctionExpression
@@ -310,7 +301,12 @@ export const noSignalCreationInComponentRule = createRule<Options, MessageIds>({
           inEffect = true;
         }
 
-        if (isSignalCreation(node) && (inComponent || inHook || wasInEffect)) {
+        if (
+          node.type === 'CallExpression' &&
+          node.callee.type === 'Identifier' &&
+          (node.callee.name === 'signal' || node.callee.name === 'computed') &&
+          (inComponent || inHook || wasInEffect)
+        ) {
           const sourceCode = context.sourceCode;
 
           const { signalName, signalValue, varName } = getSignalInfo(node, sourceCode);
@@ -330,7 +326,7 @@ export const noSignalCreationInComponentRule = createRule<Options, MessageIds>({
                 data: { signalType },
                 *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix, void, unknown> {
                   const firstNode = sourceCode.ast.body[0];
-                  const newLine = getNewLine(sourceCode);
+                  const newLine = sourceCode.getText().includes('\r\n') ? '\r\n' : '\n';
 
                   // Add the signal to the top of the file
                   yield fixer.insertTextBefore(
@@ -353,7 +349,7 @@ export const noSignalCreationInComponentRule = createRule<Options, MessageIds>({
               {
                 messageId: 'moveToModuleLevel',
                 *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix, void, unknown> {
-                  const newLine = getNewLine(sourceCode);
+                  const newLine = sourceCode.getText().includes('\r\n') ? '\r\n' : '\n';
 
                   yield fixer.insertTextBefore(
                     sourceCode.ast.body[0],
@@ -376,7 +372,7 @@ export const noSignalCreationInComponentRule = createRule<Options, MessageIds>({
                     typeof lastImport === 'undefined' ? 0 : lastImport.range[1] + 1;
 
                   const hookName = `use${signalName.charAt(0).toUpperCase() + signalName.slice(1)}`;
-                  const newLine = getNewLine(sourceCode);
+                  const newLine = sourceCode.getText().includes('\r\n') ? '\r\n' : '\n';
 
                   yield fixer.insertTextAfterRange(
                     [insertPosition, insertPosition],
@@ -405,7 +401,7 @@ export const noSignalCreationInComponentRule = createRule<Options, MessageIds>({
                     signalName === 'signal' ? 'value' : 'computedValue'
                   );
 
-                  const newLine = getNewLine(sourceCode);
+                  const newLine = sourceCode.getText().includes('\r\n') ? '\r\n' : '\n';
 
                   // Add the new custom hook after the last import
                   yield fixer.insertTextAfterRange(
@@ -461,10 +457,9 @@ export const noSignalCreationInComponentRule = createRule<Options, MessageIds>({
           functionStack.pop();
         }
       },
-      'Program:exit'(node: TSESTree.Program): void {
-        startPhase(perfKey, 'programExit');
 
-        perf.trackNode(node);
+      'Program:exit'(_node: TSESTree.Program): void {
+        startPhase(perfKey, 'programExit');
 
         try {
           startPhase(perfKey, 'recordMetrics');

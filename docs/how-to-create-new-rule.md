@@ -64,7 +64,7 @@ export default [
       // Other rules set to warn to avoid noise
       'react-signals-hooks/exhaustive-deps': 'warn',
       'react-signals-hooks/require-use-signals': 'warn',
-      'react-signals-hooks/restrict-signal-locations': 'warn',
+      'react-signals-hooks',
       'react-signals-hooks/signal-variable-name': 'warn',
       'react-signals-hooks/warn-on-unnecessary-untracked': 'warn',
     },

@@ -1,4 +1,4 @@
-import type { PerformanceBudget } from './performance.js';
+import type { PerformanceBudget } from './types.js';
 import { PerformanceOperations } from './performance-constants.js';
 
 type ValidationResult = {
@@ -44,12 +44,14 @@ export function validatePerformanceOptions(
   if (options.maxOperations) {
     for (const [op, value] of Object.entries(options.maxOperations)) {
       const limits = OPERATION_LIMITS[op as keyof typeof PerformanceOperations];
+
       if (!limits) {
         errors.push(`${ruleName}: Unknown operation '${op}' in maxOperations`);
+
         continue;
       }
 
-      if (value < limits.min || value > limits.max) {
+      if (typeof value !== 'number' || value < limits.min || value > limits.max) {
         errors.push(
           `${ruleName}: maxOperations.${op} must be between ${limits.min} and ${limits.max}, got ${value}`
         );

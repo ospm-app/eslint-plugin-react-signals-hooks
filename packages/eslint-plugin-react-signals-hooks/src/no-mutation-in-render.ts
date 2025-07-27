@@ -1,29 +1,19 @@
 // FIXED by @ospm/eslint-plugin-react-signals-hooks
+import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
+
 import {
-  createPerformanceTracker,
-  trackOperation,
-  startPhase,
   endPhase,
+  startPhase,
   stopTracking,
-  DEFAULT_PERFORMANCE_BUDGET,
   startTracking,
+  trackOperation,
+  createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
 } from './utils/performance.js';
-import { PerformanceOperations } from './utils/performance-constants.js';
+import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
-
-const createRule = ESLintUtils.RuleCreator((name: string): string => {
-  return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}.md`;
-});
-
-type MessageIds =
-  | 'signalValueAssignment'
-  | 'signalValueUpdate'
-  | 'signalPropertyAssignment'
-  | 'suggestUseEffect'
-  | 'suggestEventHandler'
-  | 'signalArrayIndexAssignment'
-  | 'signalNestedPropertyAssignment';
+import { PerformanceOperations } from './utils/performance-constants.js';
 
 type Option = {
   /** Custom signal function names (e.g., ['createSignal', 'useSignal']) */
@@ -43,111 +33,38 @@ type Option = {
 
 type Options = [Option];
 
-/**
- * Determines the type of assignment for performance tracking
- */
+type MessageIds =
+  | 'signalValueAssignment'
+  | 'signalValueUpdate'
+  | 'signalPropertyAssignment'
+  | 'suggestUseEffect'
+  | 'suggestEventHandler'
+  | 'signalArrayIndexAssignment'
+  | 'signalNestedPropertyAssignment';
+
 function getAssignmentType(node: TSESTree.AssignmentExpression): string {
   if (node.left.type === 'MemberExpression') {
     if (node.left.computed) {
       return 'computedMemberAssignment';
     }
+
     return 'memberAssignment';
   }
 
   if (node.left.type === 'Identifier') {
     return 'identifierAssignment';
   }
+
   return 'otherAssignment';
 }
 
-/**
- * Checks if the assignment is a direct signal value assignment (signal.value = x)
- */
-function isDirectSignalValueAssignment(
-  node: TSESTree.AssignmentExpression,
-  signalNames: string[]
-): boolean {
-  return (
-    node.left.type === 'MemberExpression' &&
-    node.left.property.type === 'Identifier' &&
-    node.left.property.name === 'value' &&
-    node.left.object.type === 'Identifier' &&
-    signalNames.some((name: string): boolean => {
-      return (
-        ('object' in node.left &&
-          'name' in node.left.object &&
-          node.left.object.name.endsWith(name.replace(/^[A-Z]/, ''))) ||
-        ('object' in node.left && 'name' in node.left.object && node.left.object.name === name)
-      );
-    })
-  );
-}
-
-/**
- * Checks if the assignment is an array index assignment on a signal (signal.value[index] = x)
- */
-function isArrayIndexSignalAssignment(
-  node: TSESTree.AssignmentExpression,
-  signalNames: string[]
-): boolean {
-  return (
-    node.left.type === 'MemberExpression' &&
-    node.left.computed &&
-    node.left.object.type === 'MemberExpression' &&
-    node.left.object.property.type === 'Identifier' &&
-    node.left.object.property.name === 'value' &&
-    node.left.object.object.type === 'Identifier' &&
-    signalNames.some((name: string): boolean => {
-      return (
-        ('object' in node.left &&
-          'object' in node.left.object &&
-          'name' in node.left.object.object &&
-          node.left.object.object.name.endsWith(name.replace(/^[A-Z]/, ''))) ||
-        ('object' in node.left &&
-          'object' in node.left.object &&
-          'name' in node.left.object.object &&
-          node.left.object.object.name === name)
-      );
-    })
-  );
-}
-
-/**
- * Checks if the assignment is a nested property assignment on a signal (signal.value.prop = x)
- */
-function isNestedSignalPropertyAssignment(
-  node: TSESTree.AssignmentExpression,
-  signalNames: string[]
-): boolean {
-  return (
-    node.left.type === 'MemberExpression' &&
-    !node.left.computed &&
-    node.left.object.type === 'MemberExpression' &&
-    node.left.object.property.type === 'Identifier' &&
-    node.left.object.property.name === 'value' &&
-    node.left.object.object.type === 'Identifier' &&
-    signalNames.some((name: string): boolean => {
-      return (
-        ('object' in node.left &&
-          'object' in node.left.object &&
-          'name' in node.left.object.object &&
-          node.left.object.object.name.endsWith(name.replace(/^[A-Z]/, ''))) ||
-        ('object' in node.left &&
-          'object' in node.left.object &&
-          'name' in node.left.object.object &&
-          node.left.object.object.name === name)
-      );
-    })
-  );
-}
-
-// Helper function to track identifier resolution
 function trackIdentifier(
   name: string,
   perfKey: string,
   resolvedIdentifiers: Map<string, number>
 ): void {
-  const count = resolvedIdentifiers.get(name) || 0;
+  const count = resolvedIdentifiers.get(name) ?? 0;
+
   resolvedIdentifiers.set(name, count + 1);
 
   if (count === 0) {
@@ -156,7 +73,6 @@ function trackIdentifier(
   }
 }
 
-// Helper function to get severity level for a specific violation type
 function getSeverity(messageId: MessageIds, option: Option): 'error' | 'warn' | 'off' {
   if (!option.severity) {
     return 'error';
@@ -187,6 +103,10 @@ function getSeverity(messageId: MessageIds, option: Option): 'error' | 'warn' | 
 
 const resolvedIdentifiers = new Map<string, number>();
 
+const createRule = ESLintUtils.RuleCreator((name: string): string => {
+  return getRuleDocUrl(name);
+});
+
 const ruleName = 'no-mutation-in-render';
 
 export const noMutationInRenderRule = createRule<Options, MessageIds>({
@@ -195,7 +115,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
     type: 'problem',
     docs: {
       description: 'Disallow direct signal mutation during render',
-      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/no-mutation-in-render',
+      url: getRuleDocUrl(ruleName),
     },
     hasSuggestions: true,
     fixable: 'code',
@@ -297,8 +217,8 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
       performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
-  create(context, [option]): ESLintUtils.RuleListener {
-    const perfKey = `${ruleName}:${context.filename}`;
+  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
+    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
     startPhase(perfKey, 'rule-init');
 
@@ -494,7 +414,22 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
         trackOperation(perfKey, PerformanceOperations[`assignmentType:${assignmentType}`]);
 
         // Check for direct signal value assignment (signal.value = x)
-        if (isDirectSignalValueAssignment(node, signalNames)) {
+        if (
+          node.left.type === 'MemberExpression' &&
+          node.left.property.type === 'Identifier' &&
+          node.left.property.name === 'value' &&
+          node.left.object.type === 'Identifier' &&
+          signalNames.some((name: string): boolean => {
+            return (
+              ('object' in node.left &&
+                'name' in node.left.object &&
+                node.left.object.name.endsWith(name.replace(/^[A-Z]/, ''))) ||
+              ('object' in node.left &&
+                'name' in node.left.object &&
+                node.left.object.name === name)
+            );
+          })
+        ) {
           const severity = getSeverity('signalValueAssignment', option);
 
           if (severity === 'off') {
@@ -529,7 +464,26 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           return;
         }
 
-        if (isArrayIndexSignalAssignment(node, signalNames)) {
+        if (
+          node.left.type === 'MemberExpression' &&
+          node.left.computed &&
+          node.left.object.type === 'MemberExpression' &&
+          node.left.object.property.type === 'Identifier' &&
+          node.left.object.property.name === 'value' &&
+          node.left.object.object.type === 'Identifier' &&
+          signalNames.some((name: string): boolean => {
+            return (
+              ('object' in node.left &&
+                'object' in node.left.object &&
+                'name' in node.left.object.object &&
+                node.left.object.object.name.endsWith(name.replace(/^[A-Z]/, ''))) ||
+              ('object' in node.left &&
+                'object' in node.left.object &&
+                'name' in node.left.object.object &&
+                node.left.object.object.name === name)
+            );
+          })
+        ) {
           const severity = getSeverity('signalArrayIndexAssignment', option);
 
           if (severity !== 'off') {
@@ -558,7 +512,26 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           return;
         }
 
-        if (isNestedSignalPropertyAssignment(node, signalNames)) {
+        if (
+          node.left.type === 'MemberExpression' &&
+          !node.left.computed &&
+          node.left.object.type === 'MemberExpression' &&
+          node.left.object.property.type === 'Identifier' &&
+          node.left.object.property.name === 'value' &&
+          node.left.object.object.type === 'Identifier' &&
+          signalNames.some((name: string): boolean => {
+            return (
+              ('object' in node.left &&
+                'object' in node.left.object &&
+                'name' in node.left.object.object &&
+                node.left.object.object.name.endsWith(name.replace(/^[A-Z]/, ''))) ||
+              ('object' in node.left &&
+                'object' in node.left.object &&
+                'name' in node.left.object.object &&
+                node.left.object.object.name === name)
+            );
+          })
+        ) {
           if (getSeverity('signalNestedPropertyAssignment', option) !== 'off') {
             context.report({
               node,
@@ -708,7 +681,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
 
           if (typeof finalMetrics !== 'undefined') {
             console.info(
-              `\n[no-mutation-in-render] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
+              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
             );
             console.info(`  File: ${context.filename}`);
             console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);

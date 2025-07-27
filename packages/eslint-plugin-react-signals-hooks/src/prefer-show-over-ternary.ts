@@ -6,12 +6,13 @@ import {
 } from '@typescript-eslint/utils';
 import type { SuggestionReportDescriptor, RuleContext } from '@typescript-eslint/utils/ts-eslint';
 import {
-  createPerformanceTracker,
-  trackOperation,
-  startPhase,
   endPhase,
-  DEFAULT_PERFORMANCE_BUDGET,
+  startPhase,
+  stopTracking,
   startTracking,
+  trackOperation,
+  createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
   PerformanceLimitExceededError,
 } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
@@ -255,7 +256,7 @@ export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
           node.type === AST_NODE_TYPES.ArrowFunctionExpression
         ) {
           try {
-            const scope = context.getScope();
+            const scope = context.sourceCode.getScope(node);
 
             for (const variable of scope.variables) {
               if (
@@ -416,10 +417,39 @@ export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
         }
       },
 
-      'Program:exit'(_node: TSESTree.Program): void {
-        endPhase(perfKey, 'ruleExecution');
+      'Program:exit'(node: TSESTree.Node): void {
+        startPhase(perfKey, 'programExit');
+
+        perf.trackNode(node);
+
+        try {
+          startPhase(perfKey, 'recordMetrics');
+
+          const finalMetrics = stopTracking(perfKey);
+
+          if (finalMetrics) {
+            console.info(
+              `\n[prefer-batch-updates] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
+            );
+            console.info(`  File: ${context.filename}`);
+            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
+            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+
+            if (finalMetrics.exceededBudget) {
+              console.warn('\n⚠️  Performance budget exceeded!');
+            }
+          }
+        } catch (error: unknown) {
+          console.error('Error recording metrics:', error);
+        } finally {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+        }
 
         perf['Program:exit']();
+
+        endPhase(perfKey, 'programExit');
       },
     };
   },

@@ -9,6 +9,7 @@ import {
   trackOperation,
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
+  startTracking,
 } from './utils/performance.js';
 import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
@@ -42,7 +43,9 @@ function processBlock(
   option: Option
 ) {
   const key = context.getFilename();
+
   recordMetric(key, 'processBlockStart', { statementCount: statements.length });
+
   const hasBatchImport = context.sourceCode.ast.body.some((node: TSESTree.ProgramStatement) => {
     return (
       node.type === 'ImportDeclaration' &&
@@ -363,7 +366,12 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
   create(context, [option]): TSESLint.RuleListener {
     const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
+    startPhase(perfKey, 'rule-init');
+
     const perf = createPerformanceTracker(perfKey, option.performance, context);
+
+    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+    console.info(`${ruleName}: Rule configuration:`, option);
 
     let nodeCount = 0;
 
@@ -379,15 +387,15 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
       return true;
     }
 
+    if (option.performance.enableMetrics) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    trackOperation(perfKey, PerformanceOperations.ruleInitialization);
+
     const signalUpdates: Array<SignalUpdate> = [];
 
-    function getSignalName(expr: TSESTree.MemberExpression): string {
-      if (expr.object.type === 'Identifier') {
-        return expr.object.name;
-      }
-
-      return 'signal';
-    }
+    endPhase(perfKey, 'rule-init');
 
     return {
       '*': (node: TSESTree.Node): void => {
@@ -400,8 +408,6 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
         if (node.type === 'CallExpression' || node.type === 'AssignmentExpression') {
           trackOperation(perfKey, PerformanceOperations.nodeProcessingExpression);
         }
-
-        endPhase(perfKey, 'nodeProcessing');
       },
 
       // Process blocks of code (function bodies, if blocks, etc.)
@@ -431,7 +437,9 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
             isTopLevel: true,
             signalName:
               'left' in node && node.left.type === 'MemberExpression'
-                ? getSignalName(node.left)
+                ? node.left.object.type === 'Identifier'
+                  ? node.left.object.name
+                  : 'signal'
                 : node.left.type,
             updateType: 'assignment',
           });
@@ -449,7 +457,9 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
             isTopLevel: true,
             signalName:
               'callee' in node && node.callee.type === 'MemberExpression'
-                ? getSignalName(node.callee)
+                ? node.callee.object.type === 'Identifier'
+                  ? node.callee.object.name
+                  : 'signal'
                 : node.callee.type,
             updateType: 'method',
           });
@@ -499,6 +509,8 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
 
           stopTracking(perfKey);
         }
+
+        perf['Program:exit']();
 
         endPhase(perfKey, 'programExit');
       },

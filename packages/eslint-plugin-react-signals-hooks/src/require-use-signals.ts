@@ -2,29 +2,57 @@ import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/ut
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
 import type { PerformanceBudget } from './utils/types.js';
-import { DEFAULT_PERFORMANCE_BUDGET } from './utils/performance.js';
+import {
+  endPhase,
+  startPhase,
+  stopTracking,
+  startTracking,
+  trackOperation,
+  createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
+} from './utils/performance.js';
+import { getRuleDocUrl } from './utils/urls.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 
 type MessageIds = 'missingUseSignals';
 
-type Options = [
-  {
-    ignoreComponents?: string[] | undefined;
-    performance?: PerformanceBudget | undefined;
-  },
-];
+type Option = {
+  ignoreComponents: string[];
+  performance: PerformanceBudget;
+};
+
+type Options = [Option];
+
+function isSignalUsage(node: TSESTree.Node): boolean {
+  if (node.type === 'MemberExpression') {
+    return (
+      node.property.type === 'Identifier' &&
+      node.property.name === 'value' &&
+      node.object.type === 'Identifier' &&
+      node.object.name.endsWith('Signal')
+    );
+  }
+
+  if (node.type === 'Identifier') {
+    return node.name.endsWith('Signal') && node.parent?.type !== 'MemberExpression';
+  }
+
+  return false;
+}
 
 const createRule = ESLintUtils.RuleCreator((name: string): string => {
-  return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}`;
+  return getRuleDocUrl(name);
 });
 
+const ruleName = 'require-use-signals';
+
 export const requireUseSignalsRule = createRule<Options, MessageIds>({
-  name: 'require-use-signals',
+  name: ruleName,
   meta: {
     type: 'suggestion',
     docs: {
       description: 'Require useSignals() hook when signals are used in a component',
-      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/require-use-signals',
+      url: getRuleDocUrl(ruleName),
     },
     hasSuggestions: true,
     messages: {
@@ -68,10 +96,42 @@ export const requireUseSignalsRule = createRule<Options, MessageIds>({
   },
   defaultOptions: [
     {
+      ignoreComponents: [],
       performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
-  create(context: Readonly<RuleContext<MessageIds, Options>>) {
+  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
+    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
+
+    startPhase(perfKey, 'rule-init');
+
+    const perf = createPerformanceTracker(perfKey, option.performance, context);
+
+    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+    console.info(`${ruleName}: Rule configuration:`, option);
+
+    let nodeCount = 0;
+
+    // Helper function to check if we should continue processing
+    function shouldContinue(): boolean {
+      nodeCount++;
+
+      // Check if we've exceeded the node budget
+      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+
+        return false;
+      }
+
+      return true;
+    }
+
+    if (option.performance.enableMetrics) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    trackOperation(perfKey, PerformanceOperations.ruleInitialization);
+
     let hasUseSignals = false;
 
     let hasSignalUsage = false;
@@ -79,37 +139,21 @@ export const requireUseSignalsRule = createRule<Options, MessageIds>({
     let componentName = '';
     let componentNode: TSESTree.Node | null = null;
 
-    const isComponentName = (name: string): boolean => /^[A-Z]/.test(name);
-
-    const isSignalUsage = (node: TSESTree.Node): boolean => {
-      if (node.type === 'MemberExpression') {
-        return (
-          node.property.type === 'Identifier' &&
-          node.property.name === 'value' &&
-          node.object.type === 'Identifier' &&
-          node.object.name.endsWith('Signal')
-        );
-      }
-
-      if (node.type === 'Identifier') {
-        return node.name.endsWith('Signal') && node.parent?.type !== 'MemberExpression';
-      }
-
-      return false;
-    };
-
-    const getInsertionPoint = (node: TSESTree.Node): TSESTree.Node | null => {
-      if (
-        (node.type === 'FunctionDeclaration' || node.type === 'ArrowFunctionExpression') &&
-        node.body?.type === 'BlockStatement' &&
-        node.body.body.length > 0
-      ) {
-        return node.body.body[0];
-      }
-      return null;
-    };
+    endPhase(perfKey, 'rule-init');
 
     return {
+      '*': (node: TSESTree.Node): void => {
+        if (!shouldContinue()) {
+          return;
+        }
+
+        perf.trackNode(node);
+
+        if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
+          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        }
+      },
+
       FunctionDeclaration(node: TSESTree.FunctionDeclaration): void {
         if (node.id?.name && /^[A-Z]/.test(node.id.name)) {
           componentName = node.id.name;
@@ -121,11 +165,12 @@ export const requireUseSignalsRule = createRule<Options, MessageIds>({
           hasSignalUsage = false;
         }
       },
+
       ArrowFunctionExpression(node: TSESTree.ArrowFunctionExpression): void {
         if (
           node.parent?.type === 'VariableDeclarator' &&
           node.parent.id?.type === 'Identifier' &&
-          isComponentName(node.parent.id.name)
+          /^[A-Z]/.test(node.parent.id.name)
         ) {
           componentName = node.parent.id.name;
 
@@ -136,77 +181,118 @@ export const requireUseSignalsRule = createRule<Options, MessageIds>({
           hasSignalUsage = false;
         }
       },
+
       CallExpression(node: TSESTree.CallExpression): void {
         if (node.callee.type === 'Identifier' && node.callee.name === 'useSignals') {
           hasUseSignals = true;
         }
       },
+
       MemberExpression(node: TSESTree.MemberExpression): void {
         if (isSignalUsage(node)) {
           hasSignalUsage = true;
         }
       },
+
       Identifier(node: TSESTree.Identifier): void {
         if (isSignalUsage(node)) {
           hasSignalUsage = true;
         }
       },
+
       'Program:exit'(): void {
-        if (
-          hasSignalUsage &&
-          !hasUseSignals &&
-          componentName &&
-          !new Set(context.options[0]?.ignoreComponents ?? []).has(componentName) &&
-          componentNode
-        ) {
-          context.report({
-            node: componentNode,
-            messageId: 'missingUseSignals',
-            data: { componentName },
-            fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
-              const fixes: Array<TSESLint.RuleFix> = [];
+        try {
+          startPhase(perfKey, 'recordMetrics');
 
-              if (!componentNode) {
-                return null;
-              }
+          const finalMetrics = stopTracking(perfKey);
 
-              const insertionPoint = getInsertionPoint(componentNode);
+          if (finalMetrics) {
+            console.info(
+              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
+            );
+            console.info(`  File: ${context.filename}`);
+            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
+            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
 
-              if (insertionPoint !== null) {
-                fixes.push(fixer.insertTextBefore(insertionPoint, '\tuseSignals();\n'));
-              }
+            if (finalMetrics.exceededBudget) {
+              console.warn('\n⚠️  Performance budget exceeded!');
+            }
+          }
 
-              if (
-                !context.sourceCode.ast.body
-                  .filter((node: TSESTree.ProgramStatement): node is TSESTree.ImportDeclaration => {
-                    return node.type === 'ImportDeclaration';
-                  })
-                  .some((node: TSESTree.ImportDeclaration): boolean => {
-                    return (
-                      node.source.value === '@preact/signals-react' &&
-                      node.specifiers.some((s: TSESTree.ImportClause): boolean => {
-                        return (
-                          s.type === 'ImportSpecifier' &&
-                          s.imported.type === 'Identifier' &&
-                          s.imported.name === 'useSignals'
-                        );
-                      })
-                    );
-                  }) &&
-                context.sourceCode.ast.body.length > 0
-              ) {
-                fixes.push(
-                  fixer.insertTextBefore(
-                    context.sourceCode.ast.body[0],
-                    "import { useSignals } from '@preact/signals-react';\n"
-                  )
-                );
-              }
+          if (
+            hasSignalUsage &&
+            !hasUseSignals &&
+            componentName &&
+            !new Set(context.options[0]?.ignoreComponents ?? []).has(componentName) &&
+            componentNode
+          ) {
+            context.report({
+              node: componentNode,
+              messageId: 'missingUseSignals',
+              data: { componentName },
+              fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+                const fixes: Array<TSESLint.RuleFix> = [];
 
-              return fixes.length > 0 ? fixes : null;
-            },
-          });
+                if (!componentNode) {
+                  return null;
+                }
+
+                const insertionPoint =
+                  (componentNode.type === 'FunctionDeclaration' ||
+                    componentNode.type === 'ArrowFunctionExpression') &&
+                  componentNode.body?.type === 'BlockStatement' &&
+                  componentNode.body.body.length > 0
+                    ? componentNode.body.body[0]
+                    : null;
+
+                if (insertionPoint !== null) {
+                  fixes.push(fixer.insertTextBefore(insertionPoint, '\tuseSignals();\n'));
+                }
+
+                if (
+                  !context.sourceCode.ast.body
+                    .filter(
+                      (node: TSESTree.ProgramStatement): node is TSESTree.ImportDeclaration => {
+                        return node.type === 'ImportDeclaration';
+                      }
+                    )
+                    .some((node: TSESTree.ImportDeclaration): boolean => {
+                      return (
+                        node.source.value === '@preact/signals-react' &&
+                        node.specifiers.some((s: TSESTree.ImportClause): boolean => {
+                          return (
+                            s.type === 'ImportSpecifier' &&
+                            s.imported.type === 'Identifier' &&
+                            s.imported.name === 'useSignals'
+                          );
+                        })
+                      );
+                    }) &&
+                  context.sourceCode.ast.body.length > 0
+                ) {
+                  fixes.push(
+                    fixer.insertTextBefore(
+                      context.sourceCode.ast.body[0],
+                      "import { useSignals } from '@preact/signals-react';\n"
+                    )
+                  );
+                }
+
+                return fixes.length > 0 ? fixes : null;
+              },
+            });
+          }
+        } catch (error: unknown) {
+          console.error('Error recording metrics:', error);
+        } finally {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
         }
+
+        perf['Program:exit']();
+
+        endPhase(perfKey, 'programExit');
       },
     };
   },

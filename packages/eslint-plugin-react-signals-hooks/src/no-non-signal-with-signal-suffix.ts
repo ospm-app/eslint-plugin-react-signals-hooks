@@ -561,6 +561,10 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
       },
 
       'Program:exit'(node: TSESTree.Program): void {
+        if (!shouldContinue()) {
+          return;
+        }
+
         startPhase(perfKey, 'programExit');
 
         perf.trackNode(node);
@@ -574,7 +578,7 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
             const { exceededBudget, nodeCount, duration } = finalMetrics;
             const status = exceededBudget ? 'EXCEEDED' : 'OK';
 
-            console.info(`\n[prefer-batch-updates] Performance Metrics (${status}):`);
+            console.info(`\n[${ruleName}] Performance Metrics (${status}):`);
             console.info(`  File: ${context.filename}`);
             console.info(`  Duration: ${duration?.toFixed(2)}ms`);
             console.info(`  Nodes Processed: ${nodeCount}`);

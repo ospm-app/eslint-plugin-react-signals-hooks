@@ -123,12 +123,8 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
 
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
-    if (option.performance?.enableMetrics === true) {
-      startTracking(context, perfKey, option.performance, ruleName);
-    }
-
-    console.info(`Initializing rule for file: ${context.filename}`);
-    console.info('Rule configuration:', option);
+    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+    console.info(`${ruleName}: Rule configuration:`, option);
 
     let nodeCount = 0;
 
@@ -142,6 +138,10 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
       }
 
       return true;
+    }
+
+    if (option.performance?.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
     }
 
     trackOperation(perfKey, PerformanceOperations.ruleInit);

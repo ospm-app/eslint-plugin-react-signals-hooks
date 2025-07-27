@@ -1,4 +1,4 @@
-import type { PerformanceOperation } from './performance-constants';
+import type { PerformanceOperation } from './performance-constants.js';
 
 /**
  * Performance budget configuration for rule execution

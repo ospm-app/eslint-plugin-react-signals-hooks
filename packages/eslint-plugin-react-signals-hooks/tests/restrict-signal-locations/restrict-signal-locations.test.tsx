@@ -1,36 +1,58 @@
 /** biome-ignore-all lint/correctness/noUnusedVariables: not the target of the test */
+/** biome-ignore-all lint/suspicious/noRedeclare: not relevant */
 import { signal, computed } from '@preact/signals-react';
 import { useSignals } from '@preact/signals-react/runtime';
 import { Component, useCallback, useEffect, useMemo, type JSX } from 'react';
 
-// These should trigger ESLint warnings for incorrect signal locations
-export function TestSignalInComponent(): JSX.Element {
+// ====================================
+// Module Level Signals (Allowed)
+// ====================================
+const globalSignal = signal('global');
+const globalComputedSignal = computed((): string => {
+  return globalSignal.value.toUpperCase();
+});
+
+// ====================================
+// Exported Module Level Signals (Should Warn)
+// ====================================
+//Should warn: Exporting signals from a file often leads to circular imports and breaks the build with hard to debug. use @biomejs/biome for circular imports diagnostic.
+export const global2Signal = signal('global');
+//Should warn: Exporting signals from a file often leads to circular imports and breaks the build with hard to debug. use @biomejs/biome for circular imports diagnostic.
+export const global2ComputedSignal = computed((): string => {
+  return global2Signal.value.toUpperCase();
+});
+
+// ====================================
+// Component with Signal (Should Warn)
+// ====================================
+export function ComponentWithSignal(): JSX.Element {
   useSignals();
 
   // Should warn: Signal created inside component
   const countSignal = signal(0);
 
   // Should warn: Computed signal created inside component
-  const doubleCountSignal = computed(() => countSignal.value * 2);
+  const doubleCount = computed(() => countSignal.value * 2);
+
+  // Should warn: Computed in component body
+  const memoizedValue = useMemo(() => {
+    return computed(() => countSignal.value * 3);
+  }, [countSignal.value]);
 
   return (
     <div>
       <p>Count: {countSignal}</p>
-
-      <p>Double: {doubleCountSignal}</p>
+      <p>Double: {doubleCount}</p>
+      <p>Triple: {memoizedValue}</p>
     </div>
   );
 }
 
-// This should not warn - signals created at module level
-const globalSignal = signal('global');
-const globalComputedSignal = computed((): string => {
-  return globalSignal.value.toUpperCase();
-});
-
-export function TestGlobalSignal(): JSX.Element {
+// ====================================
+// Component with Module Level Signal (Allowed)
+// ====================================
+export function ComponentWithModuleSignal(): JSX.Element {
   useSignals();
-
   return (
     <div>
       {globalSignal} - {globalComputedSignal}
@@ -38,16 +60,58 @@ export function TestGlobalSignal(): JSX.Element {
   );
 }
 
-// Test with custom hooks
-export function useCustomHook(): JSX.Element {
-  // Should warn: Signal created in custom hook
-  const localSignal = signal('hook');
-
-  return localSignal;
+// ====================================
+// Custom Hook (Allowed by default)
+// ====================================
+export function useCounter(initialValue = 0) {
+  // Should be allowed - signal in custom hook
+  const count = signal(initialValue);
+  const increment = () => count.value++;
+  return { count, increment };
 }
 
-// Test with function components
-export const TestFunctionComponent = (): JSX.Element => {
+// ====================================
+// Component with Allowed Directory (Configuration Test)
+// ====================================
+// This would be in a file under an allowed directory
+// and would be tested with a custom config
+export function ComponentInAllowedDir(): JSX.Element {
+  // This would be allowed if the file is in an allowed directory
+  const allowedSignal = signal('allowed');
+  return <div>{allowedSignal}</div>;
+}
+
+// ====================================
+// Component with Allowed Computed (Configuration Test)
+// ====================================
+// This would be tested with allowComputedInComponents: true
+export function ComponentWithAllowedComputed(): JSX.Element {
+  const countSignal = signal(0);
+  // This would be allowed with allowComputedInComponents: true
+  const doubleCount = computed(() => countSignal.value * 2);
+
+  return (
+    <div>
+      <p>Count: {countSignal}</p>
+      <p>Double: {doubleCount}</p>
+    </div>
+  );
+}
+
+// ====================================
+// Component with Custom Hook Pattern (Configuration Test)
+// ====================================
+// This would be tested with customHookPattern: '^use[A-Z]'
+// to ensure custom hooks are properly identified
+export function useCustomPatternHook() {
+  const customSignal = signal('custom');
+  return customSignal;
+}
+
+// ====================================
+// Function Component with Custom Hook (Allowed)
+// ====================================
+export const CounterComponent = (): JSX.Element => {
   useSignals();
 
   // Should warn: Signal created in function component

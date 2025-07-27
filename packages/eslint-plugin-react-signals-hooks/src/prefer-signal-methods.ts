@@ -1,21 +1,30 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
+import {
+  endPhase,
+  startPhase,
+  startTracking,
+  stopTracking,
+  trackOperation,
+  createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
+} from './utils/performance.js';
+import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
-import { DEFAULT_PERFORMANCE_BUDGET } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
+
+type Option = {
+  performance: PerformanceBudget;
+};
+
+type Options = [Option];
 
 type MessageIds =
   | 'usePeekInEffect'
   | 'useValueInJSX'
   | 'preferDirectSignalUsage'
   | 'preferPeekInNonReactiveContext';
-
-type Options = [
-  {
-    performance?: PerformanceBudget | undefined;
-  },
-];
 
 function isInDependencyArray(node: TSESTree.Node): boolean {
   let current = node;
@@ -50,16 +59,18 @@ function isInJSXContext(node: TSESTree.Node): boolean {
 }
 
 const createRule = ESLintUtils.RuleCreator((name: string) => {
-  return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}`;
+  return getRuleDocUrl(name);
 });
 
+const ruleName = 'prefer-signal-methods';
+
 export const preferSignalMethodsRule = createRule<Options, MessageIds>({
-  name: 'prefer-signal-methods',
+  name: ruleName,
   meta: {
     type: 'suggestion',
     docs: {
       description: 'Enforce proper usage of signal methods (.value, .peek()) in different contexts',
-      url: 'https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/prefer-signal-methods',
+      url: getRuleDocUrl(ruleName),
     },
     messages: {
       usePeekInEffect:
@@ -104,11 +115,54 @@ export const preferSignalMethodsRule = createRule<Options, MessageIds>({
       performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
-  create(context: Readonly<RuleContext<MessageIds, Options>>): ESLintUtils.RuleListener {
+  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
+    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
+
+    startPhase(perfKey, 'rule-init');
+
+    const perf = createPerformanceTracker(perfKey, option.performance, context);
+
+    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+    console.info(`${ruleName}: Rule configuration:`, option);
+
+    let nodeCount = 0;
+
+    function shouldContinue(): boolean {
+      nodeCount++;
+
+      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+
+        return false;
+      }
+
+      return true;
+    }
+
+    if (option.performance.enableMetrics) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    trackOperation(perfKey, PerformanceOperations.ruleInitialization);
+
     let isInEffect = false;
     let isInJSX = false;
 
+    endPhase(perfKey, 'rule-init');
+
     return {
+      '*': (node: TSESTree.Node): void => {
+        if (!shouldContinue()) {
+          return;
+        }
+
+        perf.trackNode(node);
+
+        if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
+          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        }
+      },
+
       'CallExpression[callee.name="useEffect"]'(): void {
         isInEffect = true;
       },
@@ -192,6 +246,7 @@ export const preferSignalMethodsRule = createRule<Options, MessageIds>({
               return fixer.remove(node.parent);
             },
           });
+
           return;
         }
 
@@ -209,6 +264,40 @@ export const preferSignalMethodsRule = createRule<Options, MessageIds>({
             },
           });
         }
+      },
+
+      // Clean up
+      'Program:exit'(): void {
+        startPhase(perfKey, 'programExit');
+
+        try {
+          startPhase(perfKey, 'recordMetrics');
+
+          const finalMetrics = stopTracking(perfKey);
+
+          if (typeof finalMetrics !== 'undefined') {
+            console.info(
+              `\n[prefer-batch-updates] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
+            );
+            console.info(`  File: ${context.filename}`);
+            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
+            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+
+            if (finalMetrics.exceededBudget) {
+              console.warn('\n⚠️  Performance budget exceeded!');
+            }
+          }
+        } catch (error: unknown) {
+          console.error('Error recording metrics:', error);
+        } finally {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+        }
+
+        perf['Program:exit']();
+
+        endPhase(perfKey, 'programExit');
       },
     };
   },

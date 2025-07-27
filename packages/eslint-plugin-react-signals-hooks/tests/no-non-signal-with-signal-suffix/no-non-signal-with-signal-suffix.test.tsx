@@ -1,13 +1,13 @@
 import { signal } from '@preact/signals-react';
 import { useSignals } from '@preact/signals-react/runtime';
 import {
-  useCallback,
-  useState,
   useRef,
-  createContext,
-  useContext,
+  useState,
   type JSX,
   Component,
+  useContext,
+  useCallback,
+  createContext,
 } from 'react';
 
 // This component should NOT trigger any warnings - proper signal naming

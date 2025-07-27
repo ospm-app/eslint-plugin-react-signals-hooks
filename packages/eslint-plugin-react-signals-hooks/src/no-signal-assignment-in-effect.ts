@@ -43,17 +43,13 @@ type MessageIds =
   | 'duplicateDependencies'
   | 'avoidSignalAssignmentInLayoutEffect';
 
-// Cache for compiled regex patterns to avoid recompilation
-const patternCache = new Map<string, RegExp>();
+type Effect = {
+  isEffect: boolean;
+  isLayoutEffect: boolean;
+  signalAssignments: TSESTree.MemberExpression[];
+  node: TSESTree.CallExpression;
+};
 
-// Cache for signal name checks to avoid repeated string operations
-const signalNameCache = new Map<string, boolean>();
-
-const createRule = ESLintUtils.RuleCreator((name: string): string => {
-  return getRuleDocUrl(name);
-});
-
-// Function to record final metrics and clean up
 function recordFinalMetrics(
   perfKey: string,
   option: Option,
@@ -78,14 +74,8 @@ function recordFinalMetrics(
   }
 }
 
-/**
- * Checks if a given node is a signal assignment (e.g., `signal.value = x`)
- * @param node The AST node to check
- * @param signalNames Array of signal function names to check against
- * @param perfKey Key for performance tracking
- * @param metrics Object to track performance metrics
- * @returns True if the node is a signal assignment
- */
+const signalNameCache = new Map<string, boolean>();
+
 function isSignalAssignment(
   node: TSESTree.Node,
   signalNames: string[],
@@ -175,6 +165,7 @@ function isEffectHook(
     if (error instanceof PerformanceLimitExceededError) {
       throw error; // Re-throw to be handled by the caller
     }
+
     // For other errors, assume it's not an effect hook
     return null;
   }
@@ -185,7 +176,7 @@ function visitNode(
   effectStack: Array<Effect>,
   signalNames: string[],
   perfKey: string
-) {
+): void {
   // Track variable declarations that might be signals
   if (
     node.type === AST_NODE_TYPES.VariableDeclarator &&
@@ -259,18 +250,17 @@ function visitNode(
   }
 }
 
-type Effect = {
-  isEffect: boolean;
-  isLayoutEffect: boolean;
-  signalAssignments: TSESTree.MemberExpression[];
-  node: TSESTree.CallExpression;
-};
+const patternCache = new Map<string, RegExp>();
 
 // Track effect stack for nested effects
 const effectStack: Array<Effect> = [];
 
 // Track variables that are signals
 const signalVariables = new Set<string>();
+
+const createRule = ESLintUtils.RuleCreator((name: string): string => {
+  return getRuleDocUrl(name);
+});
 
 const ruleName = 'no-signal-assignment-in-effect';
 
@@ -282,7 +272,7 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
     hasSuggestions: true,
     docs: {
       description: 'Prevent direct signal assignments in useEffect and useLayoutEffect',
-      url: 'https://github.com/your-org/eslint-plugin-react-signals-hooks/docs/rules/no-signal-assignment-in-effect.md',
+      url: getRuleDocUrl(ruleName),
     },
     messages: {
       avoidSignalAssignmentInEffect:
@@ -371,6 +361,8 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
   create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): TSESLint.RuleListener {
     const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
+    startPhase(perfKey, 'rule-init');
+
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
     if (option.performance?.enableMetrics === true) {
@@ -406,8 +398,6 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
     startPhase(perfKey, 'fileAnalysis');
 
     try {
-      startPhase(perfKey, 'rule-init');
-
       // Check if current file matches any allowed patterns with caching
       if (allowedPatterns.length > 0) {
         const fileMatchesPattern = allowedPatterns.some((pattern: string): boolean => {
@@ -421,7 +411,9 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
           // Compile and cache the regex
           try {
             const regex = new RegExp(pattern);
+
             patternCache.set(pattern, regex);
+
             return regex.test(context.filename);
           } catch (error: unknown) {
             if (error instanceof Error) {
@@ -431,6 +423,7 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
             } else {
               console.error(`Invalid regex pattern: ${pattern}. Error: ${JSON.stringify(error)}`);
             }
+
             // Invalid regex pattern, ignore it
             return false;
           }
@@ -451,11 +444,6 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
       return {
         // Track all nodes for performance monitoring
         '*': (node: TSESTree.Node): void => {
-          if (!perf) {
-            throw new Error('Performance tracker not initialized');
-          }
-
-          // Check if we should continue processing
           if (!shouldContinue()) {
             return;
           }
@@ -478,7 +466,7 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
             node.type === AST_NODE_TYPES.ArrowFunctionExpression
           ) {
             try {
-              const scope = context.getScope();
+              const scope = context.sourceCode.getScope(node);
 
               for (const variable of scope.variables) {
                 if (
@@ -726,6 +714,46 @@ export const noSignalAssignmentInEffectRule = createRule<Options, MessageIds>({
               throw error;
             }
           }
+        },
+
+        'Program:exit'(node: TSESTree.Program): void {
+          if (!shouldContinue()) {
+            return;
+          }
+
+          startPhase(perfKey, 'programExit');
+
+          perf.trackNode(node);
+
+          try {
+            startPhase(perfKey, 'recordMetrics');
+
+            const finalMetrics = stopTracking(perfKey);
+
+            if (finalMetrics) {
+              const { exceededBudget, nodeCount, duration } = finalMetrics;
+              const status = exceededBudget ? 'EXCEEDED' : 'OK';
+
+              console.info(`\n[${ruleName}] Performance Metrics (${status}):`);
+              console.info(`  File: ${context.filename}`);
+              console.info(`  Duration: ${duration?.toFixed(2)}ms`);
+              console.info(`  Nodes Processed: ${nodeCount}`);
+
+              if (exceededBudget) {
+                console.warn('\n⚠️  Performance budget exceeded!');
+              }
+            }
+          } catch (error: unknown) {
+            console.error('Error recording metrics:', error);
+          } finally {
+            endPhase(perfKey, 'recordMetrics');
+
+            stopTracking(perfKey);
+          }
+
+          perf['Program:exit']();
+
+          endPhase(perfKey, 'programExit');
         },
       };
     } catch (error: unknown) {

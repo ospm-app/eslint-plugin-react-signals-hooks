@@ -1,17 +1,26 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import type { RuleContext, SourceCode } from '@typescript-eslint/utils/ts-eslint';
-import { createPerformanceTracker, DEFAULT_PERFORMANCE_BUDGET } from './utils/performance.js';
-import { PerformanceOperations } from './utils/performance-constants.js';
+
+import {
+  endPhase,
+  startPhase,
+  stopTracking,
+  startTracking,
+  trackOperation,
+  createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
+} from './utils/performance.js';
 import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
+import { PerformanceOperations } from './utils/performance-constants.js';
+
+type Option = {
+  performance: PerformanceBudget;
+};
+
+type Options = [Option];
 
 type MessageIds = 'preferForOverMap' | 'suggestForComponent' | 'addForImport';
-
-type Options = [
-  {
-    performance?: PerformanceBudget | undefined;
-  },
-];
 
 const REACT_HOOKS = new Set([
   'useEffect',
@@ -34,9 +43,9 @@ function isSignalArrayMap(node: TSESTree.CallExpression): {
   signalName: string;
   hasValueAccess: boolean;
 } | null {
-  // Return cached result if available
   const cached = signalMapCache.get(node);
-  if (cached !== undefined) {
+
+  if (typeof cached !== 'undefined') {
     return cached;
   }
 
@@ -72,7 +81,6 @@ function isSignalArrayMap(node: TSESTree.CallExpression): {
     };
   }
 
-  // Cache the result before returning
   signalMapCache.set(node, result);
 
   return result;
@@ -211,9 +219,36 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
     },
   ],
   create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
-    const perfKey = `${ruleName}:${context.filename}${Date.now()}`;
+    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
+
+    startPhase(perfKey, 'rule-init');
 
     const perf = createPerformanceTracker(perfKey, option.performance, context);
+
+    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+    console.info(`${ruleName}: Rule configuration:`, option);
+
+    let nodeCount = 0;
+
+    // Helper function to check if we should continue processing
+    function shouldContinue(): boolean {
+      nodeCount++;
+
+      // Check if we've exceeded the node budget
+      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+
+        return false;
+      }
+
+      return true;
+    }
+
+    if (option.performance.enableMetrics) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    trackOperation(perfKey, PerformanceOperations.ruleInitialization);
 
     let inJSX = false;
     let jsxDepth = 0;
@@ -223,6 +258,8 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
 
     // Cache for import checks to avoid repeated AST traversal
     let importCheckCache: boolean | null = null;
+
+    endPhase(perfKey, 'rule-init');
 
     function checkForImport(): boolean {
       if (importCheckCache === null) {
@@ -248,44 +285,38 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
 
     checkForImport();
 
-    function isInHookContext(): boolean {
-      return inHook || hookDepth > 0;
-    }
-
     return {
-      JSXElement(node: TSESTree.Node): void {
+      '*': (node: TSESTree.Node): void => {
+        if (!shouldContinue()) {
+          return;
+        }
+
         perf.trackNode(node);
 
+        if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
+          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        }
+      },
+
+      JSXElement(_node: TSESTree.Node): void {
         inJSX = true;
         jsxDepth++;
       },
-      'Program:exit'(node: TSESTree.Node): void {
-        perf.trackNode(node);
-
-        perf['Program:exit']();
-      },
-      JSXFragment(node: TSESTree.Node): void {
-        perf.trackNode(node);
-
-        inJSX = true;
-        jsxDepth++;
-      },
-      'JSXElement:exit'(node: TSESTree.Node): void {
-        perf.trackNode(node);
-
+      'JSXElement:exit'(_node: TSESTree.Node): void {
         jsxDepth--;
         if (jsxDepth === 0) inJSX = false;
       },
-      'JSXFragment:exit'(node: TSESTree.Node): void {
-        perf.trackNode(node);
 
+      JSXFragment(_node: TSESTree.Node): void {
+        inJSX = true;
+        jsxDepth++;
+      },
+      'JSXFragment:exit'(_node: TSESTree.Node): void {
         jsxDepth--;
         if (jsxDepth === 0) inJSX = false;
       },
 
       CallExpression(node: TSESTree.CallExpression): void {
-        perf.trackNode(node);
-
         // Track hook usage
         if (node.callee.type === 'Identifier' && REACT_HOOKS.has(node.callee.name)) {
           hookDepth++;
@@ -298,7 +329,7 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
         }
 
         // Only apply the rule if we're in JSX and NOT in a hook
-        if (!inJSX || isInHookContext()) {
+        if (!inJSX || inHook || hookDepth > 0) {
           return;
         }
 
@@ -331,11 +362,10 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
             );
 
             if (!replacementResult) {
-              return [];
+              return null;
             }
 
-            const { replacement } = replacementResult;
-            const fixes = [fixer.replaceText(node, replacement)];
+            const fixes = [fixer.replaceText(node, replacementResult.replacement)];
 
             // Add For import if needed
             if (!hasForImport) {
@@ -398,16 +428,47 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
           ],
         });
       },
-
       'CallExpression:exit'(node: TSESTree.CallExpression) {
-        perf.trackNode(node);
-
         if (node.callee.type === 'Identifier' && REACT_HOOKS.has(node.callee.name)) {
           hookDepth = Math.max(0, hookDepth - 1);
           if (hookDepth === 0) {
             inHook = false;
           }
         }
+      },
+
+      // Clean up
+      'Program:exit'(): void {
+        startPhase(perfKey, 'programExit');
+
+        try {
+          startPhase(perfKey, 'recordMetrics');
+
+          const finalMetrics = stopTracking(perfKey);
+
+          if (finalMetrics) {
+            console.info(
+              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
+            );
+            console.info(`  File: ${context.filename}`);
+            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
+            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+
+            if (finalMetrics.exceededBudget) {
+              console.warn('\n⚠️  Performance budget exceeded!');
+            }
+          }
+        } catch (error: unknown) {
+          console.error('Error recording metrics:', error);
+        } finally {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+        }
+
+        perf['Program:exit']();
+
+        endPhase(perfKey, 'programExit');
       },
     };
   },

@@ -1,16 +1,18 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
-import type { PerformanceBudget } from './utils/types.js';
 import {
-  createPerformanceTracker,
-  DEFAULT_PERFORMANCE_BUDGET,
+  endPhase,
   startPhase,
+  stopTracking,
   startTracking,
   trackOperation,
+  createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
 } from './utils/performance.js';
-import { PerformanceOperations } from './utils/performance-constants.js';
 import { getRuleDocUrl } from './utils/urls.js';
+import type { PerformanceBudget } from './utils/types.js';
+import { PerformanceOperations } from './utils/performance-constants.js';
 
 type Option = {
   performance: PerformanceBudget;
@@ -102,18 +104,14 @@ export const preferSignalReadsRule = createRule<Options, MessageIds>({
     },
   ],
   create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
-    const perfKey = `${ruleName}:${context.filename}`;
+    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
     startPhase(perfKey, 'rule-init');
 
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
-    if (option.performance?.enableMetrics === true) {
-      startTracking(context, perfKey, option.performance, ruleName);
-    }
-
-    console.info(`Initializing rule for file: ${context.filename}`);
-    console.info('Rule configuration:', option);
+    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+    console.info(`${ruleName}: Rule configuration:`, option);
 
     let nodeCount = 0;
 
@@ -130,7 +128,13 @@ export const preferSignalReadsRule = createRule<Options, MessageIds>({
       return true;
     }
 
+    if (option.performance?.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
     let isInJSX = false;
+
+    endPhase(perfKey, 'rule-init');
 
     return {
       '*': (node: TSESTree.Node): void => {
@@ -144,12 +148,14 @@ export const preferSignalReadsRule = createRule<Options, MessageIds>({
           trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
         }
       },
+
       JSXElement(): void {
         isInJSX = true;
       },
       'JSXElement:exit'(): void {
         isInJSX = false;
       },
+
       JSXFragment(): void {
         isInJSX = true;
       },
@@ -190,6 +196,40 @@ export const preferSignalReadsRule = createRule<Options, MessageIds>({
             return fixer.insertTextAfter(node, '.value');
           },
         });
+      },
+
+      // Clean up
+      'Program:exit'(): void {
+        startPhase(perfKey, 'programExit');
+
+        try {
+          startPhase(perfKey, 'recordMetrics');
+
+          const finalMetrics = stopTracking(perfKey);
+
+          if (finalMetrics) {
+            console.info(
+              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
+            );
+            console.info(`  File: ${context.filename}`);
+            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
+            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+
+            if (finalMetrics.exceededBudget) {
+              console.warn('\n⚠️  Performance budget exceeded!');
+            }
+          }
+        } catch (error: unknown) {
+          console.error('Error recording metrics:', error);
+        } finally {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+        }
+
+        perf['Program:exit']();
+
+        endPhase(perfKey, 'programExit');
       },
     };
   },
