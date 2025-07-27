@@ -9,10 +9,10 @@ export default [
       'react-signals-hooks': reactSignalsHooksPlugin,
     },
     rules: {
-      'react-signals-hooks/require-use-signals': 'error',
+      'react-signals-hooks/consistent-rule-structure': 'error',
 
       'react-signals-hooks/exhaustive-deps': 'warn',
-      'react-signals-hooks/signal-variable-name': 'warn',
+      'react-signals-hooks/require-use-signals': 'warn',
       'react-signals-hooks/warn-on-unnecessary-untracked': 'warn',
 
       'react-signals-hooks/prefer-computed': 'warn',
@@ -28,10 +28,10 @@ export default [
       'react-signals-hooks/no-mutation-in-render': 'warn',
       'react-signals-hooks/prefer-signal-methods': 'warn',
       'react-signals-hooks/no-signal-creation-in-component': 'warn',
-      'react-signals-hooks/no-signal-assignment-in-effect': 'warn',
-      'react-signals-hooks/no-non-signal-with-signal-suffix': 'warn',
+      'react-signals-hooks/no-signal-assignment-in-effect': 'error',
+      'react-signals-hooks/no-non-signal-with-signal-suffix': 'error',
 
-      'react-signals-hooks/consistent-rule-structure': 'warn',
+      'react-signals-hooks/signal-variable-name': 'warn',
     },
     languageOptions: {
       parser,

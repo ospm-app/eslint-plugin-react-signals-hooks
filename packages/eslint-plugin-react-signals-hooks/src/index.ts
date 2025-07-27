@@ -50,6 +50,8 @@ import { preferShowOverTernaryRule } from './prefer-show-over-ternary.js';
 import { signalVariableNameRule } from './signal-variable-name.js';
 import { warnOnUnnecessaryUntrackedRule } from './warn-on-unnecessary-untracked.js';
 
+import { consistentRuleStructureRule } from './consistent-rule-structure.js';
+
 const rules = {
   // Core rules
   'exhaustive-deps': exhaustiveDepsRule,
@@ -75,6 +77,9 @@ const rules = {
   'prefer-show-over-ternary': preferShowOverTernaryRule,
   'signal-variable-name': signalVariableNameRule,
   'warn-on-unnecessary-untracked': warnOnUnnecessaryUntrackedRule,
+
+  // Internal rules
+  'consistent-rule-structure': consistentRuleStructureRule,
 } as const;
 
 const configRules = {

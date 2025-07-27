@@ -34,6 +34,8 @@ export default [
       'react-signals-hooks/no-signal-assignment-in-effect': 'warn',
       'react-signals-hooks/no-signal-creation-in-component': 'warn',
       'react-signals-hooks/no-non-signal-with-signal-suffix': 'warn',
+
+      'react-signals-hooks/consistent-rule-structure': 'warn',
     },
     languageOptions: {
       parser: tsParser,

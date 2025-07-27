@@ -1,9 +1,6 @@
 import tsParser from '@typescript-eslint/parser';
 import reactSignalsHooksPlugin from '../../dist/cjs/index.js';
 
-// Debug: Log the loaded plugin
-console.log('Loaded plugin:', Object.keys(reactSignalsHooksPlugin.rules || {}));
-
 /** @type {import('eslint').Linter.Config[]} */
 export default [
   {
@@ -16,11 +13,10 @@ export default [
       'react-signals-hooks/no-non-signal-with-signal-suffix': [
         'error',
         {
-          // Debug: Log the options being passed to the rule
-          onConfigured(options) {
-            console.info('Rule options:', JSON.stringify(options, null, 2));
-            return options;
-          },
+          // onConfigured(options) {
+          //   console.info('Rule options:', JSON.stringify(options, null, 2));
+          //   return options;
+          // },
           performance: {
             maxTime: 5000,
             maxNodes: 2000,
@@ -58,6 +54,8 @@ export default [
       'react-signals-hooks/no-mutation-in-render': 'warn',
       'react-signals-hooks/no-signal-assignment-in-effect': 'warn',
       'react-signals-hooks/no-signal-creation-in-component': 'warn',
+
+      'react-signals-hooks/consistent-rule-structure': 'warn',
     },
     languageOptions: {
       parser: tsParser,

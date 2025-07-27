@@ -252,7 +252,11 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
 
     const signalNames = option.signalNames ?? ['signal', 'useSignal', 'createSignal'];
 
-    const isFileExempt =
+    startPhase(perfKey, 'fileAnalysis');
+
+    trackOperation(perfKey, PerformanceOperations.signalNames, signalNames.length);
+
+    if (
       option.allowedPatterns?.some((pattern: string): boolean => {
         try {
           return new RegExp(pattern).test(context.filename);
@@ -261,13 +265,9 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           // Invalid regex pattern, ignore it
           return false;
         }
-      }) ?? false;
-
-    startPhase(perfKey, 'fileAnalysis');
-
-    trackOperation(perfKey, PerformanceOperations.signalNames, signalNames.length);
-
-    if (isFileExempt) {
+      }) ??
+      false
+    ) {
       trackOperation(perfKey, PerformanceOperations.fileExempt);
 
       endPhase(perfKey, 'fileAnalysis');
