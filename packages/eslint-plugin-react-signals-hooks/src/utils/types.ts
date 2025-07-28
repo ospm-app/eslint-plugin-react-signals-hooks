@@ -1,4 +1,4 @@
-import type { PerformanceOperation } from "./performance-constants.js";
+import type { PerformanceOperationKeys } from './performance-constants.js';
 
 /**
  * Performance budget configuration for rule execution
@@ -11,49 +11,49 @@ import type { PerformanceOperation } from "./performance-constants.js";
  * @property maxOperations - Operation-specific limits
  */
 export type PerformanceBudget = {
-	maxTime?: number | undefined;
-	maxMemory?: number | undefined;
-	maxNodes?: number | undefined;
-	enableMetrics?: boolean | undefined;
-	logMetrics?: boolean | undefined;
-	maxOperations?: Partial<Record<PerformanceOperation, number>> | undefined;
+  maxTime?: number | undefined;
+  maxMemory?: number | undefined;
+  maxNodes?: number | undefined;
+  enableMetrics?: boolean | undefined;
+  logMetrics?: boolean | undefined;
+  maxOperations?: Partial<Record<PerformanceOperationKeys, number>> | undefined;
 };
 
 export type PerformanceMetrics = {
-	// Basic timing
-	startTime: number;
-	endTime?: number | undefined;
-	duration?: number | undefined;
+  // Basic timing
+  startTime: number;
+  endTime?: number | undefined;
+  duration?: number | undefined;
 
-	// Memory usage (in bytes)
-	memoryUsage?: NodeJS.MemoryUsage | undefined;
-	memoryDelta?: number | undefined;
+  // Memory usage (in bytes)
+  memoryUsage?: NodeJS.MemoryUsage | undefined;
+  memoryDelta?: number | undefined;
 
-	// Node and operation counts
-	nodeCount: number;
-	operationCounts: Record<string, number>;
+  // Node and operation counts
+  nodeCount: number;
+  operationCounts: Record<string, number>;
 
-	// File and rule info
-	filePath: string;
-	ruleName: string;
+  // File and rule info
+  filePath: string;
+  ruleName: string;
 
-	// Budget tracking
-	exceededBudget?: boolean | undefined;
-	budgetExceededBy?: number | undefined;
+  // Budget tracking
+  exceededBudget?: boolean | undefined;
+  budgetExceededBy?: number | undefined;
 
-	// Performance budget configuration
-	perfBudget?: PerformanceBudget | undefined;
+  // Performance budget configuration
+  perfBudget?: PerformanceBudget | undefined;
 
-	// Additional metrics
-	phaseDurations?: Record<string, number> | undefined;
-	customMetrics?: Record<string, unknown> | undefined;
+  // Additional metrics
+  phaseDurations?: Record<string, number> | undefined;
+  customMetrics?: Record<string, unknown> | undefined;
 
-	// Node type tracking
-	nodeTypes?: Map<string, number>;
-	nodeLocations?: Array<{
-		type: string;
-		start: { line: number; column: number };
-		end: { line: number; column: number };
-	}>;
-	budgetExceededNodeTypes?: Set<string>;
+  // Node type tracking
+  nodeTypes?: Map<string, number>;
+  nodeLocations?: Array<{
+    type: string;
+    start: { line: number; column: number };
+    end: { line: number; column: number };
+  }>;
+  budgetExceededNodeTypes?: Set<string>;
 };

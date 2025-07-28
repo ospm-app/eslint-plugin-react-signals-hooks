@@ -14,7 +14,7 @@ import eslintPlugin from "eslint-plugin-eslint-plugin";
 import jsxA11y from "eslint-plugin-jsx-a11y";
 import securityPlugin from "eslint-plugin-security";
 
-import reactSignalsHooksPlugin from "./dist/cjs/index.js";
+import reactSignalsHooksPlugin from "./dist/esm/index.js";
 
 const commonRules = {
 	// Disabled rules
@@ -86,12 +86,6 @@ const commonRules = {
 	// Security
 	"security/detect-object-injection": "error",
 
-	// TypeScript specific
-	"@typescript-eslint/await-thenable": "error",
-	"@typescript-eslint/no-floating-promises": "error",
-	"@typescript-eslint/consistent-type-imports": "error",
-	"@typescript-eslint/no-explicit-any": "warn",
-
 	"no-restricted-globals": [
 		"error",
 		{
@@ -136,9 +130,6 @@ const jsConfig = {
 	rules: {
 		...commonRules,
 		semi: ["error", "always"],
-		"@typescript-eslint/no-var-requires": "off",
-		"@typescript-eslint/explicit-function-return-type": "off",
-		"@typescript-eslint/explicit-module-boundary-types": "off",
 	},
 };
 
@@ -182,6 +173,12 @@ const tsConfig = {
 		"react-signals-hooks/prefer-for-over-map": "warn",
 		"react-signals-hooks/prefer-signal-effect": "warn",
 		"react-signals-hooks/prefer-computed": "warn",
+
+		// TypeScript specific
+		"@typescript-eslint/await-thenable": "error",
+		"@typescript-eslint/no-floating-promises": "error",
+		"@typescript-eslint/consistent-type-imports": "error",
+		"@typescript-eslint/no-explicit-any": "warn",
 
 		"@typescript-eslint/array-type": ["error", { default: "generic" }],
 		"no-shadow": "off",

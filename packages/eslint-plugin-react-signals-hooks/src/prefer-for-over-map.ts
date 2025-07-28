@@ -1,207 +1,189 @@
 /** biome-ignore-all assist/source/organizeImports:off */
-import {
-	ESLintUtils,
-	type TSESLint,
-	type TSESTree,
-} from "@typescript-eslint/utils";
-import type {
-	SourceCode,
-	RuleContext,
-} from "@typescript-eslint/utils/ts-eslint";
+import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
+import type { SourceCode, RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
 import {
-	endPhase,
-	startPhase,
-	recordMetric,
-	stopTracking,
-	startTracking,
-	trackOperation,
-	createPerformanceTracker,
-	DEFAULT_PERFORMANCE_BUDGET,
-} from "./utils/performance.js";
-import { getRuleDocUrl } from "./utils/urls.js";
-import type { PerformanceBudget } from "./utils/types.js";
-import { PerformanceOperations } from "./utils/performance-constants.js";
+  endPhase,
+  startPhase,
+  recordMetric,
+  stopTracking,
+  startTracking,
+  trackOperation,
+  createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
+} from './utils/performance.js';
+import { getRuleDocUrl } from './utils/urls.js';
+import type { PerformanceBudget } from './utils/types.js';
+import { PerformanceOperations } from './utils/performance-constants.js';
 
 type Option = {
-	performance: PerformanceBudget;
+  performance: PerformanceBudget;
 };
 
 type Options = [Option];
 
-type MessageIds = "preferForOverMap" | "suggestForComponent" | "addForImport";
+type MessageIds = 'preferForOverMap' | 'suggestForComponent' | 'addForImport';
 
 const REACT_HOOKS = new Set([
-	"useEffect",
-	"useLayoutEffect",
-	"useCallback",
-	"useMemo",
-	"useImperativeHandle",
-	"useState",
-	"useReducer",
-	"useRef",
-	"useContext",
+  'useEffect',
+  'useLayoutEffect',
+  'useCallback',
+  'useMemo',
+  'useImperativeHandle',
+  'useState',
+  'useReducer',
+  'useRef',
+  'useContext',
 ]);
 
 const signalMapCache = new WeakMap<
-	TSESTree.CallExpression,
-	{ signalName: string; hasValueAccess: boolean } | null
+  TSESTree.CallExpression,
+  { signalName: string; hasValueAccess: boolean } | null
 >();
 
 function isSignalArrayMap(node: TSESTree.CallExpression): {
-	signalName: string;
-	hasValueAccess: boolean;
+  signalName: string;
+  hasValueAccess: boolean;
 } | null {
-	const cached = signalMapCache.get(node);
+  const cached = signalMapCache.get(node);
 
-	if (typeof cached !== "undefined") {
-		return cached;
-	}
+  if (typeof cached !== 'undefined') {
+    return cached;
+  }
 
-	const result: { signalName: string; hasValueAccess: boolean } | null = null;
-	// Check for signalName.value.map(...)
-	if (
-		node.callee.type === "MemberExpression" &&
-		node.callee.property.type === "Identifier" &&
-		node.callee.property.name === "map" &&
-		node.callee.object.type === "MemberExpression" &&
-		node.callee.object.property.type === "Identifier" &&
-		node.callee.object.property.name === "value" &&
-		node.callee.object.object.type === "Identifier" &&
-		node.callee.object.object.name.endsWith("Signal")
-	) {
-		return {
-			signalName: node.callee.object.object.name,
-			hasValueAccess: true,
-		};
-	}
+  const result: { signalName: string; hasValueAccess: boolean } | null = null;
+  // Check for signalName.value.map(...)
+  if (
+    node.callee.type === 'MemberExpression' &&
+    node.callee.property.type === 'Identifier' &&
+    node.callee.property.name === 'map' &&
+    node.callee.object.type === 'MemberExpression' &&
+    node.callee.object.property.type === 'Identifier' &&
+    node.callee.object.property.name === 'value' &&
+    node.callee.object.object.type === 'Identifier' &&
+    node.callee.object.object.name.endsWith('Signal')
+  ) {
+    return {
+      signalName: node.callee.object.object.name,
+      hasValueAccess: true,
+    };
+  }
 
-	// Check for direct signal.map() (without .value)
-	if (
-		node.callee.type === "MemberExpression" &&
-		node.callee.property.type === "Identifier" &&
-		node.callee.property.name === "map" &&
-		node.callee.object.type === "Identifier" &&
-		node.callee.object.name.endsWith("Signal")
-	) {
-		return {
-			signalName: node.callee.object.name,
-			hasValueAccess: false,
-		};
-	}
+  // Check for direct signal.map() (without .value)
+  if (
+    node.callee.type === 'MemberExpression' &&
+    node.callee.property.type === 'Identifier' &&
+    node.callee.property.name === 'map' &&
+    node.callee.object.type === 'Identifier' &&
+    node.callee.object.name.endsWith('Signal')
+  ) {
+    return {
+      signalName: node.callee.object.name,
+      hasValueAccess: false,
+    };
+  }
 
-	signalMapCache.set(node, result);
+  signalMapCache.set(node, result);
 
-	return result;
+  return result;
 }
 
 function getForComponentReplacement(
-	node: TSESTree.CallExpression,
-	signalName: string,
-	hasValueAccess: boolean,
-	sourceCode: SourceCode,
+  node: TSESTree.CallExpression,
+  signalName: string,
+  hasValueAccess: boolean,
+  sourceCode: SourceCode
 ): { replacement: string; needsParens: boolean } | null {
-	const mapCallback = node.arguments[0];
+  const mapCallback = node.arguments[0];
 
-	if (!mapCallback) {
-		return null;
-	}
+  if (!mapCallback) {
+    return null;
+  }
 
-	const signalAccess = hasValueAccess ? `${signalName}.value` : signalName;
+  const signalAccess = hasValueAccess ? `${signalName}.value` : signalName;
 
-	// Handle different callback types
-	if (
-		mapCallback.type === "ArrowFunctionExpression" ||
-		mapCallback.type === "FunctionExpression"
-	) {
-		const params = "params" in mapCallback ? mapCallback.params : [];
+  // Handle different callback types
+  if (mapCallback.type === 'ArrowFunctionExpression' || mapCallback.type === 'FunctionExpression') {
+    const params = 'params' in mapCallback ? mapCallback.params : [];
 
-		const itemParam =
-			params[0]?.type === "Identifier" ? params[0].name : "item";
+    const itemParam = params[0]?.type === 'Identifier' ? params[0].name : 'item';
 
-		// Get the body of the callback
-		let bodyText = "";
-		let needsParens = false;
+    // Get the body of the callback
+    let bodyText = '';
+    let needsParens = false;
 
-		if ("body" in mapCallback) {
-			if (mapCallback.body.type === "BlockStatement") {
-				// For block statements, we need to handle the return statement
-				const returnStmt = mapCallback.body.body.find(
-					(stmt) => stmt.type === "ReturnStatement",
-				) as TSESTree.ReturnStatement | undefined;
+    if ('body' in mapCallback) {
+      if (mapCallback.body.type === 'BlockStatement') {
+        // For block statements, we need to handle the return statement
+        const returnStmt = mapCallback.body.body.find((stmt) => stmt.type === 'ReturnStatement') as
+          | TSESTree.ReturnStatement
+          | undefined;
 
-				if (returnStmt?.argument) {
-					bodyText = sourceCode.getText(returnStmt.argument);
-				} else if (mapCallback.body.body.length > 0) {
-					bodyText = sourceCode.getText(mapCallback.body);
-				}
-			} else {
-				// For concise arrow functions, just get the expression
-				bodyText = sourceCode.getText(mapCallback.body);
-				needsParens =
-					mapCallback.body.type !== "JSXElement" &&
-					mapCallback.body.type !== "JSXFragment";
-			}
-		}
+        if (returnStmt?.argument) {
+          bodyText = sourceCode.getText(returnStmt.argument);
+        } else if (mapCallback.body.body.length > 0) {
+          bodyText = sourceCode.getText(mapCallback.body);
+        }
+      } else {
+        // For concise arrow functions, just get the expression
+        bodyText = sourceCode.getText(mapCallback.body);
+        needsParens =
+          mapCallback.body.type !== 'JSXElement' && mapCallback.body.type !== 'JSXFragment';
+      }
+    }
 
-		// Determine if we need to include the index parameter
-		const hasIndexParam = params.length > 1;
-		const paramList = hasIndexParam
-			? `(${itemParam}, ${params[1]?.type === "Identifier" ? params[1].name : "index"})`
-			: `(${itemParam})`;
+    // Determine if we need to include the index parameter
+    const hasIndexParam = params.length > 1;
+    const paramList = hasIndexParam
+      ? `(${itemParam}, ${params[1]?.type === 'Identifier' ? params[1].name : 'index'})`
+      : `(${itemParam})`;
 
-		// Format the replacement
-		const replacement = hasIndexParam
-			? `<For each={${signalAccess}}>${paramList} => ${needsParens ? `(${bodyText})` : bodyText}</For>`
-			: `<For each={${signalAccess}}>${paramList} => ${needsParens ? `(${bodyText})` : bodyText}</For>`;
+    // Format the replacement
+    const replacement = hasIndexParam
+      ? `<For each={${signalAccess}}>${paramList} => ${needsParens ? `(${bodyText})` : bodyText}</For>`
+      : `<For each={${signalAccess}}>${paramList} => ${needsParens ? `(${bodyText})` : bodyText}</For>`;
 
-		return { replacement, needsParens: false };
-	}
+    return { replacement, needsParens: false };
+  }
 
-	// For identifier callbacks, just use the identifier directly
-	if (mapCallback.type === "Identifier") {
-		const callbackName = sourceCode.getText(mapCallback);
+  // For identifier callbacks, just use the identifier directly
+  if (mapCallback.type === 'Identifier') {
+    const callbackName = sourceCode.getText(mapCallback);
 
-		return {
-			replacement: `<For each={${signalAccess}}>{${callbackName}}</For>`,
-			needsParens: false,
-		};
-	}
+    return {
+      replacement: `<For each={${signalAccess}}>{${callbackName}}</For>`,
+      needsParens: false,
+    };
+  }
 
-	// For member expressions or other call expressions
-	const callbackText = sourceCode.getText(mapCallback);
-	return {
-		replacement: `<For each={${signalAccess}}>{${callbackText}}</For>`,
-		needsParens: true,
-	};
+  // For member expressions or other call expressions
+  const callbackText = sourceCode.getText(mapCallback);
+  return {
+    replacement: `<For each={${signalAccess}}>{${callbackText}}</For>`,
+    needsParens: true,
+  };
 }
-
-const createRule = ESLintUtils.RuleCreator((name: string): string => {
-	return getRuleDocUrl(name);
-});
 
 let importCheckCache: boolean = false;
 
 function checkForImport(context: RuleContext<MessageIds, Options>): boolean {
-	if (!importCheckCache) {
-		importCheckCache = context.sourceCode.ast.body.some(
-			(node: TSESTree.ProgramStatement): boolean => {
-				return (
-					node.type === "ImportDeclaration" &&
-					node.source.value === "@preact/signals-react" &&
-					node.specifiers.some((s): boolean => {
-						return (
-							s.type === "ImportSpecifier" &&
-							"name" in s.imported &&
-							s.imported.name === "For"
-						);
-					})
-				);
-			},
-		);
-	}
+  if (!importCheckCache) {
+    importCheckCache = context.sourceCode.ast.body.some(
+      (node: TSESTree.ProgramStatement): boolean => {
+        return (
+          node.type === 'ImportDeclaration' &&
+          node.source.value === '@preact/signals-react' &&
+          node.specifiers.some((s): boolean => {
+            return (
+              s.type === 'ImportSpecifier' && 'name' in s.imported && s.imported.name === 'For'
+            );
+          })
+        );
+      }
+    );
+  }
 
-	return importCheckCache;
+  return importCheckCache;
 }
 
 let inJSX = false;
@@ -209,324 +191,287 @@ let jsxDepth = 0;
 let inHook = false;
 let hookDepth = 0;
 
-const ruleName = "prefer-for-over-map";
+const ruleName = 'prefer-for-over-map';
 
-export const preferForOverMapRule = createRule<Options, MessageIds>({
-	name: ruleName,
-	meta: {
-		type: "suggestion",
-		fixable: "code",
-		hasSuggestions: true,
-		docs: {
-			description:
-				"Prefer For component over .map() for rendering signal arrays",
-			url: getRuleDocUrl(ruleName),
-		},
-		messages: {
-			preferForOverMap:
-				"Prefer using the `<For>` component instead of `.map()` for better performance with signal arrays.",
-			suggestForComponent: "Replace `.map()` with `<For>` component",
-			addForImport: "Add `For` import from @preact/signals-react",
-		},
-		schema: [
-			{
-				type: "object",
-				properties: {
-					performance: {
-						type: "object",
-						properties: {
-							maxTime: { type: "number", minimum: 1 },
-							maxMemory: { type: "number", minimum: 1 },
-							maxNodes: { type: "number", minimum: 1 },
-							enableMetrics: { type: "boolean" },
-							logMetrics: { type: "boolean" },
-							maxOperations: {
-								type: "object",
-								properties: Object.fromEntries(
-									Object.entries(PerformanceOperations).map(([key]) => [
-										key,
-										{ type: "number", minimum: 1 },
-									]),
-								),
-							},
-						},
-						additionalProperties: false,
-					},
-				},
-				additionalProperties: false,
-			},
-		],
-	},
-	defaultOptions: [
-		{
-			performance: DEFAULT_PERFORMANCE_BUDGET,
-		},
-	],
-	create(
-		context: Readonly<RuleContext<MessageIds, Options>>,
-		[option],
-	): ESLintUtils.RuleListener {
-		const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
+export const preferForOverMapRule = ESLintUtils.RuleCreator((name: string): string => {
+  return getRuleDocUrl(name);
+})<Options, MessageIds>({
+  name: ruleName,
+  meta: {
+    type: 'suggestion',
+    fixable: 'code',
+    hasSuggestions: true,
+    docs: {
+      description: 'Prefer For component over .map() for rendering signal arrays',
+      url: getRuleDocUrl(ruleName),
+    },
+    messages: {
+      preferForOverMap:
+        'Prefer using the `<For>` component instead of `.map()` for better performance with signal arrays.',
+      suggestForComponent: 'Replace `.map()` with `<For>` component',
+      addForImport: 'Add `For` import from @preact/signals-react',
+    },
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          performance: {
+            type: 'object',
+            properties: {
+              maxTime: { type: 'number', minimum: 1 },
+              maxMemory: { type: 'number', minimum: 1 },
+              maxNodes: { type: 'number', minimum: 1 },
+              enableMetrics: { type: 'boolean' },
+              logMetrics: { type: 'boolean' },
+              maxOperations: {
+                type: 'object',
+                properties: Object.fromEntries(
+                  Object.entries(PerformanceOperations).map(([key]) => [
+                    key,
+                    { type: 'number', minimum: 1 },
+                  ])
+                ),
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+        additionalProperties: false,
+      },
+    ],
+  },
+  defaultOptions: [
+    {
+      performance: DEFAULT_PERFORMANCE_BUDGET,
+    },
+  ],
+  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
+    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
-		startPhase(perfKey, "ruleInit");
+    startPhase(perfKey, 'ruleInit');
 
-		const perf = createPerformanceTracker<Options>(
-			perfKey,
-			option.performance,
-			context,
-		);
+    const perf = createPerformanceTracker<Options>(perfKey, option.performance, context);
 
-		if (option.performance.enableMetrics === true) {
-			startTracking(context, perfKey, option.performance, ruleName);
-		}
+    if (option.performance.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
 
-		console.info(
-			`${ruleName}: Initializing rule for file: ${context.filename}`,
-		);
-		console.info(`${ruleName}: Rule configuration:`, option);
+    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+    console.info(`${ruleName}: Rule configuration:`, option);
 
-		recordMetric(perfKey, "config", {
-			performance: {
-				enableMetrics: option.performance.enableMetrics,
-				logMetrics: option.performance.logMetrics,
-			},
-		});
+    recordMetric(perfKey, 'config', {
+      performance: {
+        enableMetrics: option.performance.enableMetrics,
+        logMetrics: option.performance.logMetrics,
+      },
+    });
 
-		trackOperation(perfKey, PerformanceOperations.ruleInit);
+    trackOperation(perfKey, PerformanceOperations.ruleInit);
 
-		endPhase(perfKey, "ruleInit");
+    endPhase(perfKey, 'ruleInit');
 
-		let nodeCount = 0;
+    let nodeCount = 0;
 
-		function shouldContinue(): boolean {
-			nodeCount++;
+    function shouldContinue(): boolean {
+      nodeCount++;
 
-			if (nodeCount > (option.performance.maxNodes ?? 2000)) {
-				trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+      if (nodeCount > (option.performance.maxNodes ?? 2000)) {
+        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
-				return false;
-			}
+        return false;
+      }
 
-			return true;
-		}
+      return true;
+    }
 
-		startPhase(perfKey, "ruleExecution");
+    startPhase(perfKey, 'ruleExecution');
 
-		return {
-			"*": (node: TSESTree.Node): void => {
-				if (!shouldContinue()) {
-					endPhase(perfKey, "recordMetrics");
+    return {
+      '*': (node: TSESTree.Node): void => {
+        if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
 
-					stopTracking(perfKey);
+          stopTracking(perfKey);
 
-					return;
-				}
+          return;
+        }
 
-				perf.trackNode(node);
+        perf.trackNode(node);
 
-				trackOperation(
-					perfKey,
-					PerformanceOperations[`${node.type}Processing`],
-				);
-			},
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+      },
 
-			JSXElement(_node: TSESTree.Node): void {
-				inJSX = true;
-				jsxDepth++;
-			},
-			"JSXElement:exit"(_node: TSESTree.Node): void {
-				jsxDepth--;
-				if (jsxDepth === 0) inJSX = false;
-			},
+      JSXElement(_node: TSESTree.Node): void {
+        inJSX = true;
+        jsxDepth++;
+      },
+      'JSXElement:exit'(_node: TSESTree.Node): void {
+        jsxDepth--;
+        if (jsxDepth === 0) inJSX = false;
+      },
 
-			JSXFragment(_node: TSESTree.Node): void {
-				inJSX = true;
-				jsxDepth++;
-			},
-			"JSXFragment:exit"(_node: TSESTree.Node): void {
-				jsxDepth--;
-				if (jsxDepth === 0) inJSX = false;
-			},
+      JSXFragment(_node: TSESTree.Node): void {
+        inJSX = true;
+        jsxDepth++;
+      },
+      'JSXFragment:exit'(_node: TSESTree.Node): void {
+        jsxDepth--;
+        if (jsxDepth === 0) inJSX = false;
+      },
 
-			CallExpression(node: TSESTree.CallExpression): void {
-				// Track hook usage
-				if (
-					node.callee.type === "Identifier" &&
-					REACT_HOOKS.has(node.callee.name)
-				) {
-					hookDepth++;
+      CallExpression(node: TSESTree.CallExpression): void {
+        // Track hook usage
+        if (node.callee.type === 'Identifier' && REACT_HOOKS.has(node.callee.name)) {
+          hookDepth++;
 
-					if (hookDepth === 1) {
-						inHook = true;
-					}
+          if (hookDepth === 1) {
+            inHook = true;
+          }
 
-					return;
-				}
+          return;
+        }
 
-				// Only apply the rule if we're in JSX and NOT in a hook
-				if (!inJSX || inHook || hookDepth > 0) {
-					return;
-				}
+        // Only apply the rule if we're in JSX and NOT in a hook
+        if (!inJSX || inHook || hookDepth > 0) {
+          return;
+        }
 
-				const signalMapInfo = isSignalArrayMap(node);
+        const signalMapInfo = isSignalArrayMap(node);
 
-				if (signalMapInfo === null) {
-					return;
-				}
+        if (signalMapInfo === null) {
+          return;
+        }
 
-				const replacement = getForComponentReplacement(
-					node,
-					signalMapInfo.signalName,
-					signalMapInfo.hasValueAccess,
-					context.sourceCode,
-				);
+        const replacement = getForComponentReplacement(
+          node,
+          signalMapInfo.signalName,
+          signalMapInfo.hasValueAccess,
+          context.sourceCode
+        );
 
-				if (!replacement) {
-					return;
-				}
+        if (!replacement) {
+          return;
+        }
 
-				context.report({
-					node,
-					messageId: "preferForOverMap",
-					fix: (fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null => {
-						const replacementResult = getForComponentReplacement(
-							node,
-							signalMapInfo.signalName,
-							signalMapInfo.hasValueAccess,
-							context.sourceCode,
-						);
+        context.report({
+          node,
+          messageId: 'preferForOverMap',
+          fix: (fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null => {
+            const replacementResult = getForComponentReplacement(
+              node,
+              signalMapInfo.signalName,
+              signalMapInfo.hasValueAccess,
+              context.sourceCode
+            );
 
-						if (!replacementResult) {
-							return null;
-						}
+            if (!replacementResult) {
+              return null;
+            }
 
-						const fixes = [
-							fixer.replaceText(node, replacementResult.replacement),
-						];
+            const fixes = [fixer.replaceText(node, replacementResult.replacement)];
 
-						// Add For import if needed
-						if (!checkForImport(context)) {
-							const forImport =
-								"import { For } from '@preact/signals-react';\n";
+            // Add For import if needed
+            if (!checkForImport(context)) {
+              const forImport = "import { For } from '@preact/signals-react';\n";
 
-							const firstImport = context.sourceCode.ast.body.find(
-								(
-									n: TSESTree.ProgramStatement,
-								): n is TSESTree.ImportDeclaration => {
-									return n.type === "ImportDeclaration";
-								},
-							);
+              const firstImport = context.sourceCode.ast.body.find(
+                (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
+                  return n.type === 'ImportDeclaration';
+                }
+              );
 
-							if (firstImport) {
-								fixes.push(fixer.insertTextBefore(firstImport, forImport));
-							} else {
-								fixes.push(
-									fixer.insertTextBefore(
-										context.sourceCode.ast.body[0],
-										forImport,
-									),
-								);
-							}
-						}
+              if (firstImport) {
+                fixes.push(fixer.insertTextBefore(firstImport, forImport));
+              } else {
+                fixes.push(fixer.insertTextBefore(context.sourceCode.ast.body[0], forImport));
+              }
+            }
 
-						return fixes;
-					},
-					suggest: [
-						{
-							messageId: "suggestForComponent",
-							fix: (
-								fixer: TSESLint.RuleFixer,
-							): Array<TSESLint.RuleFix> | null => {
-								const replacementResult = getForComponentReplacement(
-									node,
-									signalMapInfo.signalName,
-									signalMapInfo.hasValueAccess,
-									context.sourceCode,
-								);
+            return fixes;
+          },
+          suggest: [
+            {
+              messageId: 'suggestForComponent',
+              fix: (fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null => {
+                const replacementResult = getForComponentReplacement(
+                  node,
+                  signalMapInfo.signalName,
+                  signalMapInfo.hasValueAccess,
+                  context.sourceCode
+                );
 
-								if (!replacementResult) {
-									return null;
-								}
+                if (!replacementResult) {
+                  return null;
+                }
 
-								const { replacement } = replacementResult;
+                const { replacement } = replacementResult;
 
-								const fixes = [fixer.replaceText(node, replacement)];
+                const fixes = [fixer.replaceText(node, replacement)];
 
-								if (!checkForImport(context)) {
-									const forImport =
-										"import { For } from '@preact/signals-react';\n";
+                if (!checkForImport(context)) {
+                  const forImport = "import { For } from '@preact/signals-react';\n";
 
-									const firstImport = context.sourceCode.ast.body.find(
-										(
-											n: TSESTree.ProgramStatement,
-										): n is TSESTree.ImportDeclaration => {
-											return n.type === "ImportDeclaration";
-										},
-									);
+                  const firstImport = context.sourceCode.ast.body.find(
+                    (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
+                      return n.type === 'ImportDeclaration';
+                    }
+                  );
 
-									if (firstImport) {
-										fixes.push(fixer.insertTextBefore(firstImport, forImport));
-									} else {
-										fixes.push(
-											fixer.insertTextBefore(
-												context.sourceCode.ast.body[0],
-												forImport,
-											),
-										);
-									}
-								}
+                  if (firstImport) {
+                    fixes.push(fixer.insertTextBefore(firstImport, forImport));
+                  } else {
+                    fixes.push(fixer.insertTextBefore(context.sourceCode.ast.body[0], forImport));
+                  }
+                }
 
-								return fixes;
-							},
-						},
-					],
-				});
-			},
-			"CallExpression:exit"(node: TSESTree.CallExpression) {
-				if (
-					node.callee.type === "Identifier" &&
-					REACT_HOOKS.has(node.callee.name)
-				) {
-					hookDepth = Math.max(0, hookDepth - 1);
-					if (hookDepth === 0) {
-						inHook = false;
-					}
-				}
-			},
+                return fixes;
+              },
+            },
+          ],
+        });
+      },
+      'CallExpression:exit'(node: TSESTree.CallExpression) {
+        if (node.callee.type === 'Identifier' && REACT_HOOKS.has(node.callee.name)) {
+          hookDepth = Math.max(0, hookDepth - 1);
+          if (hookDepth === 0) {
+            inHook = false;
+          }
+        }
+      },
 
-			// Clean up
-			"Program:exit"(): void {
-				startPhase(perfKey, "programExit");
+      // Clean up
+      'Program:exit'(): void {
+        startPhase(perfKey, 'programExit');
 
-				try {
-					startPhase(perfKey, "recordMetrics");
+        try {
+          startPhase(perfKey, 'recordMetrics');
 
-					const finalMetrics = stopTracking(perfKey);
+          const finalMetrics = stopTracking(perfKey);
 
-					if (finalMetrics) {
-						console.info(
-							`\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget ? "EXCEEDED" : "OK"}):`,
-						);
-						console.info(`  File: ${context.filename}`);
-						console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-						console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+          if (finalMetrics) {
+            console.info(
+              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
+            );
+            console.info(`  File: ${context.filename}`);
+            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
+            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
 
-						if (finalMetrics.exceededBudget) {
-							console.warn("\n⚠️  Performance budget exceeded!");
-						}
-					}
-				} catch (error: unknown) {
-					console.error("Error recording metrics:", error);
-				} finally {
-					endPhase(perfKey, "recordMetrics");
+            if (finalMetrics.exceededBudget) {
+              console.warn('\n⚠️  Performance budget exceeded!');
+            }
+          }
+        } catch (error: unknown) {
+          console.error('Error recording metrics:', error);
+        } finally {
+          endPhase(perfKey, 'recordMetrics');
 
-					stopTracking(perfKey);
-				}
+          stopTracking(perfKey);
+        }
 
-				perf["Program:exit"]();
+        perf['Program:exit']();
 
-				endPhase(perfKey, "programExit");
-			},
-		};
-	},
+        endPhase(perfKey, 'programExit');
+      },
+    };
+  },
 });

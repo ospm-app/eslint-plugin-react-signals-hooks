@@ -17,11 +17,14 @@ export default [
           minUpdates: 2,
           // Performance budget configuration
           performance: {
+            // Enable performance metrics collection
             enableMetrics: false,
-            maxTime: 1_000,
-            maxNodes: 5_000,
-            maxOperations: 10_000,
-            trackOperations: false,
+            // Maximum number of nodes to process before bailing out
+            maxNodes: 5_000, // Higher for tests
+            // Maximum time in milliseconds to spend on a single file
+            maxTime: 1_000, // 1 second
+            // Maximum number of operations before bailing out
+            maxOperations: {},
           },
         },
       ],
@@ -39,7 +42,10 @@ export default [
       'react-signals-hooks/prefer-signal-effect': 'warn',
       'react-signals-hooks/prefer-signal-methods': 'warn',
       'react-signals-hooks/prefer-show-over-ternary': 'warn',
-      'react-signals-hooks/prefer-batch-for-multi-mutations': 'warn',
+      'react-signals-hooks/prefer-batch-for-multi-mutations': [
+        'warn',
+        { minMutations: 2, maxMutations: 10 },
+      ],
       'react-signals-hooks/prefer-use-signal-over-use-state': 'warn',
 
       // Error prevention rules

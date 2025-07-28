@@ -1,14 +1,21 @@
 {
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "outDir": "dist/esm",
-
-    "noEmit": false,
-    "declaration": true,
-    "declarationMap": true
-  },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "tests"]
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"target": "ES2024",
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"outDir": "dist/esm",
+		"noEmit": false,
+		"declaration": true,
+		"declarationMap": true,
+		"esModuleInterop": true,
+		"rootDir": "src",
+		"composite": true,
+		"emitDeclarationOnly": false,
+		"skipLibCheck": true,
+		"skipDefaultLibCheck": true,
+		"types": ["node"]
+	},
+	"include": ["src/**/*"],
+	"exclude": ["node_modules", "dist", "tests", "**/*.test.ts", "**/*.spec.ts"]
 }

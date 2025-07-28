@@ -1,27 +1,24 @@
 {
-	"extends": "../../tsconfig.json",
-	"compilerOptions": {
-		"baseUrl": ".",
-		"rootDir": "src",
-		"lib": ["ES2024", "DOM"],
-		"target": "ES2024",
-		"module": "ESNext",
-		"moduleResolution": "bundler",
-		"jsx": "react-jsx",
-		"jsxImportSource": "react",
-		"composite": true,
-		"types": [
-			"node",
-			"eslint",
-			"react",
-			"react-native",
-			"react-dom",
-			"@typescript-eslint/utils",
-			"@preact/signals-react"
-		],
-		"esModuleInterop": true,
-		"skipLibCheck": true
-	},
-	"include": ["src/**/*"],
-	"exclude": ["node_modules", "dist", "tests"]
+  "extends": ["../../tsconfig.json"],
+  "compilerOptions": {
+    "baseUrl": ".",
+    "rootDir": "src",
+    "lib": ["ES2024", "DOM"],
+    "target": "ES2024",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "composite": true,
+    "types": ["node"],
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
+    "typeRoots": [
+      "./node_modules/@types",
+      "./node_modules/.pnpm/@typescript-eslint+utils@*_typescript@*/node_modules/@typescript-eslint/types"
+    ]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "tests", "**/*.test.ts", "**/*.spec.ts"]
 }

@@ -8,7 +8,12 @@
     "noEmit": false,
     "declaration": true,
     "declarationMap": true,
-
-    "types": ["estree", "node", "eslint"]
-  }
+    "esModuleInterop": true,
+    "target": "ES2024",
+    "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "tests", "**/*.test.ts", "**/*.spec.ts"]
 }

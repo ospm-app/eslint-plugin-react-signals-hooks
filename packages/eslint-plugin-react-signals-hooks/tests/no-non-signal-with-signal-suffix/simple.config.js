@@ -21,11 +21,14 @@ export default [
             propertyWithSignalSuffixNotSignal: 'error',
           },
           performance: {
+            // Enable performance metrics collection
             enableMetrics: false,
-            maxTime: 1_000,
-            maxNodes: 5_000,
-            maxOperations: 1_0000,
-            trackOperations: false,
+            // Maximum number of nodes to process before bailing out
+            maxNodes: 5_000, // Higher for tests
+            // Maximum time in milliseconds to spend on a single file
+            maxTime: 1_000, // 1 second
+            // Maximum number of operations before bailing out
+            maxOperations: {},
           },
         },
       ],

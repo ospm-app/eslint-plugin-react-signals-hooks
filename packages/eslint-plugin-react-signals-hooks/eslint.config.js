@@ -2,18 +2,19 @@ import babelParser from "@babel/eslint-parser";
 import babelPresetEnv from "@babel/preset-env";
 import typescript from "@typescript-eslint/eslint-plugin";
 import tsParser from "@typescript-eslint/parser";
-import pluginESx from "eslint-plugin-es-x";
+import esxPlugin from "eslint-plugin-es-x";
+import eslintPlugin from "eslint-plugin-eslint-plugin";
 import importPlugin from "eslint-plugin-import";
 import json from "eslint-plugin-json";
+import jsxA11y from "eslint-plugin-jsx-a11y";
 import nodePlugin from "eslint-plugin-n";
 import optimizeRegexPlugin from "eslint-plugin-optimize-regex";
 import oxlintPlugin from "eslint-plugin-oxlint";
 import promisePlugin from "eslint-plugin-promise";
-import globals from "globals";
-import eslintPlugin from "eslint-plugin-eslint-plugin";
-import jsxA11y from "eslint-plugin-jsx-a11y";
 import securityPlugin from "eslint-plugin-security";
-import reactSignalsHooksPlugin from "./dist/cjs/index.js";
+import globals from "globals";
+
+import reactSignalsHooksPlugin from "./dist/esm/index.js";
 
 const commonRules = {
 	// Disabled rules
@@ -85,12 +86,6 @@ const commonRules = {
 	// Security
 	"security/detect-object-injection": "error",
 
-	// TypeScript specific
-	"@typescript-eslint/await-thenable": "error",
-	"@typescript-eslint/no-floating-promises": "error",
-	"@typescript-eslint/consistent-type-imports": "error",
-	"@typescript-eslint/no-explicit-any": "warn",
-
 	"no-restricted-globals": [
 		"error",
 		{
@@ -115,7 +110,7 @@ const commonRules = {
 const jsConfig = {
 	files: ["**/*.{js,jsx,mjs}"],
 	plugins: {
-		"es-x": pluginESx,
+		"es-x": esxPlugin,
 		import: importPlugin,
 	},
 	languageOptions: {
@@ -135,16 +130,13 @@ const jsConfig = {
 	rules: {
 		...commonRules,
 		semi: ["error", "always"],
-		"@typescript-eslint/no-var-requires": "off",
-		"@typescript-eslint/explicit-function-return-type": "off",
-		"@typescript-eslint/explicit-module-boundary-types": "off",
 	},
 };
 
 const tsConfig = {
 	files: ["**/*.{ts,tsx,mts}"],
 	plugins: {
-		"es-x": pluginESx,
+		"es-x": esxPlugin,
 		"@typescript-eslint": typescript,
 		import: importPlugin,
 		"react-signals-hooks": reactSignalsHooksPlugin,
@@ -181,6 +173,12 @@ const tsConfig = {
 		"react-signals-hooks/prefer-for-over-map": "warn",
 		"react-signals-hooks/prefer-signal-effect": "warn",
 		"react-signals-hooks/prefer-computed": "warn",
+
+		// TypeScript specific
+		"@typescript-eslint/await-thenable": "error",
+		"@typescript-eslint/no-floating-promises": "error",
+		"@typescript-eslint/consistent-type-imports": "error",
+		"@typescript-eslint/no-explicit-any": "warn",
 
 		"@typescript-eslint/array-type": ["error", { default: "generic" }],
 		"no-shadow": "off",
@@ -227,7 +225,7 @@ const jsonConfig = {
 // const vitestConfig = {
 //   files: ['**/vitest.config.js', 'vitest.workspace.js'],
 //   plugins: {
-//     'es-x': pluginESx,
+//     'es-x': esxPlugin,
 //     import: importPlugin,
 //   },
 //   languageOptions: {
@@ -253,6 +251,7 @@ const jsonConfig = {
 // };
 
 /** @type {import('eslint').Linter.Config[]} */
+// eslint-disable-next-line import/no-unused-modules
 export default [
 	jsxA11y.flatConfigs.recommended,
 	securityPlugin.configs.recommended,

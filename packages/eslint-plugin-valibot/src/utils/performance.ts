@@ -118,7 +118,7 @@ export function trackOperation(
 
   const operationLimit = metrics.perfBudget?.maxOperations?.[operation];
 
-  if (operationLimit !== undefined && newCount > operationLimit) {
+  if (typeof operationLimit !== 'undefined' && newCount > operationLimit) {
     throw new PerformanceLimitExceededError(
       `Operation '${operation}' count`,
       operationLimit,
@@ -252,17 +252,17 @@ export function stopTracking(key: string): PerformanceMetrics | undefined {
   if (metrics.perfBudget) {
     const { maxTime, maxMemory, maxNodes } = metrics.perfBudget;
 
-    if (maxTime !== undefined && metrics.duration > maxTime) {
+    if (typeof maxTime !== 'undefined' && metrics.duration > maxTime) {
       metrics.exceededBudget = true;
 
       metrics.budgetExceededBy = metrics.duration - maxTime;
     }
 
-    if (maxMemory !== undefined && memoryUsage.heapUsed > maxMemory) {
+    if (typeof maxMemory !== 'undefined' && memoryUsage.heapUsed > maxMemory) {
       metrics.exceededBudget = true;
     }
 
-    if (maxNodes !== undefined && metrics.nodeCount > maxNodes) {
+    if (typeof maxNodes !== 'undefined' && metrics.nodeCount > maxNodes) {
       metrics.exceededBudget = true;
     }
   }

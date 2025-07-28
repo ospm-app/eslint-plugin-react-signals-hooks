@@ -249,12 +249,6 @@ const commonRules = {
 
   // Security
   'security/detect-object-injection': 'error',
-
-  // TypeScript specific
-  '@typescript-eslint/await-thenable': 'error',
-  '@typescript-eslint/no-floating-promises': 'error',
-  '@typescript-eslint/consistent-type-imports': 'error',
-  '@typescript-eslint/no-explicit-any': 'warn',
 };
 
 const jsConfig = {
@@ -309,7 +303,12 @@ const tsConfig = {
     ...commonRules,
     ...typescript.configs['recommended'].rules,
 
-    // TypeScript specific rules
+    // TypeScript specific
+    '@typescript-eslint/await-thenable': 'error',
+    '@typescript-eslint/no-floating-promises': 'error',
+    '@typescript-eslint/consistent-type-imports': 'error',
+    '@typescript-eslint/no-explicit-any': 'warn',
+
     '@typescript-eslint/array-type': ['error', { default: 'generic' }],
     'no-shadow': 'off',
     '@typescript-eslint/strict-boolean-expressions': 'error',

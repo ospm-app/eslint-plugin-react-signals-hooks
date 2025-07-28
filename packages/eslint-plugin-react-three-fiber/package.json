@@ -1,0 +1,80 @@
+{
+  "name": "@ospm/eslint-plugin-react-three-fiber",
+  "version": "1.0.0",
+  "description": "ESLint plugin for React Three Fiber - enforces best practices and patterns for 3D graphics with React Three Fiber",
+  "main": "dist/cjs/index.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js",
+      "types": "./dist/types/index.d.ts"
+    },
+    "./rules": {
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js",
+      "types": "./dist/types/index.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "npm run clean && npm run build:cjs && npm run build:esm && npm run build:types",
+    "build:cjs": "tsc --project tsconfig.cjs.json",
+    "build:esm": "tsc --project tsconfig.esm.json",
+    "build:types": "tsc --project tsconfig.types.json",
+    "build:watch": "npm run build:cjs -- --watch & npm run build:esm -- --watch & npm run build:types -- --watch",
+    "clean": "rm -rf dist/",
+    "prebuild": "npm run clean",
+    "test": "npm run build && npm run test:all-rules",
+    "test:all-rules": "echo \"No tests configured yet\"",
+    "lint": "npx eslint src/ --ext .ts",
+    "lint:fix": "npx eslint src/ --ext .ts --fix",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "eslint",
+    "eslint-plugin",
+    "react",
+    "three",
+    "threejs",
+    "r3f",
+    "react-three-fiber",
+    "3d",
+    "graphics"
+  ],
+  "author": {
+    "name": "Alexey Lyakhov",
+    "url": "https://github.com/JustFly1984",
+    "email": "justfly1984@gmail.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/tree/main/packages/eslint-plugin-react-three-fiber"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@types/estree": "^1.0.8",
+    "@typescript-eslint/utils": "^8.38.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.1.2",
+    "@types/node": "^24.1.0",
+    "@typescript-eslint/eslint-plugin": "^8.38.0",
+    "@typescript-eslint/parser": "^8.38.0",
+    "eslint": "^9.31.0",
+    "typescript": "^5.8.3"
+  },
+  "peerDependencies": {
+    "eslint": ">=8.57.1 || ^9.31.0",
+    "typescript": ">=5.8.3"
+  }
+}

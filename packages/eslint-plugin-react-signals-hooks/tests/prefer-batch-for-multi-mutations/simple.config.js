@@ -12,14 +12,15 @@ export default [
       'react-signals-hooks/prefer-batch-for-multi-mutations': [
         'error',
         {
-          minMutations: 2,
-          maxMutations: 10,
           performance: {
+            // Enable performance metrics collection
             enableMetrics: false,
-            maxTime: 1_000,
-            maxNodes: 5_000,
-            maxOperations: 10_000,
-            trackOperations: false,
+            // Maximum number of nodes to process before bailing out
+            maxNodes: 5_000, // Higher for tests
+            // Maximum time in milliseconds to spend on a single file
+            maxTime: 1_000, // 1 second
+            // Maximum number of operations before bailing out
+            maxOperations: {},
           },
         },
       ],

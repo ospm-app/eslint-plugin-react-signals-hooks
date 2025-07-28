@@ -4,16 +4,16 @@
 	"type": "module",
 	"description": "ESLint plugin for React Signals hooks - enforces best practices, performance optimizations, and integration patterns for @preact/signals-react usage in React projects",
 	"main": "dist/cjs/index.js",
-	"module": "dist/esm/index.js",
+	"module": "dist/esm/index.mjs",
 	"types": "dist/types/index.d.ts",
 	"exports": {
 		".": {
-			"import": "./dist/esm/index.js",
+			"import": "./dist/esm/index.mjs",
 			"require": "./dist/cjs/index.js",
 			"types": "./dist/types/index.d.ts"
 		},
 		"./rules": {
-			"import": "./dist/esm/index.js",
+			"import": "./dist/esm/index.mjs",
 			"require": "./dist/cjs/index.js",
 			"types": "./dist/types/index.d.ts"
 		},
@@ -27,9 +27,10 @@
 	"scripts": {
 		"deploy": "npm run build && npm publish --access public",
 		"deploy:dry": "npm pack --dry-run",
-		"build": "npm run clean && npm run build:cjs && npm run build:esm && npm run build:types",
+		"build": "npm run clean && npm run build:cjs && npm run build:esm && npm run postbuild:esm && npm run build:types",
 		"build:cjs": "tsc --project tsconfig.cjs.json",
 		"build:esm": "tsc --project tsconfig.esm.json",
+		"postbuild:esm": "node scripts/rename-to-mjs.mjs",
 		"build:types": "tsc --project tsconfig.types.json",
 		"build:watch": "npm run build:cjs -- --watch & npm run build:esm -- --watch & npm run build:types -- --watch",
 		"clean": "rm -rf dist/",
