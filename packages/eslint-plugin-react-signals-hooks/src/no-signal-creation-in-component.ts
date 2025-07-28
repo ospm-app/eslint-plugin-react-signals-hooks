@@ -1,495 +1,597 @@
-import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
-import type { RuleContext, SourceCode } from '@typescript-eslint/utils/ts-eslint';
+/** biome-ignore-all assist/source/organizeImports: off */
+import {
+	ESLintUtils,
+	type TSESLint,
+	type TSESTree,
+} from "@typescript-eslint/utils";
+import type {
+	SourceCode,
+	RuleContext,
+} from "@typescript-eslint/utils/ts-eslint";
 
 import {
-  endPhase,
-  startPhase,
-  stopTracking,
-  startTracking,
-  trackOperation,
-  createPerformanceTracker,
-  DEFAULT_PERFORMANCE_BUDGET,
-} from './utils/performance.js';
-import { getRuleDocUrl } from './utils/urls.js';
-import { PerformanceOperations } from './utils/performance-constants.js';
-import type { PerformanceBudget } from './utils/types.js';
+	endPhase,
+	startPhase,
+	stopTracking,
+	recordMetric,
+	startTracking,
+	trackOperation,
+	createPerformanceTracker,
+	DEFAULT_PERFORMANCE_BUDGET,
+} from "./utils/performance.js";
+import { getRuleDocUrl } from "./utils/urls.js";
+import type { PerformanceBudget } from "./utils/types.js";
+import { PerformanceOperations } from "./utils/performance-constants.js";
 
 type Option = {
-  /** Performance tuning option */
-  performance: PerformanceBudget;
+	performance: PerformanceBudget;
 };
 
 type Options = [Option];
 
 type MessageIds =
-  | 'avoidSignalInComponent'
-  | 'suggestMoveToModuleLevel'
-  | 'suggestMoveToCustomHook'
-  | 'moveToModuleLevel'
-  | 'createCustomHook';
+	| "avoidSignalInComponent"
+	| "suggestMoveToModuleLevel"
+	| "suggestMoveToCustomHook"
+	| "moveToModuleLevel"
+	| "createCustomHook";
 
 function getSignalInfo(
-  node: TSESTree.CallExpression,
-  sourceCode: Readonly<SourceCode>
+	node: TSESTree.CallExpression,
+	sourceCode: Readonly<SourceCode>,
 ): { signalName: string; signalValue: string; varName: string } {
-  return {
-    signalName: node.callee.type === 'Identifier' ? node.callee.name : 'signal',
-    signalValue: node.arguments.length > 0 ? sourceCode.getText(node.arguments[0]) : 'undefined',
-    varName:
-      (node.callee.type === 'Identifier' ? node.callee.name : 'signal') === 'signal'
-        ? 'value'
-        : 'computedValue',
-  };
+	return {
+		signalName: node.callee.type === "Identifier" ? node.callee.name : "signal",
+		signalValue:
+			node.arguments.length > 0
+				? sourceCode.getText(node.arguments[0])
+				: "undefined",
+		varName:
+			(node.callee.type === "Identifier" ? node.callee.name : "signal") ===
+			"signal"
+				? "value"
+				: "computedValue",
+	};
 }
 
 function generateUniqueHookName(
-  context: Readonly<RuleContext<MessageIds, Options>>,
-  baseName: string
+	context: Readonly<RuleContext<MessageIds, Options>>,
+	baseName: string,
 ): string {
-  const usedNames = new Set<string>();
+	const usedNames = new Set<string>();
 
-  function collectNames(node: TSESTree.Node): void {
-    if (node.type === 'Identifier' && node.parent?.type !== 'MemberExpression') {
-      usedNames.add(node.name);
-    }
+	function collectNames(node: TSESTree.Node): void {
+		if (
+			node.type === "Identifier" &&
+			node.parent?.type !== "MemberExpression"
+		) {
+			usedNames.add(node.name);
+		}
 
-    if ('body' in node && Array.isArray(node.body)) {
-      node.body.forEach(collectNames);
-    } else if ('body' in node && node.body) {
-      collectNames(node.body as TSESTree.Node);
-    }
+		if ("body" in node && Array.isArray(node.body)) {
+			node.body.forEach(collectNames);
+		} else if ("body" in node && node.body) {
+			collectNames(node.body as TSESTree.Node);
+		}
 
-    if ('declarations' in node && Array.isArray(node.declarations)) {
-      node.declarations.forEach(collectNames);
-    }
-  }
+		if ("declarations" in node && Array.isArray(node.declarations)) {
+			node.declarations.forEach(collectNames);
+		}
+	}
 
-  collectNames(context.sourceCode.ast);
+	collectNames(context.sourceCode.ast);
 
-  let hookName = `use${baseName.charAt(0).toUpperCase() + baseName.slice(1)}`;
-  let counter = 1;
+	let hookName = `use${baseName.charAt(0).toUpperCase() + baseName.slice(1)}`;
+	let counter = 1;
 
-  while (usedNames.has(hookName)) {
-    hookName = `use${baseName.charAt(0).toUpperCase() + baseName.slice(1)}${counter++}`;
-  }
+	while (usedNames.has(hookName)) {
+		hookName = `use${baseName.charAt(0).toUpperCase() + baseName.slice(1)}${counter++}`;
+	}
 
-  return hookName;
+	return hookName;
 }
 
 function getLeadingCommentsText(
-  node: TSESTree.Node,
-  sourceCode: Readonly<SourceCode>
+	node: TSESTree.Node,
+	sourceCode: Readonly<SourceCode>,
 ): { text: string; range: [number, number] } | null {
-  const leadingComments = sourceCode.getCommentsBefore(node);
+	const leadingComments = sourceCode.getCommentsBefore(node);
 
-  if (leadingComments.length === 0) {
-    return null;
-  }
+	if (leadingComments.length === 0) {
+		return null;
+	}
 
-  const firstComment = leadingComments[0];
-  const lastComment = leadingComments[leadingComments.length - 1];
+	const firstComment = leadingComments[0];
+	const lastComment = leadingComments[leadingComments.length - 1];
 
-  return {
-    text: sourceCode.text.slice(firstComment.range[0], lastComment.range[1]),
-    range: [
-      firstComment.range[0],
-      lastComment.range[1] + (sourceCode.text[lastComment.range[1]] === '\n' ? 1 : 0),
-    ],
-  };
+	return {
+		text: sourceCode.text.slice(firstComment.range[0], lastComment.range[1]),
+		range: [
+			firstComment.range[0],
+			lastComment.range[1] +
+				(sourceCode.text[lastComment.range[1]] === "\n" ? 1 : 0),
+		],
+	};
 }
 
 function isReactComponent(
-  node:
-    | TSESTree.ArrowFunctionExpression
-    | TSESTree.FunctionDeclaration
-    | TSESTree.FunctionExpression,
-  parent: TSESTree.Node | undefined
+	node:
+		| TSESTree.ArrowFunctionExpression
+		| TSESTree.FunctionDeclaration
+		| TSESTree.FunctionExpression,
+	parent: TSESTree.Node | undefined,
 ): boolean {
-  if (node.type === 'FunctionDeclaration' && node.id) {
-    return /^[A-Z]/.test(node.id.name);
-  }
+	if (node.type === "FunctionDeclaration" && node.id) {
+		return /^[A-Z]/.test(node.id.name);
+	}
 
-  if (parent?.type === 'VariableDeclarator' && parent.id?.type === 'Identifier') {
-    return /^[A-Z]/.test(parent.id.name);
-  }
+	if (
+		parent?.type === "VariableDeclarator" &&
+		parent.id?.type === "Identifier"
+	) {
+		return /^[A-Z]/.test(parent.id.name);
+	}
 
-  return false;
+	return false;
 }
 
 function isHookFunction(node: TSESTree.Node): boolean {
-  if (
-    !['FunctionDeclaration', 'ArrowFunctionExpression', 'FunctionExpression'].includes(node.type)
-  ) {
-    return false;
-  }
+	if (
+		![
+			"FunctionDeclaration",
+			"ArrowFunctionExpression",
+			"FunctionExpression",
+		].includes(node.type)
+	) {
+		return false;
+	}
 
-  // For function declarations, check the name directly first
-  if (node.type === 'FunctionDeclaration' && node.id) {
-    return (
-      node.id.name.startsWith('use') &&
-      node.id.name.length > 3 &&
-      node.id.name[3] === node.id.name[3].toUpperCase()
-    );
-  }
+	// For function declarations, check the name directly first
+	if (node.type === "FunctionDeclaration" && node.id) {
+		return (
+			node.id.name.startsWith("use") &&
+			node.id.name.length > 3 &&
+			node.id.name[3] === node.id.name[3].toUpperCase()
+		);
+	}
 
-  if (node.parent?.type === 'VariableDeclarator' && node.parent.id.type === 'Identifier') {
-    return (
-      node.parent.id.name.startsWith('use') &&
-      node.parent.id.name.length > 3 &&
-      node.parent.id.name[3] === node.parent.id.name[3].toUpperCase()
-    );
-  }
+	if (
+		node.parent?.type === "VariableDeclarator" &&
+		node.parent.id.type === "Identifier"
+	) {
+		return (
+			node.parent.id.name.startsWith("use") &&
+			node.parent.id.name.length > 3 &&
+			node.parent.id.name[3] === node.parent.id.name[3].toUpperCase()
+		);
+	}
 
-  return false;
+	return false;
 }
 
 const createRule = ESLintUtils.RuleCreator((name: string): string => {
-  return getRuleDocUrl(name);
+	return getRuleDocUrl(name);
 });
 
 const functionStack: Array<{ isComponent: boolean; isHook: boolean }> = [];
 
-const ruleName = 'no-signal-creation-in-component';
+let inComponent = false;
+let inHook = false;
+let inEffect = false;
+
+const ruleName = "no-signal-creation-in-component";
 
 export const noSignalCreationInComponentRule = createRule<Options, MessageIds>({
-  name: ruleName,
-  meta: {
-    type: 'problem',
-    fixable: 'code',
-    hasSuggestions: true,
-    docs: {
-      description: 'Prevent signal creation inside React components, hooks, or effects',
-      url: getRuleDocUrl(ruleName),
-    },
-    messages: {
-      avoidSignalInComponent:
-        'Avoid creating {{ signalType }} signals inside {{ context }}. Move signal creation to module level or a custom hook.',
-      suggestMoveToModuleLevel: 'Move {{ signalType }} signal to module level',
-      suggestMoveToCustomHook: 'Extract {{ signalType }} signal to a custom hook',
-      moveToModuleLevel: 'Move to module level',
-      createCustomHook: 'Create custom hook for {{ signalType }} signal',
-    },
-    schema: [
-      {
-        type: 'object',
-        properties: {
-          performance: {
-            type: 'object',
-            properties: {
-              maxTime: { type: 'number', minimum: 1 },
-              maxMemory: { type: 'number', minimum: 1 },
-              maxNodes: { type: 'number', minimum: 1 },
-              enableMetrics: { type: 'boolean' },
-              logMetrics: { type: 'boolean' },
-              maxOperations: {
-                type: 'object',
-                properties: Object.fromEntries(
-                  Object.entries(PerformanceOperations).map(([key]) => [
-                    key,
-                    { type: 'number', minimum: 1 },
-                  ])
-                ),
-              },
-            },
-            additionalProperties: false,
-          },
-        },
-        additionalProperties: false,
-      },
-    ],
-  },
-  defaultOptions: [
-    {
-      performance: DEFAULT_PERFORMANCE_BUDGET,
-    },
-  ],
-  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
-    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
+	name: ruleName,
+	meta: {
+		type: "problem",
+		fixable: "code",
+		hasSuggestions: true,
+		docs: {
+			description:
+				"Prevent signal creation inside React components, hooks, or effects",
+			url: getRuleDocUrl(ruleName),
+		},
+		messages: {
+			avoidSignalInComponent:
+				"Avoid creating {{ signalType }} signals inside {{ context }}. Move signal creation to module level or a custom hook.",
+			suggestMoveToModuleLevel: "Move {{ signalType }} signal to module level",
+			suggestMoveToCustomHook:
+				"Extract {{ signalType }} signal to a custom hook",
+			moveToModuleLevel: "Move to module level",
+			createCustomHook: "Create custom hook for {{ signalType }} signal",
+		},
+		schema: [
+			{
+				type: "object",
+				properties: {
+					performance: {
+						type: "object",
+						properties: {
+							maxTime: { type: "number", minimum: 1 },
+							maxMemory: { type: "number", minimum: 1 },
+							maxNodes: { type: "number", minimum: 1 },
+							enableMetrics: { type: "boolean" },
+							logMetrics: { type: "boolean" },
+							maxOperations: {
+								type: "object",
+								properties: Object.fromEntries(
+									Object.entries(PerformanceOperations).map(([key]) => [
+										key,
+										{ type: "number", minimum: 1 },
+									]),
+								),
+							},
+						},
+						additionalProperties: false,
+					},
+				},
+				additionalProperties: false,
+			},
+		],
+	},
+	defaultOptions: [
+		{
+			performance: DEFAULT_PERFORMANCE_BUDGET,
+		},
+	],
+	create(
+		context: Readonly<RuleContext<MessageIds, Options>>,
+		[option],
+	): ESLintUtils.RuleListener {
+		const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
-    const perf = createPerformanceTracker<Options>(perfKey, option.performance, context);
+		startPhase(perfKey, "ruleInit");
 
-    if (option.performance?.enableMetrics === true) {
-      startTracking(context, perfKey, option.performance, ruleName);
-    }
+		const perf = createPerformanceTracker<Options>(
+			perfKey,
+			option.performance,
+			context,
+		);
 
-    console.info(`Initializing rule for file: ${context.filename}`);
-    console.info('Rule configuration:', option);
+		if (option.performance?.enableMetrics === true) {
+			startTracking(context, perfKey, option.performance, ruleName);
+		}
 
-    let nodeCount = 0;
+		console.info(
+			`${ruleName}: Initializing rule for file: ${context.filename}`,
+		);
+		console.info(`${ruleName}: Rule configuration:`, option);
 
-    // Helper function to check if we should continue processing
-    function shouldContinue(): boolean {
-      nodeCount++;
+		recordMetric(perfKey, "config", {
+			performance: {
+				enableMetrics: option.performance.enableMetrics,
+				logMetrics: option.performance.logMetrics,
+			},
+		});
 
-      // Check if we've exceeded the node budget
-      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
-        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+		trackOperation(perfKey, PerformanceOperations.ruleInit);
 
-        return false;
-      }
+		endPhase(perfKey, "ruleInit");
 
-      return true;
-    }
+		let nodeCount = 0;
 
-    let inComponent = false;
-    let inHook = false;
-    let inEffect = false;
+		function shouldContinue(): boolean {
+			nodeCount++;
 
-    return {
-      '*': (node: TSESTree.Node): void => {
-        if (!shouldContinue()) {
-          endPhase(perfKey, 'recordMetrics');
+			if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+				trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
-          stopTracking(perfKey);
+				return false;
+			}
 
-          return;
-        }
+			return true;
+		}
 
-        perf.trackNode(node);
+		startPhase(perfKey, "ruleExecution");
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-      },
+		return {
+			"*": (node: TSESTree.Node): void => {
+				if (!shouldContinue()) {
+					endPhase(perfKey, "recordMetrics");
 
-      'FunctionDeclaration, ArrowFunctionExpression, FunctionExpression'(
-        node:
-          | TSESTree.ArrowFunctionExpression
-          | TSESTree.FunctionDeclaration
-          | TSESTree.FunctionExpression
-      ): void {
-        const parent = node.parent;
+					stopTracking(perfKey);
 
-        const isComponent = isReactComponent(node, parent);
+					return;
+				}
 
-        const isHook = isHookFunction(node);
+				perf.trackNode(node);
 
-        functionStack.push({ isComponent, isHook });
+				trackOperation(
+					perfKey,
+					PerformanceOperations[`${node.type}Processing`],
+				);
+			},
 
-        if (isComponent) {
-          inComponent = true;
-        } else if (isHook) {
-          inHook = true;
-        }
-      },
-      'FunctionDeclaration:exit, ArrowFunctionExpression:exit, FunctionExpression:exit'(
-        _node:
-          | TSESTree.ArrowFunctionExpression
-          | TSESTree.FunctionDeclaration
-          | TSESTree.FunctionExpression
-      ): void {
-        const state = functionStack.pop();
+			"FunctionDeclaration, ArrowFunctionExpression, FunctionExpression"(
+				node:
+					| TSESTree.ArrowFunctionExpression
+					| TSESTree.FunctionDeclaration
+					| TSESTree.FunctionExpression,
+			): void {
+				const parent = node.parent;
 
-        if (typeof state === 'undefined') {
-          return;
-        }
+				const isComponent = isReactComponent(node, parent);
 
-        if (state.isComponent) {
-          inComponent = false;
-        } else if (state.isHook) {
-          inHook = false;
-        }
-      },
+				const isHook = isHookFunction(node);
 
-      CallExpression(node: TSESTree.CallExpression): void {
-        const wasInEffect = inEffect;
+				functionStack.push({ isComponent, isHook });
 
-        if (
-          node.type === 'CallExpression' && node.callee.type === 'Identifier'
-            ? ['useEffect', 'useCallback', 'useMemo', 'useLayoutEffect'].includes(node.callee.name)
-            : false
-        ) {
-          inEffect = true;
-        }
+				if (isComponent) {
+					inComponent = true;
+				} else if (isHook) {
+					inHook = true;
+				}
+			},
+			"FunctionDeclaration:exit, ArrowFunctionExpression:exit, FunctionExpression:exit"(
+				_node:
+					| TSESTree.ArrowFunctionExpression
+					| TSESTree.FunctionDeclaration
+					| TSESTree.FunctionExpression,
+			): void {
+				const state = functionStack.pop();
 
-        if (
-          node.type === 'CallExpression' &&
-          node.callee.type === 'Identifier' &&
-          (node.callee.name === 'signal' || node.callee.name === 'computed') &&
-          (inComponent || inHook || wasInEffect)
-        ) {
-          const sourceCode = context.sourceCode;
+				if (typeof state === "undefined") {
+					return;
+				}
 
-          const { signalName, signalValue, varName } = getSignalInfo(node, sourceCode);
+				if (state.isComponent) {
+					inComponent = false;
+				} else if (state.isHook) {
+					inHook = false;
+				}
+			},
 
-          const signalType = signalName === 'signal' ? 'reactive' : 'computed';
+			CallExpression(node: TSESTree.CallExpression): void {
+				const wasInEffect = inEffect;
 
-          context.report({
-            node,
-            messageId: 'avoidSignalInComponent',
-            data: {
-              context: inEffect || wasInEffect ? 'effects' : inHook ? 'hooks' : 'React components',
-              signalType: signalName === 'signal' ? 'reactive' : 'computed',
-            },
-            suggest: [
-              {
-                messageId: 'suggestMoveToModuleLevel',
-                data: { signalType },
-                *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix, void, unknown> {
-                  const firstNode = sourceCode.ast.body[0];
-                  const newLine = sourceCode.getText().includes('\r\n') ? '\r\n' : '\n';
+				if (
+					node.type === "CallExpression" && node.callee.type === "Identifier"
+						? [
+								"useEffect",
+								"useCallback",
+								"useMemo",
+								"useLayoutEffect",
+							].includes(node.callee.name)
+						: false
+				) {
+					inEffect = true;
+				}
 
-                  // Add the signal to the top of the file
-                  yield fixer.insertTextBefore(
-                    firstNode,
-                    `const ${varName} = ${signalName}(${signalValue});${newLine}${newLine}`
-                  );
+				if (
+					node.type === "CallExpression" &&
+					node.callee.type === "Identifier" &&
+					(node.callee.name === "signal" || node.callee.name === "computed") &&
+					(inComponent || inHook || wasInEffect)
+				) {
+					const sourceCode = context.sourceCode;
 
-                  // Replace the original signal creation with the variable name
-                  yield fixer.replaceText(node, varName);
+					const { signalName, signalValue, varName } = getSignalInfo(
+						node,
+						sourceCode,
+					);
 
-                  // Handle comments if any
-                  const comments = getLeadingCommentsText(node, sourceCode);
+					const signalType = signalName === "signal" ? "reactive" : "computed";
 
-                  if (comments !== null) {
-                    yield fixer.insertTextBefore(firstNode, comments.text + newLine);
-                    yield fixer.removeRange(comments.range);
-                  }
-                },
-              },
-              {
-                messageId: 'moveToModuleLevel',
-                *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix, void, unknown> {
-                  const newLine = sourceCode.getText().includes('\r\n') ? '\r\n' : '\n';
+					context.report({
+						node,
+						messageId: "avoidSignalInComponent",
+						data: {
+							context:
+								inEffect || wasInEffect
+									? "effects"
+									: inHook
+										? "hooks"
+										: "React components",
+							signalType: signalName === "signal" ? "reactive" : "computed",
+						},
+						suggest: [
+							{
+								messageId: "suggestMoveToModuleLevel",
+								data: { signalType },
+								*fix(
+									fixer: TSESLint.RuleFixer,
+								): Generator<TSESLint.RuleFix, void, unknown> {
+									const firstNode = sourceCode.ast.body[0];
+									const newLine = sourceCode.getText().includes("\r\n")
+										? "\r\n"
+										: "\n";
 
-                  yield fixer.insertTextBefore(
-                    sourceCode.ast.body[0],
-                    `const ${varName} = ${signalName}(${signalValue});${newLine}${newLine}`
-                  );
+									// Add the signal to the top of the file
+									yield fixer.insertTextBefore(
+										firstNode,
+										`const ${varName} = ${signalName}(${signalValue});${newLine}${newLine}`,
+									);
 
-                  yield fixer.replaceText(node, varName);
-                },
-              },
-              {
-                messageId: 'createCustomHook',
-                *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix, void, unknown> {
-                  const lastImport = sourceCode.ast.body.findLast(
-                    (node: TSESTree.ProgramStatement): node is TSESTree.ImportDeclaration => {
-                      return node.type === 'ImportDeclaration';
-                    }
-                  );
+									// Replace the original signal creation with the variable name
+									yield fixer.replaceText(node, varName);
 
-                  const insertPosition =
-                    typeof lastImport === 'undefined' ? 0 : lastImport.range[1] + 1;
+									// Handle comments if any
+									const comments = getLeadingCommentsText(node, sourceCode);
 
-                  const hookName = `use${signalName.charAt(0).toUpperCase() + signalName.slice(1)}`;
-                  const newLine = sourceCode.getText().includes('\r\n') ? '\r\n' : '\n';
+									if (comments !== null) {
+										yield fixer.insertTextBefore(
+											firstNode,
+											comments.text + newLine,
+										);
+										yield fixer.removeRange(comments.range);
+									}
+								},
+							},
+							{
+								messageId: "moveToModuleLevel",
+								*fix(
+									fixer: TSESLint.RuleFixer,
+								): Generator<TSESLint.RuleFix, void, unknown> {
+									const newLine = sourceCode.getText().includes("\r\n")
+										? "\r\n"
+										: "\n";
 
-                  yield fixer.insertTextAfterRange(
-                    [insertPosition, insertPosition],
-                    `${newLine}function ${hookName}() {${newLine}  return ${signalName}(${signalValue});${newLine}}${newLine}${newLine}`
-                  );
+									yield fixer.insertTextBefore(
+										sourceCode.ast.body[0],
+										`const ${varName} = ${signalName}(${signalValue});${newLine}${newLine}`,
+									);
 
-                  yield fixer.replaceText(node, `${hookName}()`);
-                },
-              },
-              {
-                messageId: 'suggestMoveToCustomHook',
-                data: { signalType },
-                *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix, void, unknown> {
-                  // Find the last import or the start of the file
-                  const lastImport = sourceCode.ast.body
-                    .slice()
-                    .reverse()
-                    .find((node: TSESTree.ProgramStatement): node is TSESTree.ImportDeclaration => {
-                      return node.type === 'ImportDeclaration';
-                    });
+									yield fixer.replaceText(node, varName);
+								},
+							},
+							{
+								messageId: "createCustomHook",
+								*fix(
+									fixer: TSESLint.RuleFixer,
+								): Generator<TSESLint.RuleFix, void, unknown> {
+									const lastImport = sourceCode.ast.body.findLast(
+										(
+											node: TSESTree.ProgramStatement,
+										): node is TSESTree.ImportDeclaration => {
+											return node.type === "ImportDeclaration";
+										},
+									);
 
-                  const insertPosition = lastImport ? lastImport.range[1] + 1 : 0;
+									const insertPosition =
+										typeof lastImport === "undefined"
+											? 0
+											: lastImport.range[1] + 1;
 
-                  const hookName = generateUniqueHookName(
-                    context,
-                    signalName === 'signal' ? 'value' : 'computedValue'
-                  );
+									const hookName = `use${signalName.charAt(0).toUpperCase() + signalName.slice(1)}`;
+									const newLine = sourceCode.getText().includes("\r\n")
+										? "\r\n"
+										: "\n";
 
-                  const newLine = sourceCode.getText().includes('\r\n') ? '\r\n' : '\n';
+									yield fixer.insertTextAfterRange(
+										[insertPosition, insertPosition],
+										`${newLine}function ${hookName}() {${newLine}  return ${signalName}(${signalValue});${newLine}}${newLine}${newLine}`,
+									);
 
-                  // Add the new custom hook after the last import
-                  yield fixer.insertTextAfterRange(
-                    [insertPosition, insertPosition],
-                    `${newLine}function ${hookName}() {${newLine}  return ${signalName}(${signalValue});${newLine}}${newLine}${newLine}`
-                  );
+									yield fixer.replaceText(node, `${hookName}()`);
+								},
+							},
+							{
+								messageId: "suggestMoveToCustomHook",
+								data: { signalType },
+								*fix(
+									fixer: TSESLint.RuleFixer,
+								): Generator<TSESLint.RuleFix, void, unknown> {
+									// Find the last import or the start of the file
+									const lastImport = sourceCode.ast.body
+										.slice()
+										.reverse()
+										.find(
+											(
+												node: TSESTree.ProgramStatement,
+											): node is TSESTree.ImportDeclaration => {
+												return node.type === "ImportDeclaration";
+											},
+										);
 
-                  // Replace the signal creation with a call to the hook
-                  yield fixer.replaceText(node, `${hookName}()`);
+									const insertPosition = lastImport
+										? lastImport.range[1] + 1
+										: 0;
 
-                  // Handle comments if any
-                  const comments = getLeadingCommentsText(node, sourceCode);
+									const hookName = generateUniqueHookName(
+										context,
+										signalName === "signal" ? "value" : "computedValue",
+									);
 
-                  if (comments !== null) {
-                    yield fixer.insertTextBeforeRange(
-                      [insertPosition, insertPosition],
-                      comments.text + newLine
-                    );
+									const newLine = sourceCode.getText().includes("\r\n")
+										? "\r\n"
+										: "\n";
 
-                    yield fixer.removeRange(comments.range);
-                  }
-                },
-              },
-            ],
-          });
-        }
+									// Add the new custom hook after the last import
+									yield fixer.insertTextAfterRange(
+										[insertPosition, insertPosition],
+										`${newLine}function ${hookName}() {${newLine}  return ${signalName}(${signalValue});${newLine}}${newLine}${newLine}`,
+									);
 
-        if (
-          node.type === 'CallExpression' && node.callee.type === 'Identifier'
-            ? ['useEffect', 'useCallback', 'useMemo', 'useLayoutEffect'].includes(node.callee.name)
-            : false
-        ) {
-          inEffect = wasInEffect;
-        }
-      },
+									// Replace the signal creation with a call to the hook
+									yield fixer.replaceText(node, `${hookName}()`);
 
-      'ClassDeclaration, PropertyDefinition, MethodDefinition'(): void {
-        inComponent = true;
-      },
+									// Handle comments if any
+									const comments = getLeadingCommentsText(node, sourceCode);
 
-      'ClassDeclaration:exit'() {
-        inComponent = false;
-      },
+									if (comments !== null) {
+										yield fixer.insertTextBeforeRange(
+											[insertPosition, insertPosition],
+											comments.text + newLine,
+										);
 
-      'MethodDefinition, PropertyDefinition'(): void {
-        if (inComponent) {
-          functionStack.push({ isComponent: true, isHook: false });
-        }
-      },
+										yield fixer.removeRange(comments.range);
+									}
+								},
+							},
+						],
+					});
+				}
 
-      'MethodDefinition:exit, PropertyDefinition:exit'(): void {
-        if (inComponent) {
-          functionStack.pop();
-        }
-      },
+				if (
+					node.type === "CallExpression" && node.callee.type === "Identifier"
+						? [
+								"useEffect",
+								"useCallback",
+								"useMemo",
+								"useLayoutEffect",
+							].includes(node.callee.name)
+						: false
+				) {
+					inEffect = wasInEffect;
+				}
+			},
 
-      'Program:exit'(_node: TSESTree.Program): void {
-        startPhase(perfKey, 'programExit');
+			"ClassDeclaration, PropertyDefinition, MethodDefinition"(): void {
+				inComponent = true;
+			},
 
-        try {
-          startPhase(perfKey, 'recordMetrics');
+			"ClassDeclaration:exit"() {
+				inComponent = false;
+			},
 
-          const finalMetrics = stopTracking(perfKey);
+			"MethodDefinition, PropertyDefinition"(): void {
+				if (inComponent) {
+					functionStack.push({ isComponent: true, isHook: false });
+				}
+			},
 
-          if (finalMetrics) {
-            const { exceededBudget, nodeCount, duration } = finalMetrics;
-            const status = exceededBudget ? 'EXCEEDED' : 'OK';
+			"MethodDefinition:exit, PropertyDefinition:exit"(): void {
+				if (inComponent) {
+					functionStack.pop();
+				}
+			},
 
-            console.info(`\n[prefer-batch-updates] Performance Metrics (${status}):`);
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${nodeCount}`);
+			"Program:exit"(_node: TSESTree.Program): void {
+				startPhase(perfKey, "programExit");
 
-            if (exceededBudget) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
+				try {
+					startPhase(perfKey, "recordMetrics");
 
-          stopTracking(perfKey);
-        }
+					const finalMetrics = stopTracking(perfKey);
 
-        perf['Program:exit']();
+					if (finalMetrics) {
+						const { exceededBudget, nodeCount, duration } = finalMetrics;
+						const status = exceededBudget ? "EXCEEDED" : "OK";
 
-        endPhase(perfKey, 'programExit');
-      },
-    };
-  },
+						console.info(
+							`\n[prefer-batch-updates] Performance Metrics (${status}):`,
+						);
+						console.info(`  File: ${context.filename}`);
+						console.info(`  Duration: ${duration?.toFixed(2)}ms`);
+						console.info(`  Nodes Processed: ${nodeCount}`);
+
+						if (exceededBudget) {
+							console.warn("\n⚠️  Performance budget exceeded!");
+						}
+					}
+				} catch (error: unknown) {
+					console.error("Error recording metrics:", error);
+				} finally {
+					endPhase(perfKey, "recordMetrics");
+
+					stopTracking(perfKey);
+				}
+
+				perf["Program:exit"]();
+
+				endPhase(perfKey, "programExit");
+			},
+		};
+	},
 });

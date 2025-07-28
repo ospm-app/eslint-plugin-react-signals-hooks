@@ -249,12 +249,6 @@ const commonRules = {
 
   // Security
   'security/detect-object-injection': 'error',
-  'xss/no-mixed-html': 'error',
-  'xss/no-location-href-assign': 'error',
-
-  // Performance
-  'perf-standard/no-instanceof-array': 'error',
-  'perf-standard/no-self-in-array-methods': 'warn',
 
   // TypeScript specific
   '@typescript-eslint/await-thenable': 'error',

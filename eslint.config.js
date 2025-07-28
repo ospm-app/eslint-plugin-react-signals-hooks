@@ -5,14 +5,15 @@ import typescriptPlugin from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
 import pluginESx from 'eslint-plugin-es-x';
 import importPlugin from 'eslint-plugin-import';
-import jsonPlugin from 'eslint-plugin-json';
+import json from 'eslint-plugin-json';
 import nodePlugin from 'eslint-plugin-n';
 import optimizeRegexPlugin from 'eslint-plugin-optimize-regex';
 import oxlintPlugin from 'eslint-plugin-oxlint';
 import promisePlugin from 'eslint-plugin-promise';
 import globals from 'globals';
 import eslintPlugin from 'eslint-plugin-eslint-plugin';
-import jsxA11yPlugin from 'eslint-plugin-jsx-a11y';
+import jsxA11y from 'eslint-plugin-jsx-a11y';
+import securityPlugin from 'eslint-plugin-security';
 
 import reactSignalsHooksPlugin from './packages/eslint-plugin-react-signals-hooks/dist/cjs/index.js';
 
@@ -75,12 +76,6 @@ const commonRules = {
 
   // Security
   'security/detect-object-injection': 'error',
-  'xss/no-mixed-html': 'error',
-  'xss/no-location-href-assign': 'error',
-
-  // Performance
-  'perf-standard/no-instanceof-array': 'error',
-  'perf-standard/no-self-in-array-methods': 'warn',
 
   // TypeScript specific
   '@typescript-eslint/await-thenable': 'error',
@@ -114,6 +109,7 @@ const jsConfig = {
   plugins: {
     'es-x': pluginESx,
     import: importPlugin,
+    'jsx-a11y': jsxA11y,
   },
   languageOptions: {
     ecmaVersion: 2024,
@@ -145,7 +141,7 @@ const tsConfig = {
     '@typescript-eslint': typescriptPlugin,
     import: importPlugin,
     'react-signals-hooks': reactSignalsHooksPlugin,
-    'jsx-a11y': jsxA11yPlugin,
+    'jsx-a11y': jsxA11y,
   },
   languageOptions: {
     ecmaVersion: 2024,
@@ -251,6 +247,7 @@ const jsonConfig = {
 /** @type {import('eslint').Linter.Config[]} */
 export default [
   jsxA11y.flatConfigs.recommended,
+  securityPlugin.configs.recommended,
   {
     files: ['lib/rules/*.{js,ts}'],
     ...eslintPlugin.configs['flat/recommended'],

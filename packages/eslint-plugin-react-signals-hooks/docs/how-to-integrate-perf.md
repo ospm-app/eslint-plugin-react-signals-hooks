@@ -13,9 +13,9 @@ At the top of your rule file, import the necessary performance tracking function
 
 ```typescript
 import {
-  createPerformanceTracker,
   startTracking,
   type PerformanceBudget,
+  createPerformanceTracker,
 } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 ```
@@ -62,35 +62,17 @@ In your rule's `create` function, set up the performance tracker:
 create(context, [options = {}]) {
   // Set up performance tracking
   const perf = createPerformanceTracker<Options>(
-    'your-rule-name',
-    {
-      maxTime: options.performance?.maxTime ?? 40,
-      maxNodes: options.performance?.maxNodes ?? 1000,
-      maxMemory: options.performance?.maxMemory ?? 40 * 1024 * 1024,
-      maxOperations: {
-        [PerformanceOperations.signalAccess]: 
-          options.performance?.maxOperations?.[PerformanceOperations.signalAccess] ?? 500,
-        // Add other operation limits with fallbacks
-      },
-      enableMetrics: options.performance?.enableMetrics ?? false,
-      logMetrics: options.performance?.logMetrics ?? false,
-    },
-    context
+   perfKey,
+   option.performance,
+   context,
   );
 
   // Enable detailed metrics if configured
-  if (options.performance?.enableMetrics) {
+  if (options.performance.enableMetrics) {
     startTracking<Options>(
-      context, 
       'your-rule-name',
-      {
-        maxTime: options.performance.maxTime,
-        maxNodes: options.performance.maxNodes,
-        maxMemory: options.performance.maxMemory,
-        maxOperations: options.performance.maxOperations,
-        enableMetrics: options.performance.enableMetrics,
-        logMetrics: options.performance.logMetrics,
-      }
+      option.performance,
+      context, 
     );
   }
 

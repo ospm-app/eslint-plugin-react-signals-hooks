@@ -95,15 +95,15 @@ Always read fully couple of other rules as example!!!
 Follow this template for your rule:
 
 ```typescript
-import { ESLintUtils } from '@typescript-eslint/utils';
 import {
-  createPerformanceTracker,
-  type PerformanceBudget,
+  endPhase,
+  startPhase,
   trackOperation,
   incrementNodeCount,
-  startPhase,
-  endPhase,
+  type PerformanceBudget,
+  createPerformanceTracker,
 } from '../utils/performance.js';
+  import { ESLintUtils } from '@typescript-eslint/utils';
 import { PerformanceOperations } from '../utils/performance-constants.js';
 
 const createRule = ESLintUtils.RuleCreator((name: string): string => {
@@ -156,9 +156,10 @@ export const myNewRule = createRule<Options, MessageIds>({
     option2: 42,
   }],
   create(context, [options = {}]) {
-    const perf = createPerformanceTracker(
-      context,
-      options.performance
+    const perf = createPerformanceTracker<Options>(
+    perfKey,
+    option.performance,
+    context,
     );
 
     return {

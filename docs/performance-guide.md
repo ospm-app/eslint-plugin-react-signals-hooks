@@ -46,12 +46,12 @@ Start by importing the necessary utilities:
 
 ```typescript
 import {
-  createPerformanceTracker,
-  trackOperation,
-  startPhase,
   endPhase,
+  startPhase,
   stopTracking,
   startTracking,
+  trackOperation,
+  createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
 } from './utils/performance';
 import { PerformanceOperations } from './utils/performance-constants';

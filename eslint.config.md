@@ -8,7 +8,6 @@
 - `eslint-plugin-n` (v17.21.0)
 - `eslint-plugin-optimize-regex` (v1.2.1)
 - `eslint-plugin-promise` (v7.2.1)
-- `eslint-plugin-xss` (v0.1.12)
 - `@ospm/eslint-plugin-react-signals-hooks` (local)
 
 ## Key Rules
@@ -173,7 +172,7 @@
   - Enable for all JSON configuration files
   - Consider enabling `json/sort-package-json` to keep package.json organized
 
-### eslint-plugin-perf-standard (v1.0.3)
+### eslint-plugin-perf-standard (v1.0.3) - outdated, not supporting eslint 9
 
 - **Type**: Performance
 - **Purpose**: Performance-related rules
@@ -184,7 +183,7 @@
   - Enable for performance-critical code
   - Consider disabling in test files where performance is less critical
 
-### eslint-plugin-xss (v0.1.12)
+### eslint-plugin-xss (v0.1.12) - outdated, doesn't support eslint 9
 
 - **Type**: Security
 - **Purpose**: Prevents XSS (Cross-Site Scripting) vulnerabilities

@@ -81,18 +81,12 @@ importers:
       eslint-plugin-oxlint:
         specifier: ^1.8.0
         version: 1.8.0
-      eslint-plugin-perf-standard:
-        specifier: ^1.0.3
-        version: 1.0.3
       eslint-plugin-promise:
         specifier: ^7.2.1
         version: 7.2.1(eslint@9.31.0(jiti@2.4.2))
       eslint-plugin-security:
         specifier: ^3.0.1
         version: 3.0.1
-      eslint-plugin-xss:
-        specifier: ^0.1.12
-        version: 0.1.12
       globals:
         specifier: ^16.3.0
         version: 16.3.0
@@ -296,18 +290,12 @@ importers:
       eslint-plugin-oxlint:
         specifier: ^1.8.0
         version: 1.8.0
-      eslint-plugin-perf-standard:
-        specifier: ^1.0.3
-        version: 1.0.3
       eslint-plugin-promise:
         specifier: ^7.2.1
         version: 7.2.1(eslint@9.31.0(jiti@2.4.2))
       eslint-plugin-security:
         specifier: ^3.0.1
         version: 3.0.1
-      eslint-plugin-xss:
-        specifier: ^0.1.12
-        version: 0.1.12
       globals:
         specifier: ^16.3.0
         version: 16.3.0
@@ -524,18 +512,12 @@ importers:
       eslint-plugin-oxlint:
         specifier: ^1.8.0
         version: 1.8.0
-      eslint-plugin-perf-standard:
-        specifier: ^1.0.3
-        version: 1.0.3
       eslint-plugin-promise:
         specifier: ^7.2.1
         version: 7.2.1(eslint@9.31.0(jiti@2.4.2))
       eslint-plugin-security:
         specifier: ^3.0.1
         version: 3.0.1
-      eslint-plugin-xss:
-        specifier: ^0.1.12
-        version: 0.1.12
       globals:
         specifier: ^16.3.0
         version: 16.3.0
@@ -2819,9 +2801,6 @@ packages:
   eslint-plugin-oxlint@1.8.0:
     resolution: {integrity: sha512-C6QNZqB8ANc7rLI2yVEHOTV68uyYdACCasR54sfbXmsxac11aoUzzAIM2i6CBumqOz2qKEEcCZBNMRv++/hhFA==}
 
-  eslint-plugin-perf-standard@1.0.3:
-    resolution: {integrity: sha512-BeFz1WGdYJGE+9nb1mGKf0m2yA3EfeV8/g0e6c6fTS0Wm+P1LIBa4v6803jiUwTZNqYT7VzhhX0ZeXILwoG+Jw==}
-
   eslint-plugin-promise@7.2.1:
     resolution: {integrity: sha512-SWKjd+EuvWkYaS+uN2csvj0KoP43YTu7+phKQ5v+xw6+A0gutVX2yqCeCkC3uLCJFiPfR2dD8Es5L7yUsmvEaA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
@@ -2831,10 +2810,6 @@ packages:
   eslint-plugin-security@3.0.1:
     resolution: {integrity: sha512-XjVGBhtDZJfyuhIxnQ/WMm385RbX3DBu7H1J7HNNhmB2tnGxMeqVSnYv79oAj992ayvIBZghsymwkYFS6cGH4Q==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
-
-  eslint-plugin-xss@0.1.12:
-    resolution: {integrity: sha512-L5oYaD//ZE7fKNtWUfVgYTRW19jrZlvaHe2swyFLxXQ5pwVQLivi5m92rtXd/ww8yqg4Drasqyi0hlBmhf9YQg==}
-    engines: {node: '>=0.10.0'}
 
   eslint-scope@5.1.1:
     resolution: {integrity: sha512-2NxwbF/hZ0KpepYN0cNbo+FN6XoK7GaHlQhgx/hIZl6Va0bF45RQOOwhLIy8lQDbuCiadSLCBnH2CFYquit5bw==}
@@ -4011,10 +3986,6 @@ packages:
   require-directory@2.1.1:
     resolution: {integrity: sha512-fGxEI7+wsG9xrvdjsrlmL22OMTTiHRwAMroiEeMgq8gzoLC/PQr7RsRDSTLUg/bZAZtF+TVIkHc6/4RIKrui+Q==}
     engines: {node: '>=0.10.0'}
-
-  requireindex@1.1.0:
-    resolution: {integrity: sha512-LBnkqsDE7BZKvqylbmn7lTIVdpx4K/QCduRATpO5R+wtPmky/a8pN1bO2D6wXppn1497AJF9mNjqAXr6bdl9jg==}
-    engines: {node: '>=0.10.5'}
 
   resolve-from@3.0.0:
     resolution: {integrity: sha512-GnlH6vxLymXJNMBo7XP1fJIzBFbdYt49CuTwmB/6N53t+kMPRMFKz783LlQ4tv28XoQfMWinAJX6WCGf2IlaIw==}
@@ -7372,8 +7343,6 @@ snapshots:
     dependencies:
       jsonc-parser: 3.3.1
 
-  eslint-plugin-perf-standard@1.0.3: {}
-
   eslint-plugin-promise@7.2.1(eslint@9.31.0(jiti@2.4.2)):
     dependencies:
       '@eslint-community/eslint-utils': 4.7.0(eslint@9.31.0(jiti@2.4.2))
@@ -7382,10 +7351,6 @@ snapshots:
   eslint-plugin-security@3.0.1:
     dependencies:
       safe-regex: 2.1.1
-
-  eslint-plugin-xss@0.1.12:
-    dependencies:
-      requireindex: 1.1.0
 
   eslint-scope@5.1.1:
     dependencies:
@@ -8782,8 +8747,6 @@ snapshots:
       jsesc: 3.0.2
 
   require-directory@2.1.1: {}
-
-  requireindex@1.1.0: {}
 
   resolve-from@3.0.0: {}
 
