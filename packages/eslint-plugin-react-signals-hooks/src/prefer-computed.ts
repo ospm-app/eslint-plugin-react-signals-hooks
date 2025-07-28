@@ -92,7 +92,8 @@ export const preferComputedRule = createRule<Options, MessageIds>({
   meta: {
     type: 'suggestion',
     docs: {
-      description: 'Prefer computed() over useMemo for signal-derived values',
+      description:
+        'Encourages using `computed()` from @preact/signals-react instead of `useMemo` when working with signals. This provides better performance through automatic dependency tracking and more predictable reactivity behavior in React components.',
       url: getRuleDocUrl(ruleName),
     },
     fixable: 'code',
@@ -149,6 +150,22 @@ export const preferComputedRule = createRule<Options, MessageIds>({
 
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
+    if (option.performance.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    // Track rule initialization
+    recordMetric(perfKey, 'config', {
+      performance: {
+        enableMetrics: option.performance.enableMetrics,
+        logMetrics: option.performance.logMetrics,
+      },
+    });
+
+    endPhase(perfKey, 'rule-init');
+
+    startPhase(perfKey, 'rule-execution');
+
     console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
     console.info(`${ruleName}: Rule configuration:`, option);
 
@@ -168,10 +185,6 @@ export const preferComputedRule = createRule<Options, MessageIds>({
       return true;
     }
 
-    if (option.performance.enableMetrics) {
-      startTracking(context, perfKey, option.performance, ruleName);
-    }
-
     trackOperation(perfKey, PerformanceOperations.ruleInitialization);
 
     let hasComputedImport = false;
@@ -183,14 +196,16 @@ export const preferComputedRule = createRule<Options, MessageIds>({
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
       },
 
       Program(node: TSESTree.Program): void {
@@ -206,12 +221,13 @@ export const preferComputedRule = createRule<Options, MessageIds>({
               return (
                 n.type === 'ImportDeclaration' &&
                 n.source.value === '@preact/signals-react' &&
-                n.specifiers.some(
-                  (s) =>
+                n.specifiers.some((s: TSESTree.ImportClause): boolean => {
+                  return (
                     s.type === 'ImportSpecifier' &&
                     'name' in s.imported &&
                     s.imported.name === 'computed'
-                )
+                  );
+                })
               );
             }
           );

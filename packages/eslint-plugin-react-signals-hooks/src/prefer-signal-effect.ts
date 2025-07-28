@@ -4,6 +4,7 @@ import type { RuleContext, SuggestionReportDescriptor } from '@typescript-eslint
 import {
   endPhase,
   startPhase,
+  recordMetric,
   stopTracking,
   startTracking,
   trackOperation,
@@ -57,7 +58,8 @@ export const preferSignalEffectRule = createRule<Options, MessageIds>({
     fixable: 'code',
     hasSuggestions: true,
     docs: {
-      description: 'Prefer effect() over useEffect for signal-only dependencies',
+      description:
+        'Encourages using `effect()` from @preact/signals instead of `useEffect` when working with signals. This provides better performance through automatic dependency tracking and more predictable reactivity behavior.',
       url: getRuleDocUrl(ruleName),
     },
     messages: {
@@ -107,6 +109,22 @@ export const preferSignalEffectRule = createRule<Options, MessageIds>({
 
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
+    if (option.performance.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    // Track rule initialization
+    recordMetric(perfKey, 'config', {
+      performance: {
+        enableMetrics: option.performance.enableMetrics,
+        logMetrics: option.performance.logMetrics,
+      },
+    });
+
+    endPhase(perfKey, 'rule-init');
+
+    startPhase(perfKey, 'rule-execution');
+
     console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
     console.info(`${ruleName}: Rule configuration:`, option);
 
@@ -117,7 +135,7 @@ export const preferSignalEffectRule = createRule<Options, MessageIds>({
       nodeCount++;
 
       // Check if we've exceeded the node budget
-      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+      if (nodeCount > (option.performance?.maxNodes ?? 2_000)) {
         trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
@@ -137,14 +155,16 @@ export const preferSignalEffectRule = createRule<Options, MessageIds>({
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
       },
 
       CallExpression(node: TSESTree.CallExpression): void {

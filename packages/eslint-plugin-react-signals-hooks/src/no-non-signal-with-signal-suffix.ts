@@ -301,18 +301,16 @@ export const noNonSignalWithSignalSuffixRule = createRule<Options, MessageIds>({
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        if (
-          node.type === 'CallExpression' ||
-          node.type === 'MemberExpression' ||
-          node.type === 'Identifier'
-        ) {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
       },
       ImportDeclaration(node: TSESTree.ImportDeclaration): void {
         startPhase(perfKey, 'import-declaration');

@@ -6,10 +6,10 @@ import {
   startPhase,
   recordMetric,
   stopTracking,
+  startTracking,
   trackOperation,
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
-  startTracking,
 } from './utils/performance.js';
 import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
@@ -301,6 +301,8 @@ const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return getRuleDocUrl(name);
 });
 
+const signalUpdates: Array<SignalUpdate> = [];
+
 const ruleName = 'prefer-batch-updates';
 
 export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
@@ -370,6 +372,12 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
 
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
+    if (option.performance.enableMetrics) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    endPhase(perfKey, 'rule-init');
+
     console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
     console.info(`${ruleName}: Rule configuration:`, option);
 
@@ -387,27 +395,21 @@ export const preferBatchUpdatesRule = createRule<Options, MessageIds>({
       return true;
     }
 
-    if (option.performance.enableMetrics) {
-      startTracking(context, perfKey, option.performance, ruleName);
-    }
-
     trackOperation(perfKey, PerformanceOperations.ruleInitialization);
-
-    const signalUpdates: Array<SignalUpdate> = [];
-
-    endPhase(perfKey, 'rule-init');
 
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        if (node.type === 'CallExpression' || node.type === 'AssignmentExpression') {
-          trackOperation(perfKey, PerformanceOperations.nodeProcessingExpression);
-        }
+        trackOperation(perfKey, PerformanceOperations.nodeProcessingExpression);
       },
 
       // Process blocks of code (function bodies, if blocks, etc.)

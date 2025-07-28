@@ -288,14 +288,16 @@ export const preferForOverMapRule = createRule<Options, MessageIds>({
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
       },
 
       JSXElement(_node: TSESTree.Node): void {

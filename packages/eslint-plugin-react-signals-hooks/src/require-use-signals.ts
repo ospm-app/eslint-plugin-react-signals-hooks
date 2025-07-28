@@ -1,10 +1,10 @@
 import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
-import type { PerformanceBudget } from './utils/types.js';
 import {
   endPhase,
   startPhase,
+  recordMetric,
   stopTracking,
   startTracking,
   trackOperation,
@@ -12,6 +12,7 @@ import {
   DEFAULT_PERFORMANCE_BUDGET,
 } from './utils/performance.js';
 import { getRuleDocUrl } from './utils/urls.js';
+import type { PerformanceBudget } from './utils/types.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 
 type MessageIds = 'missingUseSignals';
@@ -51,7 +52,8 @@ export const requireUseSignalsRule = createRule<Options, MessageIds>({
   meta: {
     type: 'suggestion',
     docs: {
-      description: 'Require useSignals() hook when signals are used in a component',
+      description:
+        'Ensures that components using signals properly import and call the `useSignals()` hook. This hook is essential for signal reactivity in React components. The rule helps prevent subtle bugs by ensuring that any component using signals has the necessary hook in place.',
       url: getRuleDocUrl(ruleName),
     },
     hasSuggestions: true,
@@ -107,6 +109,22 @@ export const requireUseSignalsRule = createRule<Options, MessageIds>({
 
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
+    if (option.performance.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    // Track rule initialization
+    recordMetric(perfKey, 'config', {
+      performance: {
+        enableMetrics: option.performance.enableMetrics,
+        logMetrics: option.performance.logMetrics,
+      },
+    });
+
+    endPhase(perfKey, 'rule-init');
+
+    startPhase(perfKey, 'rule-execution');
+
     console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
     console.info(`${ruleName}: Rule configuration:`, option);
 
@@ -117,17 +135,13 @@ export const requireUseSignalsRule = createRule<Options, MessageIds>({
       nodeCount++;
 
       // Check if we've exceeded the node budget
-      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+      if (nodeCount > (option.performance?.maxNodes ?? 2_000)) {
         trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
       }
 
       return true;
-    }
-
-    if (option.performance.enableMetrics) {
-      startTracking(context, perfKey, option.performance, ruleName);
     }
 
     trackOperation(perfKey, PerformanceOperations.ruleInitialization);
@@ -139,19 +153,19 @@ export const requireUseSignalsRule = createRule<Options, MessageIds>({
     let componentName = '';
     let componentNode: TSESTree.Node | null = null;
 
-    endPhase(perfKey, 'rule-init');
-
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
       },
 
       FunctionDeclaration(node: TSESTree.FunctionDeclaration): void {

@@ -1,16 +1,18 @@
 import babelParser from '@babel/eslint-parser';
 import babelPresetEnv from '@babel/preset-env';
-import typescript from '@typescript-eslint/eslint-plugin';
+
+import typescriptPlugin from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
 import pluginESx from 'eslint-plugin-es-x';
 import importPlugin from 'eslint-plugin-import';
-import json from 'eslint-plugin-json';
+import jsonPlugin from 'eslint-plugin-json';
 import nodePlugin from 'eslint-plugin-n';
 import optimizeRegexPlugin from 'eslint-plugin-optimize-regex';
 import oxlintPlugin from 'eslint-plugin-oxlint';
 import promisePlugin from 'eslint-plugin-promise';
 import globals from 'globals';
 import eslintPlugin from 'eslint-plugin-eslint-plugin';
+import jsxA11yPlugin from 'eslint-plugin-jsx-a11y';
 
 import reactSignalsHooksPlugin from './packages/eslint-plugin-react-signals-hooks/dist/cjs/index.js';
 
@@ -140,9 +142,10 @@ const tsConfig = {
   files: ['**/*.{ts,tsx,mts}'],
   plugins: {
     'es-x': pluginESx,
-    '@typescript-eslint': typescript,
+    '@typescript-eslint': typescriptPlugin,
     import: importPlugin,
     'react-signals-hooks': reactSignalsHooksPlugin,
+    'jsx-a11y': jsxA11yPlugin,
   },
   languageOptions: {
     ecmaVersion: 2024,
@@ -207,7 +210,7 @@ const tsConfig = {
 
 const jsonConfig = {
   files: ['**/*.json'],
-  plugins: { json },
+  ...json.configs['recommended'],
   processor: 'json/json',
   languageOptions: {
     ecmaVersion: 2024,
@@ -247,6 +250,7 @@ const jsonConfig = {
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
+  jsxA11y.flatConfigs.recommended,
   {
     files: ['lib/rules/*.{js,ts}'],
     ...eslintPlugin.configs['flat/recommended'],
@@ -292,6 +296,7 @@ export default [
       oxlint: oxlintPlugin,
     },
     languageOptions: {
+      ...jsxA11y.flatConfigs.recommended.languageOptions,
       ecmaVersion: 2024,
       parserOptions: {
         sourceType: 'module',
@@ -300,6 +305,7 @@ export default [
         },
       },
       globals: {
+        ...globals.serviceworker,
         ...globals.browser,
         ...globals.node,
       },

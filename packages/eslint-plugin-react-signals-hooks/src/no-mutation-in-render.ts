@@ -107,6 +107,11 @@ const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return getRuleDocUrl(name);
 });
 
+let inRenderContext = false;
+let renderDepth = 0;
+let hookDepth = 0;
+let functionDepth = 0;
+
 const ruleName = 'no-mutation-in-render';
 
 export const noMutationInRenderRule = createRule<Options, MessageIds>({
@@ -250,11 +255,9 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
 
     endPhase(perfKey, 'rule-init');
 
-    const signalNames = option.signalNames ?? ['signal', 'useSignal', 'createSignal'];
-
     startPhase(perfKey, 'fileAnalysis');
 
-    trackOperation(perfKey, PerformanceOperations.signalNames, signalNames.length);
+    trackOperation(perfKey, PerformanceOperations.signalNames, option.signalNames.length);
 
     if (
       option.allowedPatterns?.some((pattern: string): boolean => {
@@ -275,26 +278,19 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
       return {};
     }
 
-    let inRenderContext = false;
-    let renderDepth = 0;
-    let hookDepth = 0;
-    let functionDepth = 0;
-
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        if (
-          node.type === 'CallExpression' ||
-          node.type === 'MemberExpression' ||
-          node.type === 'Identifier'
-        ) {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
       },
 
       FunctionDeclaration(node: TSESTree.FunctionDeclaration): void {
@@ -324,6 +320,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
         ) {
           // This is a React component
           trackOperation(perfKey, PerformanceOperations.reactComponentArrow);
+
           inRenderContext = true;
 
           renderDepth++;
@@ -393,7 +390,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           }
         }
 
-        if (node.callee.type === 'Identifier' && signalNames.includes(node.callee.name)) {
+        if (node.callee.type === 'Identifier' && option.signalNames.includes(node.callee.name)) {
           trackOperation(perfKey, PerformanceOperations.signalFunctionCall);
 
           trackIdentifier(node.callee.name, perfKey, resolvedIdentifiers);
@@ -419,7 +416,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           node.left.property.type === 'Identifier' &&
           node.left.property.name === 'value' &&
           node.left.object.type === 'Identifier' &&
-          signalNames.some((name: string): boolean => {
+          option.signalNames.some((name: string): boolean => {
             return (
               ('object' in node.left &&
                 'name' in node.left.object &&
@@ -471,7 +468,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           node.left.object.property.type === 'Identifier' &&
           node.left.object.property.name === 'value' &&
           node.left.object.object.type === 'Identifier' &&
-          signalNames.some((name: string): boolean => {
+          option.signalNames.some((name: string): boolean => {
             return (
               ('object' in node.left &&
                 'object' in node.left.object &&
@@ -519,7 +516,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           node.left.object.property.type === 'Identifier' &&
           node.left.object.property.name === 'value' &&
           node.left.object.object.type === 'Identifier' &&
-          signalNames.some((name: string): boolean => {
+          option.signalNames.some((name: string): boolean => {
             return (
               ('object' in node.left &&
                 'object' in node.left.object &&
@@ -563,7 +560,7 @@ export const noMutationInRenderRule = createRule<Options, MessageIds>({
           node.argument.property.type === 'Identifier' &&
           node.argument.property.name === 'value' &&
           node.argument.object.type === 'Identifier' &&
-          signalNames.some((name: string): boolean => {
+          option.signalNames.some((name: string): boolean => {
             return (
               ('object' in node.argument &&
                 'object' in node.argument.object &&

@@ -5,6 +5,7 @@ import {
   endPhase,
   startPhase,
   stopTracking,
+  recordMetric,
   startTracking,
   trackOperation,
   createPerformanceTracker,
@@ -62,7 +63,8 @@ export const preferSignalReadsRule = createRule<Options, MessageIds>({
     type: 'suggestion',
     hasSuggestions: true,
     docs: {
-      description: 'Enforce using .value when reading signal values in non-JSX contexts',
+      description:
+        'Enforces using `.value` when reading signal values in non-JSX contexts. In JSX, signals are automatically unwrapped, but in regular JavaScript/TypeScript code, you must explicitly access the `.value` property to read the current value of a signal. This rule helps catch cases where you might have forgotten to use `.value` when needed.',
       url: getRuleDocUrl(ruleName),
     },
     messages: {
@@ -110,6 +112,22 @@ export const preferSignalReadsRule = createRule<Options, MessageIds>({
 
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
+    if (option.performance.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    // Track rule initialization
+    recordMetric(perfKey, 'config', {
+      performance: {
+        enableMetrics: option.performance.enableMetrics,
+        logMetrics: option.performance.logMetrics,
+      },
+    });
+
+    endPhase(perfKey, 'rule-init');
+
+    startPhase(perfKey, 'rule-execution');
+
     console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
     console.info(`${ruleName}: Rule configuration:`, option);
 
@@ -119,7 +137,7 @@ export const preferSignalReadsRule = createRule<Options, MessageIds>({
       nodeCount++;
 
       // Check if we've exceeded the node budget
-      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+      if (nodeCount > (option.performance?.maxNodes ?? 2_000)) {
         trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
@@ -139,14 +157,16 @@ export const preferSignalReadsRule = createRule<Options, MessageIds>({
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
       },
 
       JSXElement(): void {

@@ -4,6 +4,7 @@ import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 import {
   endPhase,
   startPhase,
+  recordMetric,
   stopTracking,
   startTracking,
   trackOperation,
@@ -277,7 +278,7 @@ export const warnOnUnnecessaryUntrackedRule = createRule<Options, MessageIds>({
     type: 'suggestion',
     docs: {
       description:
-        'Warn about unnecessary untracked() calls and .peek() usage in reactive contexts',
+        'Warns about unnecessary `untracked()` calls and `.peek()` usage in reactive contexts. In React components using signals, these patterns can often be simplified for better performance and readability. The rule helps identify when these optimizations are no longer needed or could be replaced with direct signal access.',
       url: getRuleDocUrl(ruleName),
     },
     messages: {
@@ -346,6 +347,22 @@ export const warnOnUnnecessaryUntrackedRule = createRule<Options, MessageIds>({
 
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
+    if (option.performance.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    // Track rule initialization
+    recordMetric(perfKey, 'config', {
+      performance: {
+        enableMetrics: option.performance.enableMetrics,
+        logMetrics: option.performance.logMetrics,
+      },
+    });
+
+    endPhase(perfKey, 'rule-init');
+
+    startPhase(perfKey, 'rule-execution');
+
     console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
     console.info(`${ruleName}: Rule configuration:`, option);
 
@@ -356,7 +373,7 @@ export const warnOnUnnecessaryUntrackedRule = createRule<Options, MessageIds>({
       nodeCount++;
 
       // Check if we've exceeded the node budget
-      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+      if (nodeCount > (option.performance?.maxNodes ?? 2_000)) {
         trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
@@ -365,26 +382,23 @@ export const warnOnUnnecessaryUntrackedRule = createRule<Options, MessageIds>({
       return true;
     }
 
-    if (option.performance.enableMetrics) {
-      startTracking(context, perfKey, option.performance, ruleName);
-    }
-
     trackOperation(perfKey, PerformanceOperations.ruleInitialization);
-
-    endPhase(perfKey, 'rule-init');
 
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
       },
+
       CallExpression(node: TSESTree.CallExpression): void {
         // Check for unnecessary untracked()
         if (

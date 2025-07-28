@@ -4,8 +4,9 @@ import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 import {
   endPhase,
   startPhase,
-  startTracking,
+  recordMetric,
   stopTracking,
+  startTracking,
   trackOperation,
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
@@ -69,7 +70,8 @@ export const preferSignalMethodsRule = createRule<Options, MessageIds>({
   meta: {
     type: 'suggestion',
     docs: {
-      description: 'Enforce proper usage of signal methods (.value, .peek()) in different contexts',
+      description:
+        "Enforces proper usage of signal methods (`.value`, `.peek()`) in different contexts. This rule helps ensure you're using the right signal access pattern for the context, whether it's in JSX, effects, or regular code. It promotes best practices for signal usage to optimize reactivity and performance.",
       url: getRuleDocUrl(ruleName),
     },
     messages: {
@@ -122,6 +124,20 @@ export const preferSignalMethodsRule = createRule<Options, MessageIds>({
 
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
+    if (option.performance.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    // Track rule initialization
+    recordMetric(perfKey, 'config', {
+      performance: {
+        enableMetrics: option.performance.enableMetrics,
+        logMetrics: option.performance.logMetrics,
+      },
+    });
+
+    endPhase(perfKey, 'rule-init');
+
     console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
     console.info(`${ruleName}: Rule configuration:`, option);
 
@@ -130,7 +146,8 @@ export const preferSignalMethodsRule = createRule<Options, MessageIds>({
     function shouldContinue(): boolean {
       nodeCount++;
 
-      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+      // Check if we've exceeded the node budget
+      if (nodeCount > (option.performance?.maxNodes ?? 2_000)) {
         trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
@@ -148,19 +165,19 @@ export const preferSignalMethodsRule = createRule<Options, MessageIds>({
     let isInEffect = false;
     let isInJSX = false;
 
-    endPhase(perfKey, 'rule-init');
-
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
       },
 
       'CallExpression[callee.name="useEffect"]'(): void {
@@ -277,7 +294,7 @@ export const preferSignalMethodsRule = createRule<Options, MessageIds>({
 
           if (typeof finalMetrics !== 'undefined') {
             console.info(
-              `\n[prefer-batch-updates] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
+              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
             );
             console.info(`  File: ${context.filename}`);
             console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);

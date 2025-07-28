@@ -1,4 +1,4 @@
-import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
+import { ESLintUtils, type TSESTree } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
 import {
@@ -15,100 +15,50 @@ import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 
-type MessageIds = 'invalidSignalName' | 'invalidComputedName';
-
 type Option = {
+  // Add your rule-specific options here
   performance: PerformanceBudget;
 };
 
 type Options = [Option];
 
-function isValidSignalName(name: string): boolean {
-  if (!name.endsWith('Signal')) {
-    return false;
-  }
+type MessageIds = 'exampleMessageId';
 
-  if (!/^[a-z]/.test(name)) {
-    return false;
-  }
-
-  // Only forbid 'use' prefix when followed by a capital letter
-  // (e.g., 'useSignal' is invalid, but 'userSignal' is valid)
-  if (name.startsWith('use') && name.length > 2 && /^[A-Z]/.test(name[2])) {
-    return false;
-  }
-
-  return true;
-}
-
-function getFixedName(originalName: string): string {
-  let fixedName = originalName;
-
-  if (fixedName.startsWith('use')) {
-    fixedName = fixedName.slice(3);
-  }
-
-  if (fixedName.length > 0) {
-    fixedName = fixedName.charAt(0).toLowerCase() + fixedName.slice(1);
-  }
-
-  if (!fixedName.endsWith('Signal')) {
-    fixedName += 'Signal';
-  }
-
-  return fixedName;
-}
-
-const createRule = ESLintUtils.RuleCreator((name: string): string => {
+const createRule = ESLintUtils.RuleCreator((name: string) => {
   return getRuleDocUrl(name);
 });
 
-const ruleName = 'signal-variable-name';
+const ruleName = 'rule-name';
 
-export const signalVariableNameRule = createRule<Options, MessageIds>({
+export const rule = createRule<Options, MessageIds>({
   name: ruleName,
   meta: {
-    type: 'suggestion',
+    type: 'suggestion', // or 'problem' or 'layout'
     docs: {
-      description:
-        'Enforces consistent naming conventions for signal and computed variables. Signal variables should end with "Signal" (e.g., `countSignal`), start with a lowercase letter, and not use the "use" prefix to avoid confusion with React hooks. This improves code readability and maintainability by making signal usage immediately obvious.',
+      description: 'Brief description of what the rule does',
       url: getRuleDocUrl(ruleName),
     },
-    messages: {
-      invalidSignalName:
-        "Signal variable '{{name}}' should end with 'Signal', start with lowercase, and not start with 'use'",
-      invalidComputedName:
-        "Computed variable '{{name}}' should end with 'Signal', start with lowercase, and not start with 'use'",
-    },
+    fixable: 'code',
+    hasSuggestions: false,
     schema: [
       {
         type: 'object',
         properties: {
           performance: {
             type: 'object',
-            properties: {
-              maxTime: { type: 'number', minimum: 1 },
-              maxMemory: { type: 'number', minimum: 1 },
-              maxNodes: { type: 'number', minimum: 1 },
-              enableMetrics: { type: 'boolean' },
-              logMetrics: { type: 'boolean' },
-              maxOperations: {
-                type: 'object',
-                properties: Object.fromEntries(
-                  Object.entries(PerformanceOperations).map(([key]) => [
-                    key,
-                    { type: 'number', minimum: 1 },
-                  ])
-                ),
-              },
-            },
             additionalProperties: false,
+            properties: {
+              maxNodes: { type: 'number', minimum: 1 },
+              maxTime: { type: 'number', minimum: 1 },
+            },
           },
         },
         additionalProperties: false,
       },
     ],
-    fixable: 'code',
+    messages: {
+      exampleMessageId: 'Your error message here',
+    },
   },
   defaultOptions: [
     {
@@ -126,7 +76,6 @@ export const signalVariableNameRule = createRule<Options, MessageIds>({
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    // Track rule initialization
     recordMetric(perfKey, 'config', {
       performance: {
         enableMetrics: option.performance.enableMetrics,
@@ -171,36 +120,15 @@ export const signalVariableNameRule = createRule<Options, MessageIds>({
 
         perf.trackNode(node);
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        trackOperation(perfKey, PerformanceOperations.nodeProcessing);
       },
 
-      VariableDeclarator(node: TSESTree.VariableDeclarator): void {
-        if (
-          node.id.type === 'Identifier' &&
-          node.init &&
-          node.init.type === 'CallExpression' &&
-          node.init.callee.type === 'Identifier' &&
-          (node.init.callee.name === 'signal' || node.init.callee.name === 'computed')
-        ) {
-          const variableName = node.id.name;
-
-          if (!isValidSignalName(variableName)) {
-            context.report({
-              node: node.id,
-              messageId:
-                'name' in node.init.callee && node.init.callee.name === 'signal'
-                  ? 'invalidSignalName'
-                  : 'invalidComputedName',
-              data: {
-                name: variableName,
-              },
-              fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-                return fixer.replaceText(node.id, getFixedName(variableName));
-              },
-            });
-          }
-        }
-      },
+      // Example for specific node types
+      // CallExpression: (node) => {
+      //   trackOperation(perf, perfKey, 'CallExpression', () => {
+      //     // Your validation logic here
+      //   });
+      // },
 
       // Clean up
       'Program:exit'(): void {

@@ -52,9 +52,110 @@ function isSignalMutation(
   return false;
 }
 
+function checkAndReportMutations(
+  perfKey: string,
+  context: Readonly<RuleContext<MessageIds, Options>>
+): void {
+  const checkStart = performance.now();
+
+  trackOperation(perfKey, PerformanceOperations.mutationCheckStart);
+
+  const currentCheckId = `check-${performance.now()}`;
+
+  startPhase(perfKey, currentCheckId);
+
+  const checkDuration = performance.now() - checkStart;
+
+  recordMetric(perfKey, 'mutationCheckDuration', checkDuration);
+
+  if (signalMutations.length >= context.options[0].minMutations) {
+    trackOperation(perfKey, PerformanceOperations[`batchMutation${signalMutations.length}`]);
+
+    recordMetric(perfKey, 'mutationCount', signalMutations.length);
+
+    const [firstNode] = signalMutations;
+
+    const lastNode = signalMutations[signalMutations.length - 1];
+
+    if (!firstNode || !lastNode) {
+      endPhase(perfKey, currentCheckId);
+      return;
+    }
+
+    context.report({
+      node: firstNode,
+      messageId: 'useBatch',
+      suggest: [
+        {
+          messageId: 'suggestBatch',
+          fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+            const fixes = [];
+
+            const firstToken = context.sourceCode.getFirstToken(firstNode);
+            const lastToken = context.sourceCode.getLastToken(lastNode);
+
+            if (!firstToken || !lastToken) {
+              return null;
+            }
+
+            // Add batch() wrapper
+            fixes.push(
+              fixer.insertTextBefore(firstToken, 'batch(() => {\n'),
+
+              fixer.insertTextAfter(lastToken, '\n})')
+            );
+
+            // Add import if needed
+            if (!hasBatchImport) {
+              const importNode: TSESTree.ImportDeclaration | undefined =
+                context.sourceCode.ast.body.find(
+                  (node: TSESTree.ProgramStatement): node is TSESTree.ImportDeclaration => {
+                    return (
+                      node.type === 'ImportDeclaration' &&
+                      node.source.value === '@preact/signals-react'
+                    );
+                  }
+                );
+
+              if (typeof importNode === 'undefined') {
+                fixes.push(
+                  fixer.insertTextBefore(
+                    context.sourceCode.ast.body[0],
+                    "import { batch } from '@preact/signals-react';\n"
+                  )
+                );
+              } else {
+                fixes.push(
+                  fixer.insertTextAfter(
+                    importNode.specifiers[importNode.specifiers.length - 1],
+                    ', batch'
+                  )
+                );
+              }
+            }
+
+            return fixes;
+          },
+        },
+      ],
+    });
+  }
+}
+
 const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return getRuleDocUrl(name);
 });
+
+let hasBatchImport = false;
+let mutationLimitExceeded = false;
+
+let currentFunction: TSESTree.FunctionLike | null = null;
+
+const signalMutations: TSESTree.Node[] = [];
+
+const importCheckStart = performance.now();
+
+let importCheckCount = 0;
 
 const ruleName = 'prefer-batch-for-multi-mutations';
 
@@ -123,6 +224,20 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
 
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
+    if (option.performance?.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    // Track rule initialization
+    recordMetric(perfKey, 'config', {
+      performance: {
+        enableMetrics: option.performance.enableMetrics,
+        logMetrics: option.performance.logMetrics,
+      },
+    });
+
+    endPhase(perfKey, 'perf-init');
+
     console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
     console.info(`${ruleName}: Rule configuration:`, option);
 
@@ -140,30 +255,11 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
       return true;
     }
 
-    if (option.performance?.enableMetrics === true) {
-      startTracking(context, perfKey, option.performance, ruleName);
-    }
-
     trackOperation(perfKey, PerformanceOperations.ruleInit);
-
-    endPhase(perfKey, 'perf-init');
 
     startPhase(perfKey, 'import-analysis');
 
-    let hasBatchImport = false;
-    let mutationLimitExceeded = false;
-
-    let currentFunction: TSESTree.FunctionLike | null = null;
-
-    const signalMutations: TSESTree.Node[] = [];
-
-    const importCheckStart = performance.now();
-
-    trackOperation(perfKey, PerformanceOperations.importCheckStart);
-
     trackOperation(perfKey, PerformanceOperations.preImportAnalysis);
-
-    let importCheckCount = 0;
 
     hasBatchImport = context.sourceCode.ast.body.some(
       (node: TSESTree.ProgramStatement): boolean => {
@@ -182,97 +278,11 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
       }
     );
 
+    trackOperation(perfKey, PerformanceOperations.importCheckStart);
+
     recordMetric(perfKey, 'importCheckDuration', performance.now() - importCheckStart);
+
     recordMetric(perfKey, 'importCheckCount', importCheckCount);
-
-    endPhase(perfKey, 'import-analysis');
-
-    function checkAndReportMutations(option: Option): void {
-      const checkStart = performance.now();
-
-      trackOperation(perfKey, PerformanceOperations.mutationCheckStart);
-
-      const currentCheckId = `check-${performance.now()}`;
-
-      startPhase(perfKey, currentCheckId);
-
-      const checkDuration = performance.now() - checkStart;
-
-      recordMetric(perfKey, 'mutationCheckDuration', checkDuration);
-
-      if (signalMutations.length >= option.minMutations) {
-        trackOperation(perfKey, PerformanceOperations[`batchMutation${signalMutations.length}`]);
-
-        recordMetric(perfKey, 'mutationCount', signalMutations.length);
-
-        const [firstNode] = signalMutations;
-
-        const lastNode = signalMutations[signalMutations.length - 1];
-
-        if (!firstNode || !lastNode) {
-          endPhase(perfKey, currentCheckId);
-          return;
-        }
-
-        context.report({
-          node: firstNode,
-          messageId: 'useBatch',
-          suggest: [
-            {
-              messageId: 'suggestBatch',
-              fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
-                const fixes = [];
-
-                const firstToken = context.sourceCode.getFirstToken(firstNode);
-                const lastToken = context.sourceCode.getLastToken(lastNode);
-
-                if (!firstToken || !lastToken) {
-                  return null;
-                }
-
-                // Add batch() wrapper
-                fixes.push(
-                  fixer.insertTextBefore(firstToken, 'batch(() => {\n'),
-
-                  fixer.insertTextAfter(lastToken, '\n})')
-                );
-
-                // Add import if needed
-                if (!hasBatchImport) {
-                  const importNode: TSESTree.ImportDeclaration | undefined =
-                    context.sourceCode.ast.body.find(
-                      (node: TSESTree.ProgramStatement): node is TSESTree.ImportDeclaration => {
-                        return (
-                          node.type === 'ImportDeclaration' &&
-                          node.source.value === '@preact/signals-react'
-                        );
-                      }
-                    );
-
-                  if (typeof importNode === 'undefined') {
-                    fixes.push(
-                      fixer.insertTextBefore(
-                        context.sourceCode.ast.body[0],
-                        "import { batch } from '@preact/signals-react';\n"
-                      )
-                    );
-                  } else {
-                    fixes.push(
-                      fixer.insertTextAfter(
-                        importNode.specifiers[importNode.specifiers.length - 1],
-                        ', batch'
-                      )
-                    );
-                  }
-                }
-
-                return fixes;
-              },
-            },
-          ],
-        });
-      }
-    }
 
     endPhase(perfKey, 'import-analysis');
 
@@ -281,75 +291,72 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        // Track specific node types that are more expensive to process
-        if (
-          node.type === 'CallExpression' ||
-          node.type === 'MemberExpression' ||
-          node.type === 'Identifier'
-        ) {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
       },
       'FunctionDeclaration:exit': (_node: TSESTree.FunctionDeclaration): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'FunctionExpression:exit': (_node: TSESTree.FunctionExpression): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'ArrowFunctionExpression:exit': (_node: TSESTree.ArrowFunctionExpression): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'ClassMethod:exit': (): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'ClassProperty:exit': (): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'MethodDefinition:exit': (_node: TSESTree.MethodDefinition): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'PropertyDefinition:exit': (_node: TSESTree.PropertyDefinition): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'TSDeclareFunction:exit': (_node: TSESTree.TSDeclareFunction): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'TSMethodSignature:exit': (_node: TSESTree.TSMethodSignature): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'TSPropertySignature:exit': (_node: TSESTree.TSPropertySignature): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'TSEmptyBodyFunctionExpression:exit': (
         _node: TSESTree.TSEmptyBodyFunctionExpression
       ): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'TSTypeLiteral:exit': (_node: TSESTree.TSTypeLiteral): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'TSInterfaceBody:exit': (_node: TSESTree.TSInterfaceBody): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'TSInterfaceDeclaration:exit': (_node: TSESTree.TSInterfaceDeclaration): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'TSTypeAliasDeclaration:exit': (_node: TSESTree.TSTypeAliasDeclaration): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'TSEnumDeclaration:exit': (_node: TSESTree.TSEnumDeclaration): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'TSModuleBlock:exit': (_node: TSESTree.TSModuleBlock): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       'TSModuleDeclaration:exit': (_node: TSESTree.TSModuleDeclaration): void => {
-        checkAndReportMutations(option);
+        checkAndReportMutations(perfKey, context);
       },
       ':function'(node: TSESTree.Node): void {
         if (
@@ -390,7 +397,7 @@ export const preferBatchForMultiMutationsRule = createRule<Options, MessageIds>(
               );
             })
           ) {
-            checkAndReportMutations(option);
+            checkAndReportMutations(perfKey, context);
           }
           currentFunction = null;
         }

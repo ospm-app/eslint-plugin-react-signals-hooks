@@ -3807,7 +3807,8 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
   meta: {
     type: 'suggestion',
     docs: {
-      description: 'Verifies the list of dependencies for Hooks like useEffect and similar',
+      description:
+        'Ensures that all dependencies used in React Hooks are properly specified in their dependency arrays. This rule helps prevent bugs caused by missing or incorrect dependencies in useEffect, useMemo, useCallback, and other React Hooks.',
       url: getRuleDocUrl(ruleName),
     },
     messages: {
@@ -4080,7 +4081,7 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
       nodeCount++;
 
       // Check if we've exceeded the node budget
-      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+      if (nodeCount > (option.performance.maxNodes ?? 2_000)) {
         trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
@@ -4103,18 +4104,16 @@ export const exhaustiveDepsRule = createRule<Options, MessageIds>({
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        if (
-          node.type === 'CallExpression' ||
-          node.type === 'MemberExpression' ||
-          node.type === 'Identifier'
-        ) {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
       },
       CallExpression(node: TSESTree.CallExpression): void {
         perf.trackNode(node);

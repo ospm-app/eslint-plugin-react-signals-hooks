@@ -107,6 +107,10 @@ const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return getRuleDocUrl(name);
 });
 
+let hasShowImport = false;
+
+const signalVariables = new Set<string>();
+
 const ruleName = 'prefer-show-over-ternary';
 
 export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
@@ -187,8 +191,6 @@ export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
     console.info('Rule configuration:', option);
 
     let nodeCount = 0;
-    const signalNames = option.signalNames ?? ['signal', 'useSignal', 'createSignal'];
-    const signalNameSet = new Set(signalNames);
 
     // Helper function to check if we should continue processing
     function shouldContinue(): boolean {
@@ -203,10 +205,6 @@ export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
 
       return true;
     }
-
-    let hasShowImport = false;
-
-    const signalVariables = new Set<string>();
 
     hasShowImport = context.sourceCode.ast.body.some(
       (node: TSESTree.ProgramStatement): node is TSESTree.ImportDeclaration => {
@@ -229,25 +227,17 @@ export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
 
     return {
       '*': (node: TSESTree.Node): void => {
-        if (!perf) {
-          throw new Error('Performance tracker not initialized');
-        }
-
-        // Check if we should continue processing
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        // Track specific node types that are more expensive to process
-        if (
-          node.type === 'CallExpression' ||
-          node.type === 'MemberExpression' ||
-          node.type === 'Identifier'
-        ) {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
 
         // Handle function declarations and variables
         if (
@@ -266,7 +256,9 @@ export const preferShowOverTernaryRule = createRule<Options, MessageIds>({
                     'init' in def.node &&
                     def.node.init?.type === AST_NODE_TYPES.CallExpression &&
                     def.node.init.callee.type === AST_NODE_TYPES.Identifier &&
-                    signalNameSet.has(def.node.init.callee.name)
+                    new Set(option.signalNames ?? ['signal', 'useSignal', 'createSignal']).has(
+                      def.node.init.callee.name
+                    )
                   );
                 })
               ) {

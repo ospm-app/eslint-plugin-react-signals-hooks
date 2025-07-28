@@ -3,6 +3,7 @@ import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/ut
 import {
   endPhase,
   startPhase,
+  recordMetric,
   stopTracking,
   startTracking,
   trackOperation,
@@ -114,7 +115,8 @@ export const preferSignalInJsxRule = createRule<Options, MessageIds>({
   meta: {
     type: 'suggestion',
     docs: {
-      description: 'Prefer direct signal usage in JSX over .value access',
+      description:
+        "Enforces direct signal usage in JSX by preferring the signal itself over explicit `.value` access. In JSX, signals are automatically unwrapped, so there's no need to access the `.value` property. This rule helps maintain cleaner JSX code by removing unnecessary property access.",
       url: getRuleDocUrl(ruleName),
     },
     fixable: 'code',
@@ -163,6 +165,22 @@ export const preferSignalInJsxRule = createRule<Options, MessageIds>({
 
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
+    if (option.performance.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    // Track rule initialization
+    recordMetric(perfKey, 'config', {
+      performance: {
+        enableMetrics: option.performance.enableMetrics,
+        logMetrics: option.performance.logMetrics,
+      },
+    });
+
+    endPhase(perfKey, 'rule-init');
+
+    startPhase(perfKey, 'rule-execution');
+
     console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
     console.info(`${ruleName}: Rule configuration:`, option);
 
@@ -172,7 +190,7 @@ export const preferSignalInJsxRule = createRule<Options, MessageIds>({
       nodeCount++;
 
       // Check if we've exceeded the node budget
-      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+      if (nodeCount > (option.performance?.maxNodes ?? 2_000)) {
         trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
@@ -181,27 +199,23 @@ export const preferSignalInJsxRule = createRule<Options, MessageIds>({
       return true;
     }
 
-    if (option.performance.enableMetrics) {
-      startTracking(context, perfKey, option.performance, ruleName);
-    }
-
     trackOperation(perfKey, PerformanceOperations.ruleInitialization);
 
     let jsxDepth = 0;
 
-    endPhase(perfKey, 'rule-init');
-
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
       },
 
       // Track JSX depth to determine if we're inside JSX

@@ -28,7 +28,10 @@ type MessageIds =
   | 'moveToModuleLevel'
   | 'createCustomHook';
 
-function getSignalInfo(node: TSESTree.CallExpression, sourceCode: Readonly<SourceCode>) {
+function getSignalInfo(
+  node: TSESTree.CallExpression,
+  sourceCode: Readonly<SourceCode>
+): { signalName: string; signalValue: string; varName: string } {
   return {
     signalName: node.callee.type === 'Identifier' ? node.callee.name : 'signal',
     signalValue: node.arguments.length > 0 ? sourceCode.getText(node.arguments[0]) : 'undefined',
@@ -234,21 +237,17 @@ export const noSignalCreationInComponentRule = createRule<Options, MessageIds>({
 
     return {
       '*': (node: TSESTree.Node): void => {
-        // Check if we should continue processing
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        // Track specific node types that are more expensive to process
-        if (
-          node.type === 'CallExpression' ||
-          node.type === 'MemberExpression' ||
-          node.type === 'Identifier'
-        ) {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
       },
 
       'FunctionDeclaration, ArrowFunctionExpression, FunctionExpression'(

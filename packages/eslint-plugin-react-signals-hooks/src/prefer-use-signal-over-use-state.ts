@@ -9,6 +9,7 @@ import {
   trackOperation,
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
+  recordMetric,
 } from './utils/performance.js';
 import { getRuleDocUrl } from './utils/urls.js';
 import type { PerformanceBudget } from './utils/types.js';
@@ -35,7 +36,8 @@ export const preferUseSignalOverUseStateRule = createRule<Options, MessageIds>({
     type: 'suggestion',
     hasSuggestions: true,
     docs: {
-      description: 'Prefer useSignal over useState for primitive values and simple initializers',
+      description:
+        "Encourages using `useSignal` instead of `useState` for primitive values and simple initializers. `useSignal` often provides better performance and ergonomics for local component state that doesn't require the full React reconciliation cycle. This rule helps migrate simple state management to signals while still allowing complex state to use `useState` when needed.",
       url: getRuleDocUrl(ruleName),
     },
     messages: {
@@ -89,6 +91,22 @@ export const preferUseSignalOverUseStateRule = createRule<Options, MessageIds>({
 
     const perf = createPerformanceTracker(perfKey, option.performance, context);
 
+    if (option.performance.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    // Track rule initialization
+    recordMetric(perfKey, 'config', {
+      performance: {
+        enableMetrics: option.performance.enableMetrics,
+        logMetrics: option.performance.logMetrics,
+      },
+    });
+
+    endPhase(perfKey, 'rule-init');
+
+    startPhase(perfKey, 'rule-execution');
+
     console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
     console.info(`${ruleName}: Rule configuration:`, option);
 
@@ -97,7 +115,7 @@ export const preferUseSignalOverUseStateRule = createRule<Options, MessageIds>({
     function shouldContinue(): boolean {
       nodeCount++;
 
-      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
+      if (nodeCount > (option.performance?.maxNodes ?? 2_000)) {
         trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
@@ -106,25 +124,21 @@ export const preferUseSignalOverUseStateRule = createRule<Options, MessageIds>({
       return true;
     }
 
-    if (option.performance.enableMetrics) {
-      startTracking(context, perfKey, option.performance, ruleName);
-    }
-
     trackOperation(perfKey, PerformanceOperations.ruleInitialization);
-
-    endPhase(perfKey, 'rule-init');
 
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
       },
 
       VariableDeclarator(node: TSESTree.VariableDeclarator) {

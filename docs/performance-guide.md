@@ -75,6 +75,14 @@ create(context, [option]): ESLintUtils.RuleListener {
   if (option.performance?.enableMetrics === true) {
     startTracking(context, perfKey, option.performance, ruleName);
   }
+
+  // Track rule initialization
+  recordMetric(perfKey, 'config', {
+    performance: {
+      enableMetrics: option.performance.enableMetrics,
+      logMetrics: option.performance.logMetrics,
+    },
+  });
   
   // Track operations
   trackOperation(perfKey, PerformanceOperations.ruleInitialization);

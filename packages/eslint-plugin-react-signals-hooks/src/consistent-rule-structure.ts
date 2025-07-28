@@ -7,6 +7,7 @@ import {
   endPhase,
   startPhase,
   stopTracking,
+  recordMetric,
   startTracking,
   trackOperation,
   createPerformanceTracker,
@@ -131,6 +132,7 @@ function checkRuleNaming(
         return fixer.insertTextAfter(node.id, 'Rule');
       },
     });
+
     return;
   }
 
@@ -213,6 +215,17 @@ function checkMessageIds(
 const createRule = ESLintUtils.RuleCreator((name: string): string => {
   return getRuleDocUrl(name);
 });
+
+// Track rule definitions and exports
+const ruleExports: { node: TSESTree.Node; name: string }[] = [];
+
+let defaultExportNode: TSESTree.Node | null = null;
+let currentRuleNode: TSESTree.Node | null = null;
+
+// Track the current rule being processed
+let inRuleDefinition = false;
+let currentRuleName: string | null = null; // Tracks the name of the current rule being processed
+let hasSuggestions = false; // Tracks if the current rule has suggestions enabled
 
 const ruleName = 'consistent-rule-structure';
 
@@ -303,8 +316,13 @@ export const consistentRuleStructureRule = createRule<Options, MessageIds>({
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`Initializing rule for file: ${context.filename}`);
-    console.info('Rule configuration:', option);
+    // Track rule initialization
+    recordMetric(perfKey, 'config', {
+      performance: {
+        enableMetrics: option.performance.enableMetrics,
+        logMetrics: option.performance.logMetrics,
+      },
+    });
 
     let nodeCount = 0;
 
@@ -321,11 +339,12 @@ export const consistentRuleStructureRule = createRule<Options, MessageIds>({
       return true;
     }
 
-    trackOperation(perfKey, PerformanceOperations.ruleInit);
-
     endPhase(perfKey, 'rule-init');
 
     startPhase(perfKey, 'fileAnalysis');
+
+    console.info(`Initializing rule for file: ${context.filename}`);
+    console.info('Rule configuration:', option);
 
     if (option.exemptRules?.includes(path.basename(context.filename, '.ts'))) {
       trackOperation(perfKey, PerformanceOperations.fileExempt);
@@ -335,310 +354,21 @@ export const consistentRuleStructureRule = createRule<Options, MessageIds>({
       return {};
     }
 
-    // Track rule definitions and exports
-    const ruleExports: { node: TSESTree.Node; name: string }[] = [];
-
-    let defaultExportNode: TSESTree.Node | null = null;
-    let currentRuleNode: TSESTree.Node | null = null;
-
-    // Track the current rule being processed
-    let inRuleDefinition = false;
-    let currentRuleName: string | null = null; // Tracks the name of the current rule being processed
-    let hasSuggestions = false; // Tracks if the current rule has suggestions enabled
-
-    // Process a rule definition node
-    function processRuleDefinition(node: TSESTree.Node): void {
-      if (inRuleDefinition) {
-        // We're already processing a rule, so this is a nested rule which we don't support
-        return;
-      }
-
-      inRuleDefinition = true;
-      currentRuleNode = node;
-
-      // Reset rule-specific state
-      hasSuggestions = false;
-
-      // Process the rule's options and metadata
-      if (
-        !(
-          node.type === 'CallExpression' &&
-          node.arguments.length > 0 &&
-          node.arguments[0].type === 'ObjectExpression'
-        )
-      ) {
-        return;
-      }
-
-      const ruleOptions = node.arguments[0];
-
-      // Check for name property
-      const nameProperty = ruleOptions.properties.find(
-        (prop: TSESTree.ObjectLiteralElement): boolean => {
-          return (
-            prop.type === 'Property' && prop.key.type === 'Identifier' && prop.key.name === 'name'
-          );
-        }
-      );
-
-      if (
-        nameProperty &&
-        'value' in nameProperty &&
-        nameProperty.value.type === 'Literal' &&
-        typeof nameProperty.value.value === 'string'
-      ) {
-        currentRuleName = nameProperty.value.value;
-
-        // Ensure the rule name follows the correct naming convention
-        if (option.enforceNamingConvention && !/^[a-z][a-zA-Z0-9]*$/.test(currentRuleName)) {
-          context.report({
-            node: nameProperty.value,
-            messageId: 'inconsistentNaming',
-            data: { name: currentRuleName },
-            fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-              return fixer.replaceText(
-                nameProperty.value,
-                `'${currentRuleName
-                  ?.replace(/[^a-zA-Z0-9]+/g, '-')
-                  .replace(/^-+|-+$/g, '')
-                  .toLowerCase()}'`
-              );
-            },
-          });
-        }
-      }
-
-      // Process meta properties
-      const metaProperty = ruleOptions.properties.find(
-        (prop: TSESTree.ObjectLiteralElement): boolean => {
-          return (
-            prop.type === 'Property' && prop.key.type === 'Identifier' && prop.key.name === 'meta'
-          );
-        }
-      );
-
-      if (
-        typeof metaProperty !== 'undefined' &&
-        'value' in metaProperty &&
-        metaProperty.value.type === 'ObjectExpression'
-      ) {
-        // Check for hasSuggestions
-        const hasSuggestionsProp = metaProperty.value.properties.find(
-          (prop: TSESTree.ObjectLiteralElement): boolean => {
-            return (
-              prop.type === 'Property' &&
-              prop.key.type === 'Identifier' &&
-              prop.key.name === 'hasSuggestions'
-            );
-          }
-        );
-
-        if (hasSuggestionsProp) {
-          // Track if the rule has suggestions enabled
-          hasSuggestions =
-            'value' in hasSuggestionsProp &&
-            hasSuggestionsProp.value.type === 'Literal' &&
-            hasSuggestionsProp.value.value === true;
-
-          // Ensure hasSuggestions is a boolean
-          if (
-            'value' in hasSuggestionsProp &&
-            (hasSuggestionsProp.value.type !== 'Literal' ||
-              typeof hasSuggestionsProp.value.value !== 'boolean')
-          ) {
-            context.report({
-              node: hasSuggestionsProp.value,
-              messageId: 'inconsistentHasSuggestions',
-              fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-                return fixer.replaceText(hasSuggestionsProp.value, 'true');
-              },
-            });
-            // Update hasSuggestions after fixing
-            hasSuggestions = true;
-          }
-
-          // If the rule has suggestions, ensure it has a proper URL in the docs
-          if (hasSuggestions) {
-            const metaProperty = ruleOptions.properties.find(
-              (prop: TSESTree.ObjectLiteralElement): boolean => {
-                return (
-                  prop.type === 'Property' &&
-                  prop.key.type === 'Identifier' &&
-                  prop.key.name === 'meta'
-                );
-              }
-            );
-
-            if (
-              typeof metaProperty !== 'undefined' &&
-              'value' in metaProperty &&
-              metaProperty.value.type === 'ObjectExpression'
-            ) {
-              const docsProp = metaProperty.value.properties.find(
-                (prop: TSESTree.ObjectLiteralElement): boolean => {
-                  return (
-                    prop.type === 'Property' &&
-                    prop.key.type === 'Identifier' &&
-                    prop.key.name === 'docs'
-                  );
-                }
-              );
-
-              if (
-                typeof docsProp !== 'undefined' &&
-                'value' in docsProp &&
-                docsProp.value.type === 'ObjectExpression'
-              ) {
-                if (
-                  !docsProp.value.properties.find(
-                    (prop: TSESTree.ObjectLiteralElement): boolean => {
-                      return (
-                        prop.type === 'Property' &&
-                        prop.key.type === 'Identifier' &&
-                        prop.key.name === 'url'
-                      );
-                    }
-                  )
-                ) {
-                  context.report({
-                    node: docsProp,
-                    messageId: 'missingDocsUrl',
-                    data: { ruleName: currentRuleName || 'unknown' },
-                  });
-                }
-              }
-            }
-          }
-        }
-
-        // Check for fixable property
-        const fixableProp = metaProperty.value.properties.find(
-          (prop: TSESTree.ObjectLiteralElement): boolean => {
-            return (
-              prop.type === 'Property' &&
-              prop.key.type === 'Identifier' &&
-              prop.key.name === 'fixable'
-            );
-          }
-        );
-
-        if (fixableProp) {
-          // Ensure fixable is 'code' or 'whitespace'
-          if (
-            'value' in fixableProp &&
-            fixableProp.value.type === 'Literal' &&
-            fixableProp.value.value !== 'code' &&
-            fixableProp.value.value !== 'whitespace'
-          ) {
-            context.report({
-              node: fixableProp.value,
-              messageId: 'invalidFixableValue',
-              fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-                return fixer.replaceText(fixableProp.value, "'code'");
-              },
-            });
-          }
-        }
-
-        // Check for docs object
-        const docsProp = metaProperty.value.properties.find(
-          (prop: TSESTree.ObjectLiteralElement): boolean => {
-            return (
-              prop.type === 'Property' && prop.key.type === 'Identifier' && prop.key.name === 'docs'
-            );
-          }
-        );
-
-        if (
-          typeof docsProp !== 'undefined' &&
-          'value' in docsProp &&
-          docsProp.value.type === 'ObjectExpression'
-        ) {
-          // Check for recommended property (should not be present)
-          const recommendedProp = docsProp.value.properties.find(
-            (prop: TSESTree.ObjectLiteralElement): boolean => {
-              return (
-                prop.type === 'Property' &&
-                prop.key.type === 'Identifier' &&
-                prop.key.name === 'recommended'
-              );
-            }
-          );
-
-          if (typeof recommendedProp !== 'undefined') {
-            context.report({
-              node: recommendedProp,
-              messageId: 'invalidRecommendedProperty',
-              fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-                return fixer.remove(recommendedProp);
-              },
-            });
-          }
-
-          // Check for URL
-          const urlProp = docsProp.value.properties.find(
-            (prop: TSESTree.ObjectLiteralElement): boolean => {
-              return (
-                prop.type === 'Property' &&
-                prop.key.type === 'Identifier' &&
-                prop.key.name === 'url'
-              );
-            }
-          );
-
-          if (!urlProp && option.requireDocumentationUrl) {
-            context.report({
-              node: docsProp,
-              messageId: 'missingDocsUrl',
-            });
-          }
-        }
-
-        // Check for messages object
-        const messagesProp = metaProperty.value.properties.find(
-          (prop: TSESTree.ObjectLiteralElement): boolean => {
-            return (
-              prop.type === 'Property' &&
-              prop.key.type === 'Identifier' &&
-              prop.key.name === 'messages'
-            );
-          }
-        );
-
-        if (
-          typeof messagesProp !== 'undefined' &&
-          'value' in messagesProp &&
-          messagesProp.value.type === 'ObjectExpression'
-        ) {
-          // Validate all message IDs
-          messagesProp.value.properties.forEach((prop: TSESTree.ObjectLiteralElement): void => {
-            if (
-              prop.type === 'Property' &&
-              prop.key.type === 'Literal' &&
-              typeof prop.key.value === 'string'
-            ) {
-              validateMessageId(prop.key.value, prop.key, context);
-            }
-          });
-        }
-      }
-    }
+    trackOperation(perfKey, PerformanceOperations.ruleInit);
 
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          stopTracking(perfKey);
+
           return;
         }
 
         perf.trackNode(node);
 
-        if (
-          node.type === 'CallExpression' ||
-          node.type === 'MemberExpression' ||
-          node.type === 'Identifier'
-        ) {
-          trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-        }
+        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
       },
 
       // Track rule definitions
@@ -648,7 +378,289 @@ export const consistentRuleStructureRule = createRule<Options, MessageIds>({
           node.callee.type === 'Identifier' &&
           node.callee.name === 'createRule'
         ) {
-          processRuleDefinition(node);
+          if (inRuleDefinition) {
+            // We're already processing a rule, so this is a nested rule which we don't support
+            return;
+          }
+
+          inRuleDefinition = true;
+          currentRuleNode = node;
+
+          // Reset rule-specific state
+          hasSuggestions = false;
+
+          // Process the rule's options and metadata
+          if (
+            !(
+              node.type === 'CallExpression' &&
+              node.arguments.length > 0 &&
+              node.arguments[0].type === 'ObjectExpression'
+            )
+          ) {
+            return;
+          }
+
+          const ruleOptions = node.arguments[0];
+
+          // Check for name property
+          const nameProperty = ruleOptions.properties.find(
+            (prop: TSESTree.ObjectLiteralElement): boolean => {
+              return (
+                prop.type === 'Property' &&
+                prop.key.type === 'Identifier' &&
+                prop.key.name === 'name'
+              );
+            }
+          );
+
+          if (
+            nameProperty &&
+            'value' in nameProperty &&
+            nameProperty.value.type === 'Literal' &&
+            typeof nameProperty.value.value === 'string'
+          ) {
+            currentRuleName = nameProperty.value.value;
+
+            // Ensure the rule name follows the correct naming convention
+            if (
+              context.options[0].enforceNamingConvention &&
+              !/^[a-z][a-zA-Z0-9]*$/.test(currentRuleName)
+            ) {
+              context.report({
+                node: nameProperty.value,
+                messageId: 'inconsistentNaming',
+                data: { name: currentRuleName },
+                fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+                  return fixer.replaceText(
+                    nameProperty.value,
+                    `'${currentRuleName
+                      ?.replace(/[^a-zA-Z0-9]+/g, '-')
+                      .replace(/^-+|-+$/g, '')
+                      .toLowerCase()}'`
+                  );
+                },
+              });
+            }
+          }
+
+          // Process meta properties
+          const metaProperty = ruleOptions.properties.find(
+            (prop: TSESTree.ObjectLiteralElement): boolean => {
+              return (
+                prop.type === 'Property' &&
+                prop.key.type === 'Identifier' &&
+                prop.key.name === 'meta'
+              );
+            }
+          );
+
+          if (
+            typeof metaProperty !== 'undefined' &&
+            'value' in metaProperty &&
+            metaProperty.value.type === 'ObjectExpression'
+          ) {
+            // Check for hasSuggestions
+            const hasSuggestionsProp = metaProperty.value.properties.find(
+              (prop: TSESTree.ObjectLiteralElement): boolean => {
+                return (
+                  prop.type === 'Property' &&
+                  prop.key.type === 'Identifier' &&
+                  prop.key.name === 'hasSuggestions'
+                );
+              }
+            );
+
+            if (hasSuggestionsProp) {
+              // Track if the rule has suggestions enabled
+              hasSuggestions =
+                'value' in hasSuggestionsProp &&
+                hasSuggestionsProp.value.type === 'Literal' &&
+                hasSuggestionsProp.value.value === true;
+
+              // Ensure hasSuggestions is a boolean
+              if (
+                'value' in hasSuggestionsProp &&
+                (hasSuggestionsProp.value.type !== 'Literal' ||
+                  typeof hasSuggestionsProp.value.value !== 'boolean')
+              ) {
+                context.report({
+                  node: hasSuggestionsProp.value,
+                  messageId: 'inconsistentHasSuggestions',
+                  fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+                    return fixer.replaceText(hasSuggestionsProp.value, 'true');
+                  },
+                });
+                // Update hasSuggestions after fixing
+                hasSuggestions = true;
+              }
+
+              // If the rule has suggestions, ensure it has a proper URL in the docs
+              if (hasSuggestions) {
+                const metaProperty = ruleOptions.properties.find(
+                  (prop: TSESTree.ObjectLiteralElement): boolean => {
+                    return (
+                      prop.type === 'Property' &&
+                      prop.key.type === 'Identifier' &&
+                      prop.key.name === 'meta'
+                    );
+                  }
+                );
+
+                if (
+                  typeof metaProperty !== 'undefined' &&
+                  'value' in metaProperty &&
+                  metaProperty.value.type === 'ObjectExpression'
+                ) {
+                  const docsProp = metaProperty.value.properties.find(
+                    (prop: TSESTree.ObjectLiteralElement): boolean => {
+                      return (
+                        prop.type === 'Property' &&
+                        prop.key.type === 'Identifier' &&
+                        prop.key.name === 'docs'
+                      );
+                    }
+                  );
+
+                  if (
+                    typeof docsProp !== 'undefined' &&
+                    'value' in docsProp &&
+                    docsProp.value.type === 'ObjectExpression'
+                  ) {
+                    if (
+                      !docsProp.value.properties.find(
+                        (prop: TSESTree.ObjectLiteralElement): boolean => {
+                          return (
+                            prop.type === 'Property' &&
+                            prop.key.type === 'Identifier' &&
+                            prop.key.name === 'url'
+                          );
+                        }
+                      )
+                    ) {
+                      context.report({
+                        node: docsProp,
+                        messageId: 'missingDocsUrl',
+                        data: { ruleName: currentRuleName || 'unknown' },
+                      });
+                    }
+                  }
+                }
+              }
+            }
+
+            // Check for fixable property
+            const fixableProp = metaProperty.value.properties.find(
+              (prop: TSESTree.ObjectLiteralElement): boolean => {
+                return (
+                  prop.type === 'Property' &&
+                  prop.key.type === 'Identifier' &&
+                  prop.key.name === 'fixable'
+                );
+              }
+            );
+
+            if (fixableProp) {
+              // Ensure fixable is 'code' or 'whitespace'
+              if (
+                'value' in fixableProp &&
+                fixableProp.value.type === 'Literal' &&
+                fixableProp.value.value !== 'code' &&
+                fixableProp.value.value !== 'whitespace'
+              ) {
+                context.report({
+                  node: fixableProp.value,
+                  messageId: 'invalidFixableValue',
+                  fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+                    return fixer.replaceText(fixableProp.value, "'code'");
+                  },
+                });
+              }
+            }
+
+            // Check for docs object
+            const docsProp = metaProperty.value.properties.find(
+              (prop: TSESTree.ObjectLiteralElement): boolean => {
+                return (
+                  prop.type === 'Property' &&
+                  prop.key.type === 'Identifier' &&
+                  prop.key.name === 'docs'
+                );
+              }
+            );
+
+            if (
+              typeof docsProp !== 'undefined' &&
+              'value' in docsProp &&
+              docsProp.value.type === 'ObjectExpression'
+            ) {
+              // Check for recommended property (should not be present)
+              const recommendedProp = docsProp.value.properties.find(
+                (prop: TSESTree.ObjectLiteralElement): boolean => {
+                  return (
+                    prop.type === 'Property' &&
+                    prop.key.type === 'Identifier' &&
+                    prop.key.name === 'recommended'
+                  );
+                }
+              );
+
+              if (typeof recommendedProp !== 'undefined') {
+                context.report({
+                  node: recommendedProp,
+                  messageId: 'invalidRecommendedProperty',
+                  fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+                    return fixer.remove(recommendedProp);
+                  },
+                });
+              }
+
+              // Check for URL
+              const urlProp = docsProp.value.properties.find(
+                (prop: TSESTree.ObjectLiteralElement): boolean => {
+                  return (
+                    prop.type === 'Property' &&
+                    prop.key.type === 'Identifier' &&
+                    prop.key.name === 'url'
+                  );
+                }
+              );
+
+              if (typeof urlProp !== 'undefined' && context.options[0].requireDocumentationUrl) {
+                context.report({
+                  node: docsProp,
+                  messageId: 'missingDocsUrl',
+                });
+              }
+            }
+
+            // Check for messages object
+            const messagesProp = metaProperty.value.properties.find(
+              (prop: TSESTree.ObjectLiteralElement): boolean => {
+                return (
+                  prop.type === 'Property' &&
+                  prop.key.type === 'Identifier' &&
+                  prop.key.name === 'messages'
+                );
+              }
+            );
+
+            if (
+              typeof messagesProp !== 'undefined' &&
+              'value' in messagesProp &&
+              messagesProp.value.type === 'ObjectExpression'
+            ) {
+              // Validate all message IDs
+              messagesProp.value.properties.forEach((prop: TSESTree.ObjectLiteralElement): void => {
+                if (
+                  prop.type === 'Property' &&
+                  prop.key.type === 'Literal' &&
+                  typeof prop.key.value === 'string'
+                ) {
+                  validateMessageId(prop.key.value, prop.key, context);
+                }
+              });
+            }
+          }
         }
       },
       'CallExpression:exit'(node: TSESTree.CallExpression): void {
