@@ -1,26 +1,27 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
-    "module": "preserve",
+    "lib": ["ES2024", "DOM"],
+    "target": "ES2024",
+    "module": "ESNext",
     "moduleResolution": "bundler",
-    "rootDir": "src",
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
     "sourceMap": true,
     "noEmit": true,
     "strict": true,
-    "noImplicitAny": true,
-    "strictNullChecks": true,
-    "strictFunctionTypes": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUncheckedIndexedAccess": false,
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
+    "noImplicitAny": true,
+    "esModuleInterop": true,
     "isolatedModules": true,
-    "types": ["node", "eslint", "@typescript-eslint/utils"]
+    "strictNullChecks": true,
+    "resolveJsonModule": true,
+    "noImplicitReturns": true,
+    "strictFunctionTypes": true,
+    "noUncheckedIndexedAccess": false,
+    "noFallthroughCasesInSwitch": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node"]
   },
-  "include": ["src/**/*", "dist/**/*"],
-  "exclude": ["node_modules", "dist", "tests", "**/*.test.ts", "**/*.test.tsx"]
+  "exclude": ["node_modules"]
 }

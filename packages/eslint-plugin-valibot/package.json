@@ -1,0 +1,47 @@
+{
+  "name": "@ospm/eslint-plugin-valibot",
+  "version": "0.1.0",
+  "description": "ESLint plugin for Valibot with automatic schema conversion",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "docs"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint . --ext .ts"
+  },
+  "keywords": [
+    "eslint",
+    "eslintplugin",
+    "valibot",
+    "schema",
+    "validation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@biomejs/biome": "2.1.2",
+    "eslint": "^9.31.0",
+    "@types/eslint": "^9.6.1",
+    "@types/node": "^24.1.0",
+    "@typescript-eslint/utils": "^8.38.0",
+    "@typescript-eslint/eslint-plugin": "^8.38.0",
+    "@typescript-eslint/parser": "^8.38.0",
+    "typescript": "^5.8.3"
+  },
+  "peerDependencies": {
+    "valibot": "^1.0.0",
+    "eslint": "^8.57.1 || ^9.31.0",
+    "typescript": "^5.8.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/tree/main/packages/eslint-plugin-valibot"
+  },
+  "bugs": {
+    "url": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/issues"
+  },
+  "homepage": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/tree/main/packages/eslint-plugin-valibot#readme"
+}

@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2024", "DOM"],
+    "target": "ES2024",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "rootDir": "src",
+    "jsx": "react-jsx",
+    "types": ["node", "eslint", "@typescript-eslint/utils"]
+  },
+  "include": ["tests", "**/*.test.ts", "**/*.test.tsx"],
+  "exclude": ["node_modules", "src", "dist", "src/**/*", "dist/**/*"]
+}
