@@ -6,40 +6,42 @@ A comprehensive ESLint plugin for React applications using `@preact/signals-reac
 
 ### 🎯 **Signal Validation**
 
-- 9+ specialized rules for React signals
-- Partial replacement for `eslint-plugin-react-hooks`
-- Replaces `react-hooks/exhaustive-deps` with `react-signals-hooks/exhaustive-deps`
+- 19 specialized rules for React signals
+- Complete replacement for `eslint-plugin-react-hooks/exhaustive-deps` rule
+- Enhanced `exhaustive-deps` with signal awareness
 
-### 📦 **Validation Library Support**
+### 🚀 **Performance Optimization**
 
-- **Zod**: TypeScript-first schema validation
-- **Joi**: Powerful schema description language
-- **Valibot**: Lightweight, modular validation
-- **ArkType**: TypeScript's 1:1 validator
-
-### 🔄 **Automatic Migrations**
-
-- Convert between different validation libraries
-- Automatic import management
-- Consistent code style across validation schemas
+- Automatic batching of signal updates
+- Optimized dependency tracking
+- Efficient signal access patterns
+- Minimal runtime overhead
 
 ## Rules Overview
 
-This plugin provides 9 specialized ESLint rules for React signals:
+This plugin provides 19 specialized ESLint rules for React signals:
 
 | Rule | Purpose | Autofix | Severity |
 |------|---------|---------|----------|
-| `exhaustive-deps` | Enhanced dependency detection for React hooks with signals | ✅ | Error |
+| `exhaustive-deps` | Enhanced dependency detection for React hooks with @preact/signals-react support | ✅ | Error |
 | `require-use-signals` | Enforces `useSignals()` hook in components using signals | ✅ | Error |
-| `no-mutation-in-render` | Prevents signal mutations during render phase | ❌ | Error |
-| `prefer-signal-in-jsx` | Prefers direct signal usage over `.value` in JSX | ✅ | Warning |
-| `prefer-show-over-ternary` | Suggests Show component for complex ternary expressions | ✅ | Warning |
-| `prefer-for-over-map` | Suggests For component over `.map()` for signal arrays | ✅ | Warning |
-| `prefer-signal-effect` | Prefers `effect()` over `useEffect` for signal-only deps | ✅ | Warning |
-| `prefer-computed` | Prefers `computed()` over `useMemo` for signal-derived values | ✅ | Warning |
-| `signal-variable-name` | Enforces naming conventions for signal variables | ✅ | Error |
-| `no-non-signal-with-signal-suffix` | Ensures variables with 'Signal' suffix are actual signal instances | ✅ | Warning |
-| `prefer-use-signal-over-use-state` | Suggests `useSignal` over `useState` for primitive values | ✅ | Warning |
+| `no-mutation-in-render` | Prevents signal mutations during render phase | ✅ | Error |
+| `no-signal-creation-in-component` | Prevents signal creation in render | ✅ | Error |
+| `no-signal-assignment-in-effect` | Prevents signal assignments in effects without deps | ✅ | Error |
+| `no-non-signal-with-signal-suffix` | Ensures variables with 'Signal' suffix are signals | ✅ | Warning |
+| `prefer-batch-for-multi-mutations` | Suggests batching multiple signal mutations | ✅ | Warning |
+| `prefer-batch-updates` | Prefers batched updates for multiple signal changes | ✅ | Warning |
+| `prefer-computed` | Suggests `computed()` over `useMemo` | ✅ | Warning |
+| `prefer-for-over-map` | Suggests For component over `.map()` | ✅ | Warning |
+| `prefer-show-over-ternary` | Suggests Show component for ternaries | ✅ | Warning |
+| `prefer-signal-effect` | Prefers `effect()` over `useEffect` | ✅ | Warning |
+| `prefer-signal-in-jsx` | Prefers direct signal usage in JSX | ✅ | Warning |
+| `prefer-signal-methods` | Enforces signal methods over properties | ✅ | Warning |
+| `prefer-signal-reads` | Optimizes signal access patterns | ✅ | Warning |
+| `prefer-use-signal-over-use-state` | Suggests `useSignal` over `useState` | ✅ | Warning |
+| `restrict-signal-locations` | Controls where signals can be created | ✅ | Error |
+| `signal-variable-name` | Enforces signal naming conventions | ✅ | Error |
+| `warn-on-unnecessary-untracked` | Warns about unnecessary `untracked()` usage | ✅ | Warning |
 
 ## Key Features
 
@@ -66,32 +68,17 @@ This plugin provides 9 specialized ESLint rules for React signals:
 
 ## Installation
 
-### Core Package
+### Installation
 
 ```bash
+# npm
 npm install --save-dev @ospm/eslint-plugin-react-signals-hooks @preact/signals-react
-```
 
-### Validation Library Plugins
+# yarn
+yarn add --dev @ospm/eslint-plugin-react-signals-hooks @preact/signals-react
 
-```bash
-# Install the validation libraries you need
-npm install zod joi valibot arktype
-
-# Install corresponding ESLint plugins
-npm install --save-dev @ospm/eslint-config-validation-schemas \
-  @ospm/eslint-plugin-valibot \
-  @ospm/eslint-plugin-zod \
-  @ospm/eslint-plugin-arktype
-npm install --save-dev @ospm/eslint-plugin-react-signals-hooks
-```
-
-```bash
-yarn add --dev @ospm/eslint-plugin-react-signals-hooks
-```
-
-```bash
-pnpm install --save-dev @ospm/eslint-plugin-react-signals-hooks
+# pnpm
+pnpm add -D @ospm/eslint-plugin-react-signals-hooks @preact/signals-react
 ```
 
 you have to turn off `react-hooks/exhaustive-deps` rule in your eslint config if you use this plugin.
@@ -209,29 +196,7 @@ function Component() {
 }
 ```
 
-### 3. `signal-variable-name` - Naming Conventions
-
-Enforces consistent naming for signal and computed variables.
-
-**Rules:**
-
-- Must end with 'Signal'
-- Must start with lowercase
-- Must not start with 'use'
-
-```tsx
-// ❌ Incorrect naming
-const counter = signal(0);
-const useDataSignal = signal('');
-const CounterSignal = signal(0);
-
-// ✅ Correct naming (autofixed)
-const counterSignal = signal(0);
-const dataSignal = signal('');
-const counterSignal = signal(0);
-```
-
-### 4. `no-mutation-in-render` - Prevent Render Mutations
+### 3. `no-mutation-in-render` - Prevent Render Mutations
 
 Prevents signal mutations during component render phase.
 
@@ -251,47 +216,107 @@ function Component() {
 }
 ```
 
-### 5. `prefer-signal-in-jsx` - Direct Signal Usage
+### 4. `no-signal-creation-in-component` - Prevent Signal Creation in Render
 
-Prefers direct signal usage over `.value` in JSX for better reactivity.
-
-**Exclusions:** Property access, array indexing, method calls, className usage
+Prevents signal creation inside component render functions.
 
 ```tsx
-// ❌ Using .value in JSX
-<div>{messageSignal.value}</div>
+// ❌ Signal creation in render
+function Component() {
+  const countSignal = signal(0); // Error: signal created in render
+  return <div>{countSignal.value}</div>;
+}
 
-// ✅ Direct signal usage (autofixed)
-<div>{messageSignal}</div>
-
-// ✅ Property access (not flagged)
-<div>{userSignal.value.name}</div>
-<div className={themeSignal.value}>Content</div>
+// ✅ Signal created at module level or in hooks
+const countSignal = signal(0);
+function Component() {
+  return <div>{countSignal.value}</div>;
+}
 ```
 
-### 6. `prefer-show-over-ternary` - Show Component
+### 5. `no-signal-assignment-in-effect` - Safe Effect Dependencies
 
-Suggests using Show component for complex conditional rendering with signals. This rule only runs in `.jsx` and `.tsx` files.
+Prevents signal assignments in effects without proper dependency tracking.
 
 ```tsx
-// ❌ Complex ternary with signal
-{visibleSignal.value ? (
-  <div>
-    <h1>Title</h1>
-    <p>Complex content</p>
-  </div>
-) : null}
+// ❌ Unsafe signal assignment in effect
+useEffect(() => {
+  countSignal.value = 42; // Missing dependency
+}, []);
 
-// ✅ Using Show component (autofixed)
-<Show when={visibleSignal.value}>
-  <div>
-    <h1>Title</h1>
-    <p>Complex content</p>
-  </div>
-</Show>
+// ✅ With proper dependency
+useEffect(() => {
+  countSignal.value = 42;
+}, [someDependency]);
 ```
 
-### 7. `prefer-for-over-map` - For Component
+### 6. `no-non-signal-with-signal-suffix` - Consistent Naming
+
+Ensures variables with 'Signal' suffix are actual signal instances.
+
+```tsx
+// ❌ Incorrect usage of Signal suffix
+const dataSignal = { value: 42 }; // Not a real signal
+
+// ✅ Correct usage
+const dataSignal = signal(42);
+```
+
+### 7. `prefer-batch-for-multi-mutations` - Batch Updates
+
+Suggests batching multiple signal mutations for better performance.
+
+```tsx
+// ❌ Multiple unbatched updates
+function update() {
+  aSignal.value++;
+  bSignal.value++;
+  cSignal.value++;
+}
+
+// ✅ Batched updates (autofixed)
+function update() {
+  batch(() => {
+    aSignal.value++;
+    bSignal.value++;
+    cSignal.value++;
+  });
+}
+```
+
+### 8. `prefer-batch-updates` - Batch Signal Updates
+
+Encourages batching multiple signal updates.
+
+```tsx
+// ❌ Separate updates
+function handleClick() {
+  setA(a + 1);
+  setB(b + 1);
+}
+
+// ✅ Batched updates (autofixed)
+function handleClick() {
+  batch(() => {
+    setA(a + 1);
+    setB(b + 1);
+  });
+}
+```
+
+### 9. `prefer-computed` - Computed Values
+
+Prefers `computed()` over `useMemo` for signal-derived values.
+
+```tsx
+// ❌ useMemo with only signal dependencies
+const doubled = useMemo(() => countSignal.value * 2, [countSignal.value]);
+
+// ✅ Using computed() (autofixed)
+const doubled = computed(() => countSignal.value * 2);
+```
+
+### 10. `prefer-for-over-map` - For Component
 
 Suggests using For component over `.map()` for better performance with signal arrays.
 
@@ -305,7 +330,23 @@ Suggests using For component over `.map()` for better performance with signal ar
 </For>
 ```
 
-### 8. `prefer-signal-effect` - Signal Effects
+### 11. `prefer-show-over-ternary` - Show Component
+
+Suggests using Show component for conditional rendering with signals.
+
+```tsx
+// ❌ Complex ternary with signal
+{visibleSignal.value ? (
+  <div>Content</div>
+) : null}
+
+// ✅ Using Show component (autofixed)
+<Show when={visibleSignal.value}>
+  <div>Content</div>
+</Show>
+```
+
+### 12. `prefer-signal-effect` - Signal Effects
 
 Prefers `effect()` over `useEffect` when dependencies are only signals.
 
@@ -321,16 +362,108 @@ effect(() => {
 });
 ```
 
-### 9. `prefer-computed` - Computed Values
+### 13. `prefer-signal-in-jsx` - Direct Signal Usage
 
-Prefers `computed()` over `useMemo` for signal-derived values.
+Prefers direct signal usage over `.value` in JSX.
 
 ```tsx
-// ❌ useMemo with only signal dependencies
-const doubled = useMemo(() => countSignal.value * 2, [countSignal.value]);
+// ❌ Using .value in JSX
+<div>{messageSignal.value}</div>
 
-// ✅ Using computed() (autofixed)
-const doubled = computed(() => countSignal.value * 2);
+// ✅ Direct signal usage (autofixed)
+<div>{messageSignal}</div>
+```
+
+### 14. `prefer-signal-methods` - Signal Methods
+
+Encourages using signal methods over direct property access.
+
+```tsx
+// ❌ Direct property access
+const value = signal(0);
+value.value = 1;
+
+// ✅ Using methods (autofixed)
+const value = signal(0);
+value.set(1);
+```
+
+### 15. `prefer-signal-reads` - Optimized Signal Reading
+
+Optimizes signal access patterns for better performance.
+
+```tsx
+// ❌ Multiple signal reads
+function double() {
+  return countSignal.value * 2;
+}
+
+// ✅ Single read (autofixed)
+function double() {
+  const count = countSignal.value;
+  return count * 2;
+}
+```
+
+### 16. `prefer-use-signal-over-use-state` - Signal State
+
+Suggests `useSignal` over `useState` for primitive values.
+
+```tsx
+// ❌ Using useState for primitive
+const [count, setCount] = useState(0);
+
+// ✅ Using useSignal (autofixed)
+const countSignal = useSignal(0);
+```
+
+### 17. `restrict-signal-locations` - Signal Scope Control
+
+Controls where signals can be created in the codebase.
+
+**Options:**
+
+- `allowedPaths`: Array of glob patterns where signals can be created
+- `disallowedPaths`: Array of glob patterns where signals cannot be created
+
+```tsx
+// ❌ Signal creation in disallowed location
+function Component() {
+  const signal = createSignal(0); // Error: Signal creation not allowed here
+  return <div>{signal.value}</div>;
+}
+```
+
+### 18. `signal-variable-name` - Naming Conventions
+
+Enforces consistent naming for signal variables.
+
+**Rules:**
+
+- Must end with 'Signal'
+- Must start with lowercase
+- Must not start with 'use'
+
+```tsx
+// ❌ Incorrect naming
+const counter = signal(0);
+const useDataSignal = signal('');
+
+// ✅ Correct naming (autofixed)
+const counterSignal = signal(0);
+const dataSignal = signal('');
+```
+
+### 19. `warn-on-unnecessary-untracked` - Optimize Untracked Usage
+
+Warns about unnecessary `untracked()` usage.
+
+```tsx
+// ❌ Unnecessary untracked
+const value = untracked(() => countSignal.value);
+
+// ✅ Direct access is sufficient
+const value = countSignal.value;
 ```
 
 ## Usage Examples
@@ -389,23 +522,6 @@ const callback = useCallback(() => {
   ref.current?.focus();
 }, [ref]); // useRef values should not be dependencies
 ```
-
-## Error Messages and Autofix
-
-The plugin provides clear, actionable error messages with autofix indicators:
-
-```text
-✖ React Hook useMemo has a missing dependency: 'counterSignal.value' [AUTOFIXABLE]
-✖ Signal variable 'counter' should end with 'Signal' [AUTOFIXABLE]
-✖ Consider using Show component for complex conditional rendering [AUTOFIXABLE]
-✖ Signal mutation detected during render phase [NO AUTOFIX]
-```
-
-### Autofix Indicators
-
-- **`[AUTOFIXABLE]`**: Error can be automatically fixed with `--fix` option
-- **`[SUGGESTIONS AVAILABLE]`**: Error has suggested fixes available in your IDE
-- **`[NO AUTOFIX]`**: Error requires manual intervention
 
 ## Advanced Patterns
 

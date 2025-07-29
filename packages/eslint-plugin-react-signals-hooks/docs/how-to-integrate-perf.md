@@ -12,12 +12,9 @@ This guide explains how to integrate the performance tracking utility into your 
 At the top of your rule file, import the necessary performance tracking functions and types:
 
 ```typescript
-import {
-  startTracking,
-  type PerformanceBudget,
-  createPerformanceTracker,
-} from './utils/performance.js';
+import { createPerformanceTracker } from './utils/performance.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
+import type { PerformanceBudget } from './utils/types.js';
 ```
 
 ## Step 2: Add Performance Budget to Rule Options
@@ -29,24 +26,36 @@ interface Options {
   // Your existing options...
   performance?: PerformanceBudget | undefined;
 }
+
+// Example with React component options
+interface Options {
+  // Your existing options...
+  performance?: PerformanceBudget;
+}
 ```
 
 ## Step 3: Configure Default Options
 
-In your rule's `defaultOptions`, include default performance settings:
+In your rule's `defaultOptions`, include default performance settings. The performance tracker comes with sensible defaults, but you can override them as needed:
 
 ```typescript
+import { DEFAULT_PERFORMANCE_BUDGET } from './utils/performance.js';
+
 defaultOptions: [
   {
     // Your existing defaults...
     performance: {
-      maxTime: 40, // ms
-      maxNodes: 1000,
-      maxMemory: 40 * 1024 * 1024, // 40MB
-      enableMetrics: false,
-      logMetrics: false,
+      // All these are optional and will use defaults if not specified
+      maxTime: 50, // ms
+      maxNodes: 2000,
+      maxMemory: 50 * 1024 * 1024, // 50MB
+      enableMetrics: false, // Set to true to collect detailed metrics
+      logMetrics: false, // Set to true to log metrics to console
       maxOperations: {
-        [PerformanceOperations.signalAccess]: 500,
+        // Override specific operation limits
+        [PerformanceOperations.signalAccess]: 1000,
+        [PerformanceOperations.signalCheck]: 500,
+        [PerformanceOperations.effectCheck]: 500,
         // Add other operation limits as needed
       },
     },
@@ -56,103 +65,146 @@ defaultOptions: [
 
 ## Step 4: Initialize Performance Tracking
 
-In your rule's `create` function, set up the performance tracker:
+In your rule's `create` function, set up the performance tracker. The `createPerformanceTracker` function handles all the initialization automatically:
 
 ```typescript
 create(context, [options = {}]) {
-  // Set up performance tracking
-  const perf = createPerformanceTracker<Options>(
-   perfKey,
-   option.performance,
-   context,
+  // Set up performance tracking with a unique key for this rule
+  const perfKey = 'your-rule-name';
+  
+  // Create the performance tracker
+  const perf = createPerformanceTracker(
+    perfKey, // Unique identifier for this rule
+    options.performance, // Optional performance budget overrides
+    context // ESLint rule context
   );
 
-  // Enable detailed metrics if configured
-  if (options.performance.enableMetrics) {
-    startTracking<Options>(
-      'your-rule-name',
-      option.performance,
-      context, 
-    );
-  }
-
   // Your rule implementation...
+  // Return your visitor methods here
+  
+  return {
+    // Your visitor methods
+  };
 }
 ```
 
-## Step 5: Track Operations
+## Step 5: Track Operations and Handle Cleanup
 
-Use the `perf` object to track operations in your rule's visitor methods:
+Use the `perf` object to track operations in your rule's visitor methods. The performance tracker provides several methods for monitoring rule execution:
 
 ```typescript
 return {
   // Track node processing
   'Identifier'(node) {
-    perf.trackNode();
+    // Track that we've processed a node (increments node count)
+    perf.trackNode(node);
     
     // Your rule logic...
     
-    // Track specific operations
-    perf.trackOperation(PerformanceOperations.signalAccess, 'signal-access', 1);
+    // Track specific operations with optional weight
+    perf.trackOperation(PerformanceOperations.signalAccess, 1);
+    
+    // You can also track custom metrics
+    perf.recordMetric('customMetric', 42);
   },
   
   // Track program exit for cleanup and reporting
-  'Program:exit'(node: TSESTree.Node): void {
-    if (!perf) {
-      throw new Error('Performance tracker not initialized');
-    }
-
-    startPhase(perfKey, 'programExit');
-
-    perf.trackNode(node);
-
-    try {
-      startPhase(perfKey, 'recordMetrics');
-
-      const finalMetrics = stopTracking(perfKey);
-
-      if (finalMetrics) {
-        const { exceededBudget, nodeCount, duration } = finalMetrics;
-        const status = exceededBudget ? 'EXCEEDED' : 'OK';
-
-        console.info(`\n[prefer-batch-updates] Performance Metrics (${status}):`);
-        console.info(`  File: ${context.filename}`);
-        console.info(`  Duration: ${duration?.toFixed(2)}ms`);
-        console.info(`  Nodes Processed: ${nodeCount}`);
-
-        if (exceededBudget) {
-          console.warn('\n⚠️  Performance budget exceeded!');
-        }
-      }
-    } catch (error: unknown) {
-      console.error('Error recording metrics:', error);
-    } finally {
-      endPhase(perfKey, 'recordMetrics');
-
-      stopTracking(perfKey);
-    }
-
+  'Program:exit'(node) {
+    // The performance tracker handles all cleanup automatically
+    // Just call the Program:exit handler
     perf['Program:exit']();
-
-    endPhase(perfKey, 'programExit');
+    
+    // If you need to access metrics for reporting:
+    if (options.performance?.enableMetrics) {
+      const metrics = perf.getMetrics();
+      console.log(`Processed ${metrics.nodeCount} nodes in ${metrics.duration}ms`);
+    }
   },
 };
 ```
 
+### Performance Tracking Methods
+
+- `trackNode(node: TSESTree.Node)`: Call this for each node your rule processes
+- `trackOperation(operation: string, count: number = 1)`: Track specific operations with an optional count
+- `recordMetric<T>(name: string, value: T)`: Record custom metrics
+- `startPhase(phaseName: string)`: Start a new performance phase
+- `endPhase(phaseName: string)`: End a performance phase
+- `getMetrics()`: Get current metrics (only available if metrics are enabled)
+
 ## Step 6: Handle Performance Budgets
 
-The performance tracker will automatically enforce the configured limits. If a limit is exceeded, it will throw a `PerformanceLimitExceededError`.
+The performance tracker automatically enforces the configured limits. If a limit is exceeded, it will throw a `PerformanceLimitExceededError` with details about which limit was exceeded.
+
+```typescript
+try {
+  // Your rule implementation
+} catch (error) {
+  if (error instanceof PerformanceLimitExceededError) {
+    // Handle performance limit exceeded
+    context.report({
+      node,
+      messageId: 'performanceLimitExceeded',
+      data: {
+        metric: error.metric,
+        limit: error.limit,
+        actual: error.actual,
+      },
+    });
+    return {}; // Return empty visitor to stop further processing
+  }
+  throw error; // Re-throw other errors
+}
+```
+
+### Performance Budget Options
+
+- `maxTime`: Maximum execution time in milliseconds (default: 50ms)
+- `maxNodes`: Maximum number of AST nodes to process (default: 2000)
+- `maxMemory`: Maximum memory usage in bytes (default: 50MB)
+- `enableMetrics`: Whether to collect detailed metrics (default: false)
+- `logMetrics`: Whether to log metrics to console (default: false)
+- `maxOperations`: Operation-specific limits (see `PerformanceOperations` for available operations)
 
 ## Available Performance Operations
 
 You can track various operations using these predefined constants from `PerformanceOperations`:
 
-- `signalAccess`: Signal access operations
-- `signalCheck`: Signal validation checks
-- `effectCheck`: Effect hook validations
-- `identifierResolution`: Identifier lookups
-- `scopeLookup`: Scope traversal operations
-- `typeCheck`: Type checking operations
+### React Hooks
+
+- `hook:useEffect`: Tracking useEffect hook analysis
+- `hook:useLayoutEffect`: Tracking useLayoutEffect hook analysis
+- `hook:useCallback`: Tracking useCallback hook analysis
+- `hook:useMemo`: Tracking useMemo hook analysis
+- `hook:useImperativeHandle`: Tracking useImperativeHandle hook analysis
+- `hook:effect`: Generic effect hook tracking
+- `hook:computed`: Computed value hook tracking
+
+### Signal Operations
+
+- `signalImport:signal`: Tracking signal imports
+- `signalImport:useSignal`: Tracking useSignal imports
+- `signalHookFound:useSignal`: When a useSignal hook is found
+- `signalHookFound:useComputed`: When a useComputed hook is found
+- `signalHookFound:useSignalEffect`: When a useSignalEffect hook is found
+- `signalHookFound:useSignalState`: When a useSignalState hook is found
+- `signalHookFound:useSignalRef`: When a useSignalRef hook is found
+
+### Component Analysis
+
+- `reactComponentFunctionDeclarationProcessing`: Processing function declarations
+- `reactComponentArrowFunctionDeclarationProcessing`: Processing arrow function components
+- `reactComponentFunctionExpressionProcessing`: Processing function expressions
+- `reactComponentArrowFunctionExpressionProcessing`: Processing arrow function expressions
+
+### Code Analysis
+
+- `fileAnalysis`: General file analysis phase
+- `assignmentAnalysis`: Analysis of assignments
+- `preImportAnalysis`: Pre-import analysis phase
+- `variableCheck`: Variable validation checks
+- `parameterCheck`: Parameter validation checks
+- `reportingIssue`: When an issue is reported
 
 ## Configuration Options
 

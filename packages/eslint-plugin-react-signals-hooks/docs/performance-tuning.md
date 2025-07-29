@@ -20,19 +20,38 @@ These limits help prevent performance degradation on large codebases by capping 
 
 | Operation | Description | Default Limit | When to Adjust |
 |-----------|-------------|---------------|----------------|
-| `signalCheck` | Number of signal property accesses | 1000 | Increase if you have many signal accesses |
-| `signalUpdate` | Number of signal updates | 500 | For batch operations with many updates |
-| `signalCheck` | Signal type checks | 200 | Large components with many signals |
-| `nestedPropertyCheck` | Deep property access checks | 500 | Complex nested objects |
-| `identifierResolution` | Variable/function lookups | 1000 | Code with many imports/variables |
-| `scopeLookup` | Scope chain traversals | 1000 | Deeply nested scopes |
+| `signalAccess` | Signal property accesses | 1000 | Code with many signal reads |
+| `signalUpdate` | Signal updates | 500 | Batch operations with many updates |
+| `signalCreation` | Signal creations | 200 | Many signal instantiations |
+| `hookExecution` | Hook validations | 200 | Many hooks in components |
 | `typeCheck` | Type checks | 500 | Heavy TypeScript usage |
-| `componentCheck` | Component detections | 200 | Many components in one file |
-| `hookCheck` | Hook usage validations | 200 | Custom hooks or many hooks |
-| `effectCheck` | Effect validations | 300 | Many effects |
+| `scopeLookup` | Scope chain traversals | 1000 | Deeply nested scopes |
+| `nodeProcessing` | AST node processing | 2000 | Large files with complex logic |
+| `importCheck` | Import validations | 200 | Many imports or complex module graphs |
+| `effectCheck` | Effect validations | 300 | Many effects in components |
 | `batchAnalysis` | Batch operation analysis | 200 | Heavy use of batch updates |
 
-## Tuning Recommendations
+## Performance Metrics Collection
+
+When `enableMetrics` is `true`, the plugin collects detailed performance data including:
+
+- **Phase Durations**: Time spent in different phases of rule execution
+- **Operation Counts**: Number of times each operation was performed
+- **Memory Usage**: Heap memory usage before and after analysis
+- **Node Counts**: Number of AST nodes processed
+
+### Available Phases
+
+- `ruleInit`: Rule initialization
+- `program-analysis`: Initial program analysis
+- `import-check`: Import validation
+- `signal-check`: Signal access validation
+- `hook-check`: Hook usage validation
+- `effect-check`: Effect validation
+- `type-check`: Type checking
+- `node-processing`: General AST node processing
+
+## Configuration Examples
 
 ### For Large Codebases
 
@@ -47,9 +66,10 @@ These limits help prevent performance degradation on large codebases by capping 
           "maxNodes": 5000,
           "maxMemory": 100 * 1024 * 1024,
           "maxOperations": {
-            "SIGNAL_ACCESS": 2000,
-            "IDENTIFIER_RESOLUTION": 2000,
-            "SCOPE_LOOKUP": 2000
+            "signalAccess": 2000,
+            "signalUpdate": 1500,
+            "scopeLookup": 2000,
+            "nodeProcessing": 5000
           }
         }
       }
@@ -58,7 +78,7 @@ These limits help prevent performance degradation on large codebases by capping 
 }
 ```
 
-### For Development
+### For Development with Metrics
 
 ```json
 {
@@ -68,7 +88,9 @@ These limits help prevent performance degradation on large codebases by capping 
       {
         "performance": {
           "enableMetrics": true,
-          "logMetrics": true
+          "logMetrics": true,
+          "maxTime": 200,
+          "maxNodes": 10000
         }
       }
     ]
@@ -76,19 +98,67 @@ These limits help prevent performance degradation on large codebases by capping 
 }
 ```
 
-## Common Performance Issues
+### For CI/CD Pipelines
+
+```json
+{
+  "rules": {
+    "react-signals-hooks/no-mutation-in-render": [
+      "error",
+      {
+        "performance": {
+          "enableMetrics": true,
+          "logMetrics": false,
+          "maxTime": 5000,
+          "maxNodes": 10000,
+          "maxMemory": 200 * 1024 * 1024
+        }
+      }
+    ]
+  }
+}
+```
+
+## Performance Optimization Tips
+
+1. **Analyze Performance Bottlenecks**
+   - Enable metrics in development to identify slow operations
+   - Look for operations with high counts or long durations
+   - Focus optimization efforts on the most expensive operations
+
+2. **Optimize Large Files**
+   - Break down large components into smaller, focused components
+   - Extract complex logic into custom hooks
+   - Use memoization to prevent unnecessary recalculations
+
+3. **Memory Management**
+   - Monitor memory usage with `enableMetrics`
+   - Increase `maxMemory` if needed, but investigate memory leaks first
+   - Avoid creating large intermediate objects during analysis
+
+## Troubleshooting Performance Issues
+
+### Common Symptoms and Solutions
 
 1. **Slow Analysis**
    - Symptom: Linting takes too long
-   - Solution: Increase `maxTime` and `maxNodes`
+   - Solution:
+     - Increase `maxTime` and `maxNodes`
+     - Check for expensive operations in metrics
+     - Consider splitting large files
 
 2. **High Memory Usage**
    - Symptom: Process runs out of memory
-   - Solution: Increase `maxMemory` or optimize rule configuration
+   - Solution:
+     - Increase `maxMemory`
+     - Look for memory leaks in custom rules
+     - Optimize data structures
 
-3. **False Positives**
+3. **Incomplete Analysis**
    - Symptom: Rules miss violations in large files
-   - Solution: Increase operation limits for the specific checks
+   - Solution:
+     - Increase operation limits for specific checks
+     - Check if any operations are hitting their limits in the metrics
 
 ## Best Practices
 

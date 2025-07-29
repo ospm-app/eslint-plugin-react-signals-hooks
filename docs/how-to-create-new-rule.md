@@ -1,281 +1,240 @@
 # How to Create a New Rule
 
-This guide will walk you through the process of creating a new rule for the `eslint-plugin-react-signals-hooks` package.
+This guide will walk you through the process of creating a new rule for eslint plugin.
 
-## Prerequisites
+## 1. Rule Implementation
 
-- Node.js 16+
-- pnpm
-- Basic understanding of ESLint rules and TypeScript
+### 1.1 Create Rule File
 
-## Step 0: Create Specs
+1. Create a new TypeScript file in the `src` directory with a descriptive kebab-case name (e.g., `my-new-rule.ts`).
 
-use `/docs/how-to-make-spec.md` as a template
+### 1.2 Basic Rule Structure
 
-## Step 1: Create Tests
-
-use `/docs/how-to-write-rule-tests.md` as a template
-
-1. Create a test file in `tests/{rule-name}/`
-2. Create both test files:
-   - `{rule-name}.test.tsx` - Test cases
-   - `eslint.config.js` - ESLint configuration for testing
-
-### Test File Example (`{rule-name}.test.tsx`)
+Each rule should follow this basic structure:
 
 ```typescript
-import { signal } from '@preact/signals-react';
-import { useSignal } from '@preact/signals-react/runtime';
-import { type JSX } from 'react';
+import { createRule } from '@typescript-eslint/utils';
 
-// Test cases that should trigger the rule
-export function ShouldTriggerRule(): JSX.Element {
-  const count = signal(0);
-  count.value = 1; // This should trigger the rule
-  return <div>{count}</div>;
-}
-
-// Test cases that should NOT trigger the rule
-export function ShouldNotTriggerRule(): JSX.Element {
-  const count = signal(0);
-  useEffect(() => {
-    count.value = 1; // This is fine in an effect
-  }, []);
-  return <div>{count}</div>;
-}
-```
-
-### ESLint Config (`eslint.config.js`)
-
-```javascript
-import tsParser from '@typescript-eslint/parser';
-import reactSignalsHooksPlugin from '../../dist/cjs/index.js';
-
-/** @type {import('eslint').Linter.Config[]} */
-export default [
-  {
-    plugins: {
-      'react-signals-hooks': reactSignalsHooksPlugin,
-    },
-    rules: {
-      // Core rules
-      'react-signals-hooks/{rule-name}': 'error',
-      
-      // Other rules set to warn to avoid noise
-      'react-signals-hooks/exhaustive-deps': 'warn',
-      'react-signals-hooks/require-use-signals': 'warn',
-      'react-signals-hooks',
-      'react-signals-hooks/signal-variable-name': 'warn',
-      'react-signals-hooks/warn-on-unnecessary-untracked': 'warn',
-    },
-    languageOptions: {
-      parser: tsParser,
-      parserOptions: {
-        tsconfigRootDir: process.cwd(),
-        project: '../../tsconfig.tests.json',
-        ecmaVersion: 'latest',
-        sourceType: 'module',
-        ecmaFeatures: {
-          jsx: true,
-        },
-      },
-    },
-  },
-];
-```
-
-## Step 2: Create the Rule File
-
-1. Create a TypeScript file with the same name (e.g., `/src/{rule-name}.ts`)
-
-## Step 3: Define the Rule Structure
-
-Always read fully couple of other rules as example!!!
-
-Follow this template for your rule:
-
-```typescript
-import {
-  endPhase,
-  startPhase,
-  trackOperation,
-  incrementNodeCount,
-  type PerformanceBudget,
-  createPerformanceTracker,
-} from '../utils/performance.js';
-  import { ESLintUtils } from '@typescript-eslint/utils';
-import { PerformanceOperations } from '../utils/performance-constants.js';
-
-const createRule = ESLintUtils.RuleCreator((name: string): string => {
-  return `https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/${name}.md`;
-});
-
-type MessageIds = 
-  | 'errorMessageId1'
-  | 'errorMessageId2';
-
-type Options = [
-  {
-    /** Add your rule options here */
-    option1?: string;
-    option2?: number;
-    /** Performance tuning options */
-    performance?: PerformanceBudget | undefined;
-  },
-];
-
-export const myNewRule = createRule<Options, MessageIds>({
-  name: 'my-new-rule',
+export default createRule({
+  name: 'rule-name',
   meta: {
     type: 'suggestion', // or 'problem' or 'layout'
     docs: {
       description: 'Description of what the rule does',
-      recommended: 'warn', // or 'error' or false
+      url: 'https://github.com/alexeylyakhov/eslint-plugin-react-signals-hooks/blob/main/docs/how-to-create-new-rule.md',
     },
-    fixable: 'code', // or 'whitespace' or null
-    hasSuggestions: true, // or false
     schema: [
+      // Define your rule options schema here
       {
         type: 'object',
         properties: {
-          option1: { type: 'string' },
-          option2: { type: 'number' },
-          performance: { type: 'object' },
+          // Your configuration properties
         },
         additionalProperties: false,
       },
     ],
     messages: {
-      errorMessageId1: 'Error message for the first issue',
-      errorMessageId2: 'Error message for the second issue',
+      // Define your error messages here
+      messageId: 'Error message',
     },
   },
-  defaultOptions: [{
-    // Default values for your options
-    option1: 'default',
-    option2: 42,
-  }],
-  create(context, [options = {}]) {
-    const perf = createPerformanceTracker<Options>(
-    perfKey,
-    option.performance,
-    context,
-    );
+  defaultOptions: [
+    // Default options
+    {},
+  ],
+  create(context, [options]) {
+    // Performance tracking
+    const perfKey = 'rule-name';
+    const { trackOperation } = context.settings;
 
+    function shouldContinue() {
+      // Implement any early exit conditions
+      return true;
+    }
+
+    // Rule implementation
     return {
-      // Define visitor callbacks here
-      'CallExpression, MemberExpression'(node) {
-        // Rule implementation
+      // Handle specific AST node types
+      '*': (node) => {
+        if (!shouldContinue()) return;
+        trackOperation?.(perfKey, () => {
+          // Process the node if needed
+        });
+      },
+
+      // Example: Handle function calls
+      'CallExpression': (node) => {
+        if (!shouldContinue()) return;
+        trackOperation?.(perfKey, () => {
+          // Your rule logic here
+        });
       },
     };
   },
 });
 ```
 
-## Step 4: Export the Rule
+### 1.3 Performance Considerations
 
-Add your rule to the `src/index.ts` file:
+- Use the `trackOperation` function to monitor performance
+- Implement `shouldContinue()` to limit processing when needed
+- Use the `perfKey` for consistent performance tracking
+
+## 2. Documentation
+
+### 2.1 Update README.md
+
+Add your rule to the appropriate section in the main README.md file, following the existing format:
+
+```markdown
+## Rules
+
+| Rule | Description | Recommended | Fixable |
+|------|-------------|-------------|---------|
+| [rule-name](docs/rules/rule-name.md) | Brief description | ✅ | 🔧 |
+```
+
+### 2.2 Create Rule Documentation
+
+Create a new markdown file in `docs/rules/` with the following structure:
+
+````markdown
+# rule-name
+
+Brief description of what the rule does.
+
+## Rule Details
+
+Detailed explanation of the rule's purpose and behavior.
+
+### ❌ Incorrect
+
+```tsx
+// Example of incorrect code
+```
+
+### ✅ Correct
+
+```tsx
+// Example of corrected code
+```
+
+## Options
+
+(If applicable) Describe any configuration options for the rule.
+
+```json
+{
+  "rules": {
+    "@react-signals-hooks/rule-name": ["error", {
+      // options here
+    }]
+  }
+}
+```
+
+## When Not To Use It
+
+(If applicable) Explain when this rule might not be needed.
+````
+
+## 3. Testing
+
+### 3.1 Create Test File
+
+Create a test file in `tests/rules/` with the following structure:
 
 ```typescript
-import { myNewRule } from './my-new-rule/my-new-rule.js';
+import { RuleTester } from '@typescript-eslint/rule-tester';
+import rule from '../../src/rule-name';
+
+const ruleTester = new RuleTester({
+  parser: '@typescript-eslint/parser',
+  parserOptions: {
+    ecmaVersion: 2020,
+    sourceType: 'module',
+    ecmaFeatures: {
+      jsx: true,
+    },
+  },
+});
+
+ruleTester.run('rule-name', rule, {
+  valid: [
+    {
+      code: `
+        // Valid code example
+      `,
+    },
+  ],
+  invalid: [
+    {
+      code: `
+        // Invalid code example
+      `,
+      errors: [{ messageId: 'errorMessageId' }],
+      output: `
+        // Expected fixed output (if fixable)
+      `,
+    },
+  ],
+});
+```
+
+### 3.2 Run Tests
+
+```bash
+# Run all tests
+npm test
+
+# Run tests for a specific rule
+npx jest tests/rules/rule-name.test.ts
+```
+
+## 4. Export the Rule
+
+Add your rule to the exports in `src/index.ts`:
+
+```typescript
+import ruleName from './rule-name';
 
 export const rules = {
-  // ... other rules
-  'my-new-rule': myNewRule,
+  'rule-name': ruleName,
+  // other rules...
 };
 ```
 
-## Step 5: Update Documentation
+## 5. Update CHANGELOG.md
 
-1. Add documentation in `docs/rules/my-new-rule.md`
-2. Include:
-   - Rule name and description
-   - Why the rule is useful
-   - Examples of incorrect and correct code
-   - Available options
-   - When not to use it
-
-## Step 6: Update Package Scripts
-
-Add test commands to `package.json`:
-
-1. In `test:all-rules` script, add `npm run test:my-new-rule`
-2. In `test:fix:all-rules` script, add `npm run test:fix:my-new-rule`
-3. Add individual test scripts:
-
-   ```json
-   "test:my-new-rule": "cd tests/my-new-rule && npx eslint --config eslint.config.js *.tsx",
-   "test:fix:my-new-rule": "cd tests/my-new-rule && npx eslint --config eslint.config.js --fix *.tsx"
-   ```
-
-## Step 7: Test Your Rule
-
-1. Build the project:
-
-   ```bash
-   pnpm build
-   ```
-
-2. Run tests:
-
-   ```bash
-   pnpm test
-   ```
-
-3. Test with specific rule:
-
-   ```bash
-   pnpm test:my-new-rule
-   ```
-
-## Step 8: Update CHANGELOG.md
-
-Add an entry for your new rule in the "Added" section of the changelog:
+Add an entry to the CHANGELOG.md under the appropriate version:
 
 ```markdown
 ## [Unreleased]
 
 ### Added
-
-- New rule `my-new-rule`: Description of what the rule does
+- New rule `rule-name`
 ```
 
 ## Best Practices
 
-1. **Performance**: Use the performance tracking utilities to ensure your rule is efficient
-2. **Error Messages**: Make error messages clear and actionable
-3. **Testing**: Cover edge cases and different scenarios in your tests
-4. **Documentation**: Provide clear examples and explanations
-5. **Type Safety**: Use TypeScript types effectively to catch errors early
+1. **Performance**: Keep your rule efficient by:
+   - Using specific selectors instead of '*' when possible
+   - Implementing early returns in node handlers
+   - Using the performance tracking utilities
 
-## Common Pitfalls
+2. **Error Messages**:
+   - Be clear and concise
+   - Include code examples in the message when helpful
+   - Use message IDs for internationalization
 
-1. **False Positives**: Ensure your rule doesn't flag code that's actually correct
-2. **Performance**: Be mindful of performance, especially with complex AST traversals
-3. **Edge Cases**: Consider all possible code patterns that might trigger your rule
-4. **Documentation**: Don't forget to document all options and their effects
+3. **Testing**:
+   - Cover all code paths
+   - Test edge cases
+   - Include both valid and invalid examples
+   - Test with different configurations if your rule has options
 
-## Performance Considerations
-
-1. Use the performance tracking utilities to monitor your rule's performance
-2. Avoid unnecessary AST traversals
-3. Cache results when possible
-4. Use selectors to narrow down the nodes your rule needs to process
-
-## Debugging
-
-1. Use `console.log` for debugging (removed before committing)
-2. The [AST Explorer](https://astexplorer.net/) is helpful for understanding the AST
-3. Test with real-world code to catch edge cases
-
-## Publishing
-
-Once your rule is ready, create a pull request with all the changes. Include:
-
-1. The rule implementation
-2. Tests
-3. Documentation
-4. Changelog updates
-5. Any necessary updates to the main export file
-
-After the PR is reviewed and merged, the rule will be included in the next release of the package.
+4. **Documentation**:
+   - Keep documentation up-to-date
+   - Include clear examples
+   - Document all configuration options
+   - Explain when not to use the rule
