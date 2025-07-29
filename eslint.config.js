@@ -153,7 +153,7 @@ const tsConfig = {
   },
   rules: {
     ...commonRules,
-    ...typescript.configs['recommended'].rules,
+    ...typescriptPlugin.configs.recommended.rules,
 
     'react-signals-hooks/exhaustive-deps': [
       'error',
