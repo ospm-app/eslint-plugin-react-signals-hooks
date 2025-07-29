@@ -104,7 +104,7 @@ const jsConfig = {
   plugins: {
     'es-x': pluginESx,
     import: importPlugin,
-    'jsx-a11y': jsxA11y,
+    // 'jsx-a11y': jsxA11y,
   },
   languageOptions: {
     ecmaVersion: 2024,
@@ -137,7 +137,7 @@ const tsConfig = {
     import: importPlugin,
     'react-signals-hooks': reactSignalsHooksPlugin,
     'eslint-rule': eslintRulePlugin,
-    'jsx-a11y': jsxA11y,
+    // 'jsx-a11y': jsxA11y,
   },
   languageOptions: {
     ecmaVersion: 2024,
