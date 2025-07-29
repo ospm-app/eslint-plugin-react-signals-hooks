@@ -79,19 +79,35 @@ This rule provides an auto-fix that can automatically convert `useState` to `use
 This rule accepts an options object with the following properties:
 
 ```ts
-{
-  "rules": {
-    "react-signals-hooks/prefer-use-signal-over-use-state": [
-      "error",
-      {
-        "ignoreComplexInitializers": true // Default: true
-      }
-    ]
-  }
+interface Options {
+  /**
+   * Whether to ignore complex initializers in useState calls.
+   * When true, useState calls with function initializers won't trigger this rule.
+   * @default false
+   */
+  ignoreComplexInitializers?: boolean;
+
+  /** Performance tuning options */
+  performance?: {
+    // Maximum time in milliseconds to spend analyzing a file
+    maxTime?: number;
+    // Maximum memory in MB to use during analysis
+    maxMemory?: number;
+    // Maximum number of nodes to process before bailing out
+    maxNodes?: number;
+    // Enable collection of performance metrics
+    enableMetrics?: boolean;
+    // Log performance metrics to console
+    logMetrics?: boolean;
+  };
+
+  /** Custom severity levels for different violation types */
+  severity?: {
+    // Severity for preferring useSignal over useState
+    preferUseSignal?: 'error' | 'warn' | 'off';
+  };
 }
 ```
-
-- `ignoreComplexInitializers` (boolean) - When `true` (default), the rule will skip non-primitive initializers. Set to `false` to enforce the rule for all `useState` calls.
 
 ## When Not To Use It
 

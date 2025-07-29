@@ -89,9 +89,33 @@ This rule accepts an options object with the following properties:
       {
         "allowInEffects": true,        // Allow in useSignalEffect callbacks
         "allowInEventHandlers": true,  // Allow in DOM event handlers
-        "allowForSignalWrites": true   // Allow when used to prevent circular deps
+        "allowForSignalWrites": true,  // Allow when used to prevent circular deps
+        "performance": {               // Performance tuning options
+          "maxTime": 100,              // Max time in ms to spend analyzing a file
+          "maxMemory": 100,            // Max memory in MB to use
+          "maxNodes": 2000,            // Max number of nodes to process
+          "enableMetrics": false,      // Enable performance metrics collection
+          "logMetrics": false          // Log metrics to console
+        }
       }
     ]
+  }
+}
+```
+
+### Default Configuration
+
+```typescript
+{
+  allowInEffects: true,
+  allowInEventHandlers: true,
+  allowForSignalWrites: true,
+  performance: {
+    maxTime: 100,
+    maxMemory: 100,
+    maxNodes: 2000,
+    enableMetrics: false,
+    logMetrics: false
   }
 }
 ```
@@ -178,6 +202,15 @@ While `untracked()` and `.peek()` can be useful for optimization, unnecessary us
 - Premature optimization can lead to subtle bugs and maintenance issues
 - The React Signals runtime is already optimized for most common cases
 
+## Error Messages
+
+This rule can report the following messages:
+
+- `unnecessaryUntracked`: When `untracked()` is used unnecessarily
+- `unnecessaryPeek`: When `.peek()` is used unnecessarily
+- `suggestRemoveUntracked`: Suggestion to remove unnecessary `untracked()`
+- `suggestRemovePeek`: Suggestion to replace `.peek()` with `.value`
+
 ## TypeScript Support
 
 This rule works well with TypeScript and properly handles type checking for both `untracked()` and `.peek()`:
@@ -189,6 +222,21 @@ const value2 = someSignal.value.peek();
 ```
 
 Note that `.peek()` is a type-safe operation that returns the same type as `.value`.
+
+## Migration Guide
+
+### From v1.x to v2.x
+
+- The `performance` option is now optional with sensible defaults
+- All boolean options now default to `true` for better developer experience
+- The rule now provides more specific error messages and suggestions
+
+### From v0.x to v1.x
+
+- The rule was renamed from `no-unnecessary-untracked` to `warn-on-unnecessary-untracked`
+- Added support for `.peek()` detection
+- Added TypeScript type checking support
+- Improved auto-fix capabilities
 
 ## Common False Positives
 

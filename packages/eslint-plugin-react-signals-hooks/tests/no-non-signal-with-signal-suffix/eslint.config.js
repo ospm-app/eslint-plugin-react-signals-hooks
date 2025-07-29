@@ -63,8 +63,6 @@ export default [
       'react-signals-hooks/no-mutation-in-render': 'warn',
       'react-signals-hooks/no-signal-assignment-in-effect': 'warn',
       'react-signals-hooks/no-signal-creation-in-component': 'warn',
-
-      'react-signals-hooks/consistent-rule-structure': 'warn',
     },
     languageOptions: {
       parser: tsParser,

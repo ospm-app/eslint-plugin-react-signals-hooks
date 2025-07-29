@@ -16,6 +16,7 @@ import jsxA11y from 'eslint-plugin-jsx-a11y';
 import securityPlugin from 'eslint-plugin-security';
 
 import reactSignalsHooksPlugin from './packages/eslint-plugin-react-signals-hooks/dist/esm/index.js';
+import eslintRulePlugin from './packages/eslint-plugin-eslint-rule/dist/esm/index.js';
 
 const commonRules = {
   // Disabled rules
@@ -135,6 +136,7 @@ const tsConfig = {
     '@typescript-eslint': typescriptPlugin,
     import: importPlugin,
     'react-signals-hooks': reactSignalsHooksPlugin,
+    'eslint-rule': eslintRulePlugin,
     'jsx-a11y': jsxA11y,
   },
   languageOptions: {
@@ -170,7 +172,7 @@ const tsConfig = {
     'react-signals-hooks/prefer-signal-effect': 'warn',
     'react-signals-hooks/prefer-computed': 'warn',
 
-    'react-signals-hooks/consistent-rule-structure': 'warn',
+    'eslint-rule/consistent-rule-structure': 'warn',
 
     // TypeScript specific
     '@typescript-eslint/await-thenable': 'error',

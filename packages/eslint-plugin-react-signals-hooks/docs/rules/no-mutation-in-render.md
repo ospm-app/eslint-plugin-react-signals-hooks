@@ -177,7 +177,124 @@ The rule is not active in:
 
 ## Options
 
-This rule doesn't have any configuration options.
+This rule accepts an options object with the following properties:
+
+```typescript
+interface Options {
+  /** Custom signal function names (e.g., ['createSignal', 'useSignal']) */
+  signalNames?: string[];
+  
+  /** File patterns where mutations are allowed (e.g., ['^test/', '.spec.ts$']) */
+  allowedPatterns?: string[];
+
+  /** Performance tuning options */
+  performance?: PerformanceBudget;
+
+  /** Custom severity levels for different violation types */
+  severity?: {
+    // Severity for direct signal value assignment (e.g., signal.value = x)
+    signalValueAssignment?: 'error' | 'warn' | 'off';
+    // Severity for signal property assignment (e.g., signal.value.prop = x)
+    signalPropertyAssignment?: 'error' | 'warn' | 'off';
+    // Severity for array index assignment on signal values
+    signalArrayIndexAssignment?: 'error' | 'warn' | 'off';
+    // Severity for nested property assignments on signal values
+    signalNestedPropertyAssignment?: 'error' | 'warn' | 'off';
+    signalValueAssignment?: 'error' | 'warn' | 'off';
+    signalPropertyAssignment?: 'error' | 'warn' | 'off';
+    signalArrayIndexAssignment?: 'error' | 'warn' | 'off';
+    signalNestedPropertyAssignment?: 'error' | 'warn' | 'off';
+  };
+}
+```
+
+### Default Options
+
+```json
+{
+  "signalNames": ["Signal"],
+  "allowedPatterns": [],
+  "severity": {
+    "signalValueAssignment": "error",
+    "signalPropertyAssignment": "error",
+    "signalArrayIndexAssignment": "error",
+    "signalNestedPropertyAssignment": "error",
+    "signalValueAssignment": "error",
+    "signalPropertyAssignment": "error",
+    "signalArrayIndexAssignment": "error",
+    "signalNestedPropertyAssignment": "error"
+  },
+  "performance": {
+    "maxTime": 1000,
+    "maxNodes": 2000,
+    "enableMetrics": false,
+    "logMetrics": false
+  }
+}
+```
+
+### Example Configuration
+
+```json
+{
+  "rules": {
+    "react-signals-hooks/no-mutation-in-render": [
+      "error",
+      {
+        "signalNames": ["Signal", "useSignal", "createSignal"],
+        "allowedPatterns": ["^test/", ".spec.ts$"],
+        "severity": {
+          "signalValueAssignment": "error",
+          "signalPropertyAssignment": "warn",
+          "signalArrayIndexAssignment": "warn",
+          "signalNestedPropertyAssignment": "warn",
+        },
+        "performance": {
+          "maxTime": 2000,
+          "maxNodes": 3000
+        }
+      }
+    ]
+  }
+}
+```
+
+## Error Messages
+
+This rule can report the following types of issues:
+
+### Signal Value Assignment
+
+- **Message**: "Avoid direct signal value assignments during render. Move the assignment into a `useEffect` or event handler."
+- **Description**: Directly assigning to a signal's value during render can cause unexpected behavior and infinite loops.
+- **Fix Suggestion**: Move the assignment into a `useEffect` or event handler.
+
+### Signal Property Assignment
+
+- **Message**: "Avoid direct property assignments to signal values during render. Move the assignment into a `useEffect` or event handler."
+- **Description**: Mutating properties of a signal's value during render can cause unexpected behavior.
+- **Fix Suggestion**: Move the assignment into a `useEffect` or event handler, or create a new object with the updated property.
+
+### Signal Array Index Assignment
+
+- **Message**: "Avoid direct array index assignments to signal values during render. Move the assignment into a `useEffect` or event handler."
+- **Description**: Mutating array elements of a signal's value during render can cause unexpected behavior.
+- **Fix Suggestion**: Create a new array with the updated element instead of mutating the array in place.
+
+### Signal Nested Property Assignment
+
+- **Message**: "Avoid direct nested property assignments to signal values during render. Move the assignment into a `useEffect` or event handler."
+- **Description**: Deeply nested property assignments during render can be hard to track and may cause unexpected behavior.
+- **Fix Suggestion**: Create a new object with the updated nested property instead of mutating the object in place.
+
+### Performance Limit Exceeded
+
+- **Message**: "Performance limit exceeded for rule no-mutation-in-render {{message}}"
+- **Description**: The rule analysis took too long or used too many resources.
+- **How to fix**
+  - Increase performance limits in rule options
+  - Split large components into smaller ones
+  - Use the `allowedPatterns` option to exclude test files
 
 ## When Not To Use It
 

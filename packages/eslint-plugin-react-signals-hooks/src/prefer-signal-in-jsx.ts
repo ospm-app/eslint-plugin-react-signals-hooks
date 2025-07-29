@@ -1,290 +1,340 @@
 /** biome-ignore-all assist/source/organizeImports: off */
-import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
-
 import {
-  endPhase,
-  startPhase,
-  recordMetric,
-  stopTracking,
-  startTracking,
-  trackOperation,
-  createPerformanceTracker,
-  DEFAULT_PERFORMANCE_BUDGET,
-} from './utils/performance.js';
-import { getRuleDocUrl } from './utils/urls.js';
-import type { PerformanceBudget } from './utils/types.js';
-import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
-import { PerformanceOperations } from './utils/performance-constants.js';
+	ESLintUtils,
+	type TSESLint,
+	type TSESTree,
+} from "@typescript-eslint/utils";
+import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
-type Option = {
-  performance: PerformanceBudget;
+import { PerformanceOperations } from "./utils/performance-constants.js";
+import {
+	endPhase,
+	startPhase,
+	recordMetric,
+	stopTracking,
+	startTracking,
+	trackOperation,
+	createPerformanceTracker,
+	DEFAULT_PERFORMANCE_BUDGET,
+} from "./utils/performance.js";
+import type { PerformanceBudget } from "./utils/types.js";
+import { getRuleDocUrl } from "./utils/urls.js";
+
+type Severity = {
+	preferDirectSignalUsage?: "error" | "warn" | "off";
 };
 
-type Options = [Option];
+type Option = {
+	performance?: PerformanceBudget;
+	severity?: Severity;
+};
 
-type MessageIds = 'preferDirectSignalUsage';
+type Options = [Option?];
+
+type MessageIds = "preferDirectSignalUsage";
 
 function isInJSXAttribute(node: TSESTree.Node): boolean {
-  let current: TSESTree.Node | undefined = node.parent;
+	let current: TSESTree.Node | undefined = node.parent;
 
-  while (current) {
-    if (current.type === 'JSXAttribute') {
-      return true;
-    }
+	while (current) {
+		if (current.type === "JSXAttribute") {
+			return true;
+		}
 
-    if (current.type === 'JSXElement' || current.type === 'JSXFragment') {
-      return false;
-    }
+		if (current.type === "JSXElement" || current.type === "JSXFragment") {
+			return false;
+		}
 
-    current = current.parent;
-  }
+		current = current.parent;
+	}
 
-  return false;
+	return false;
 }
 
 function isInFunctionProp(node: TSESTree.Node): boolean {
-  let current: TSESTree.Node | undefined = node.parent;
+	let current: TSESTree.Node | undefined = node.parent;
 
-  while (current) {
-    if (current.type === 'ArrowFunctionExpression' || current.type === 'FunctionExpression') {
-      // Check if the function is a direct child of a JSX attribute
-      if (
-        current.parent?.type === 'JSXExpressionContainer' &&
-        current.parent.parent?.type === 'JSXAttribute'
-      ) {
-        return true;
-      }
+	while (current) {
+		if (
+			current.type === "ArrowFunctionExpression" ||
+			current.type === "FunctionExpression"
+		) {
+			// Check if the function is a direct child of a JSX attribute
+			if (
+				current.parent.type === "JSXExpressionContainer" &&
+				current.parent.parent.type === "JSXAttribute"
+			) {
+				return true;
+			}
 
-      // Check if the function is a prop value
-      if (
-        current.parent?.type === 'Property' &&
-        current.parent.parent?.type === 'ObjectExpression' &&
-        current.parent.parent.parent?.type === 'JSXExpressionContainer' &&
-        current.parent.parent.parent.parent?.type === 'JSXAttribute'
-      ) {
-        return true;
-      }
+			// Check if the function is a prop value
+			if (
+				current.parent.type === "Property" &&
+				current.parent.parent.type === "ObjectExpression" &&
+				current.parent.parent.parent.type === "JSXExpressionContainer" &&
+				current.parent.parent.parent.parent.type === "JSXAttribute"
+			) {
+				return true;
+			}
 
-      return false;
-    }
+			return false;
+		}
 
-    if (current.type === 'JSXElement' || current.type === 'JSXFragment') {
-      return false;
-    }
+		if (current.type === "JSXElement" || current.type === "JSXFragment") {
+			return false;
+		}
 
-    current = current.parent;
-  }
+		current = current.parent;
+	}
 
-  return false;
+	return false;
 }
 
 let jsxDepth = 0;
 
-const ruleName = 'prefer-signal-in-jsx';
+const ruleName = "prefer-signal-in-jsx";
 
-export const preferSignalInJsxRule = ESLintUtils.RuleCreator((name: string): string => {
-  return getRuleDocUrl(name);
-})<Options, MessageIds>({
-  name: ruleName,
-  meta: {
-    type: 'suggestion', // Kept as 'suggestion' as this is a best practice for cleaner JSX, not a critical issue
-    docs: {
-      description:
-        "Enforces direct signal usage in JSX by preferring the signal itself over explicit `.value` access. In JSX, signals are automatically unwrapped, so there's no need to access the `.value` property. This rule helps maintain cleaner JSX code by removing unnecessary property access.",
-      url: getRuleDocUrl(ruleName),
-    },
-    fixable: 'code',
-    messages: {
-      preferDirectSignalUsage: 'Use the signal directly in JSX instead of accessing .value',
-    },
-    hasSuggestions: true,
-    schema: [
-      {
-        type: 'object',
-        properties: {
-          performance: {
-            type: 'object',
-            properties: {
-              maxTime: { type: 'number', minimum: 1 },
-              maxMemory: { type: 'number', minimum: 1 },
-              maxNodes: { type: 'number', minimum: 1 },
-              enableMetrics: { type: 'boolean' },
-              logMetrics: { type: 'boolean' },
-              maxOperations: {
-                type: 'object',
-                properties: Object.fromEntries(
-                  Object.entries(PerformanceOperations).map(([key]) => [
-                    key,
-                    { type: 'number', minimum: 1 },
-                  ])
-                ),
-              },
-            },
-            additionalProperties: false,
-          },
-        },
-        additionalProperties: false,
-      },
-    ],
-  },
-  defaultOptions: [
-    {
-      performance: DEFAULT_PERFORMANCE_BUDGET,
-    },
-  ],
-  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
-    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
+function getSeverity(
+	messageId: MessageIds,
+	options: Option | undefined,
+): "error" | "warn" | "off" {
+	if (!options?.severity) {
+		return "error";
+	}
 
-    startPhase(perfKey, 'ruleInit');
+	// eslint-disable-next-line security/detect-object-injection
+	const severity = options.severity[messageId];
 
-    const perf = createPerformanceTracker<Options>(perfKey, option.performance, context);
+	return severity ?? "error";
+}
 
-    if (option.performance.enableMetrics === true) {
-      startTracking(context, perfKey, option.performance, ruleName);
-    }
+export const preferSignalInJsxRule = ESLintUtils.RuleCreator(
+	(name: string): string => {
+		return getRuleDocUrl(name);
+	},
+)<Options, MessageIds>({
+	name: ruleName,
+	meta: {
+		type: "suggestion", // Kept as 'suggestion' as this is a best practice for cleaner JSX, not a critical issue
+		docs: {
+			description:
+				"Enforces direct signal usage in JSX by preferring the signal itself over explicit `.value` access. In JSX, signals are automatically unwrapped, so there's no need to access the `.value` property. This rule helps maintain cleaner JSX code by removing unnecessary property access.",
+			url: getRuleDocUrl(ruleName),
+		},
+		fixable: "code",
+		messages: {
+			preferDirectSignalUsage:
+				"Use the signal directly in JSX instead of accessing .value",
+		},
+		hasSuggestions: true,
+		schema: [
+			{
+				type: "object",
+				properties: {
+					performance: {
+						type: "object",
+						properties: {
+							maxTime: { type: "number", minimum: 1 },
+							maxMemory: { type: "number", minimum: 1 },
+							maxNodes: { type: "number", minimum: 1 },
+							enableMetrics: { type: "boolean" },
+							logMetrics: { type: "boolean" },
+							maxOperations: {
+								type: "object",
+								properties: Object.fromEntries(
+									Object.entries(PerformanceOperations).map(([key]) => [
+										key,
+										{ type: "number", minimum: 1 },
+									]),
+								),
+							},
+						},
+						additionalProperties: false,
+					},
+				},
+				additionalProperties: false,
+			},
+		],
+	},
+	defaultOptions: [
+		{
+			performance: DEFAULT_PERFORMANCE_BUDGET,
+		},
+	],
+	create(
+		context: Readonly<RuleContext<MessageIds, Options>>,
+		[option],
+	): ESLintUtils.RuleListener {
+		const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    console.info(`${ruleName}: Rule configuration:`, option);
+		startPhase(perfKey, "ruleInit");
 
-    recordMetric(perfKey, 'config', {
-      performance: {
-        enableMetrics: option.performance.enableMetrics,
-        logMetrics: option.performance.logMetrics,
-      },
-    });
+		const perf = createPerformanceTracker<Options>(
+			perfKey,
+			option?.performance,
+			context,
+		);
 
-    trackOperation(perfKey, PerformanceOperations.ruleInit);
+		if (option?.performance?.enableMetrics === true) {
+			startTracking(context, perfKey, option.performance, ruleName);
+		}
 
-    endPhase(perfKey, 'ruleInit');
+		console.info(
+			`${ruleName}: Initializing rule for file: ${context.filename}`,
+		);
+		console.info(`${ruleName}: Rule configuration:`, option);
 
-    let nodeCount = 0;
+		recordMetric(perfKey, "config", {
+			performance: {
+				enableMetrics: option?.performance?.enableMetrics,
+				logMetrics: option?.performance?.logMetrics,
+			},
+		});
 
-    function shouldContinue(): boolean {
-      nodeCount++;
+		trackOperation(perfKey, PerformanceOperations.ruleInit);
 
-      if (nodeCount > (option.performance?.maxNodes ?? 2_000)) {
-        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+		endPhase(perfKey, "ruleInit");
 
-        return false;
-      }
+		let nodeCount = 0;
 
-      return true;
-    }
+		function shouldContinue(): boolean {
+			nodeCount++;
 
-    startPhase(perfKey, 'ruleExecution');
+			if (
+				typeof option?.performance?.maxNodes === "number" &&
+				nodeCount > option.performance.maxNodes
+			) {
+				trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
-    return {
-      '*': (node: TSESTree.Node): void => {
-        if (!shouldContinue()) {
-          endPhase(perfKey, 'recordMetrics');
+				return false;
+			}
 
-          stopTracking(perfKey);
+			return true;
+		}
 
-          return;
-        }
+		startPhase(perfKey, "ruleExecution");
 
-        perf.trackNode(node);
+		return {
+			"*": (node: TSESTree.Node): void => {
+				if (!shouldContinue()) {
+					endPhase(perfKey, "recordMetrics");
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-      },
+					stopTracking(perfKey);
 
-      // Track JSX depth to determine if we're inside JSX
-      JSXElement(): void {
-        jsxDepth++;
-      },
-      'JSXElement:exit'(): void {
-        jsxDepth--;
-      },
-      JSXFragment(): void {
-        jsxDepth++;
-      },
-      'JSXFragment:exit'(): void {
-        jsxDepth--;
-      },
+					return;
+				}
 
-      MemberExpression(node: TSESTree.MemberExpression): void {
-        if (jsxDepth === 0) {
-          return;
-        }
+				perf.trackNode(node);
 
-        if (
-          !(
-            node.property.type === 'Identifier' &&
-            node.property.name === 'value' &&
-            node.object.type === 'Identifier' &&
-            node.object.name.endsWith('Signal')
-          )
-        ) {
-          return;
-        }
+				trackOperation(
+					perfKey,
+					PerformanceOperations[`${node.type}Processing`],
+				);
+			},
 
-        if (
-          (
-            [
-              'MemberExpression',
-              'ChainExpression',
-              'OptionalMemberExpression',
-              'BinaryExpression',
-              'UnaryExpression',
-              'LogicalExpression',
-            ] as const
-          ).some((type): boolean => {
-            return typeof node.parent !== 'undefined' && node.parent.type === type;
-          })
-        ) {
-          return;
-        }
+			// Track JSX depth to determine if we're inside JSX
+			JSXElement(): void {
+				jsxDepth++;
+			},
+			"JSXElement:exit"(): void {
+				jsxDepth--;
+			},
+			JSXFragment(): void {
+				jsxDepth++;
+			},
+			"JSXFragment:exit"(): void {
+				jsxDepth--;
+			},
 
-        if (isInJSXAttribute(node) || isInFunctionProp(node)) {
-          return;
-        }
+			MemberExpression(node: TSESTree.MemberExpression): void {
+				if (jsxDepth === 0) {
+					return;
+				}
 
-        context.report({
-          node,
-          messageId: 'preferDirectSignalUsage',
-          fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-            if ('name' in node.object) {
-              return fixer.replaceText(node, node.object.name);
-            }
+				if (
+					!(
+						node.property.type === "Identifier" &&
+						node.property.name === "value" &&
+						node.object.type === "Identifier" &&
+						node.object.name.endsWith("Signal")
+					)
+				) {
+					return;
+				}
 
-            return null;
-          },
-        });
-      },
+				if (
+					(
+						[
+							"MemberExpression",
+							"ChainExpression",
+							"OptionalMemberExpression",
+							"BinaryExpression",
+							"UnaryExpression",
+							"LogicalExpression",
+						] as const
+					).some((type): boolean => {
+						return (
+							typeof node.parent !== "undefined" && node.parent.type === type
+						);
+					})
+				) {
+					return;
+				}
 
-      // Clean up
-      'Program:exit'(): void {
-        startPhase(perfKey, 'programExit');
+				if (isInJSXAttribute(node) || isInFunctionProp(node)) {
+					return;
+				}
 
-        try {
-          startPhase(perfKey, 'recordMetrics');
+				const severity = getSeverity("preferDirectSignalUsage", option);
 
-          const finalMetrics = stopTracking(perfKey);
+				if (severity === "off") return;
 
-          if (finalMetrics) {
-            console.info(
-              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+				context.report({
+					node,
+					messageId: "preferDirectSignalUsage",
+					fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+						if ("name" in node.object) {
+							return fixer.replaceText(node, node.object.name);
+						}
 
-            if (finalMetrics.exceededBudget) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
+						return null;
+					},
+				});
+			},
 
-          stopTracking(perfKey);
-        }
+			// Clean up
+			"Program:exit"(): void {
+				startPhase(perfKey, "programExit");
 
-        perf['Program:exit']();
+				try {
+					startPhase(perfKey, "recordMetrics");
 
-        endPhase(perfKey, 'programExit');
-      },
-    };
-  },
+					const finalMetrics = stopTracking(perfKey);
+
+					if (finalMetrics) {
+						console.info(
+							`\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? "EXCEEDED" : "OK"}):`,
+						);
+						console.info(`  File: ${context.filename}`);
+						console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
+						console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+
+						if (finalMetrics.exceededBudget === true) {
+							console.warn("\n⚠️  Performance budget exceeded!");
+						}
+					}
+				} catch (error: unknown) {
+					console.error("Error recording metrics:", error);
+				} finally {
+					endPhase(perfKey, "recordMetrics");
+
+					stopTracking(perfKey);
+				}
+
+				perf["Program:exit"]();
+
+				endPhase(perfKey, "programExit");
+			},
+		};
+	},
 });

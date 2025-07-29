@@ -49,7 +49,7 @@ This rule provides an auto-fix that can automatically wrap multiple signal mutat
 2. Wrap the mutations in a `batch()` call
 3. Preserve the existing code structure and formatting
 
-## Options
+## Configuration Options
 
 This rule accepts an options object with the following properties:
 
@@ -59,19 +59,101 @@ This rule accepts an options object with the following properties:
     "react-signals-hooks/prefer-batch-for-multi-mutations": [
       "warn",
       {
-        "minMutations": 2  // Minimum number of mutations to trigger the rule (default: 2)
+        "minMutations": 2,  // Minimum number of mutations to trigger the rule
+        "maxMutations": 10, // Maximum mutations before suggesting to split logic
+        "performance": {    // Performance tuning options
+          "maxTime": 100,   // Max time in ms to spend analyzing a file
+          "maxMemory": 100, // Max memory in MB to use
+          "maxNodes": 2000, // Max number of nodes to process
+          "enableMetrics": false, // Enable performance metrics
+          "logMetrics": false     // Log metrics to console
+        }
       }
     ]
   }
 }
 ```
 
-### `minMutations`
+### Options Details
 
-Type: `number`  
-Default: `2`
+- `minMutations` (number, default: 2)
+  - Minimum number of signal mutations in the same scope to trigger the rule
 
-Minimum number of signal mutations required in the same scope to trigger the rule.
+- `maxMutations` (number, default: 10)
+  - If exceeded, suggests splitting the logic into smaller functions
+  - Helps maintain code readability and performance
+
+- `performance` (object)
+  - `maxTime`: Maximum time in milliseconds to spend analyzing a file
+  - `maxMemory`: Maximum memory in MB to use
+  - `maxNodes`: Maximum number of AST nodes to process
+  - `enableMetrics`: Enable performance metrics collection
+  - `logMetrics`: Log performance metrics to console
+
+## Error Messages
+
+This rule can report the following messages:
+
+- `useBatch`: "Multiple signal mutations should be wrapped in batch()"
+- `suggestBatch`: "Wrap these mutations in batch()"
+- `addBatchImport`: "Add batch import from @preact/signals-react"
+- `performanceLimitExceeded`: "Performance limit exceeded while analyzing mutations"
+
+Example of enabling specific error levels:
+
+```json
+{
+  "rules": {
+    "react-signals-hooks/prefer-batch-for-multi-mutations": [
+      "error",
+      {
+        "minMutations": 2,
+        "severity": {
+          "useBatch": "error",
+          "suggestBatch": "warn"
+        }
+      }
+    ]
+  }
+}
+```
+
+## TypeScript Support
+
+This rule works seamlessly with TypeScript and provides proper type checking for signal mutations. It understands:
+
+1. **Type Narrowing**:
+
+   ```typescript
+   function processSignal(signal: Signal<number> | null) {
+     if (!signal) return;
+     // TypeScript knows signal is Signal<number> here
+     signal.value = 42; // Properly typed
+   }
+   ```
+
+2. **Generic Components**:
+
+   ```typescript
+   function useSignalState<T>(initial: T) {
+     const signal = useSignal(initial);
+     // ...
+   }
+   ```
+
+3. **Type Assertions**:
+
+   ```typescript
+   const signal = {} as Signal<number>;
+   signal.value = 42; // Properly typed
+   ```
+
+4. **Mapped Types**:
+
+   ```typescript
+   type User = { name: string; age: number };
+   const userSignal = signal<User>({ name: 'John', age: 30 });
+   ```
 
 ## When Not To Use It
 
@@ -80,6 +162,117 @@ You might want to disable this rule if:
 1. You're working with a codebase that doesn't use `@preact/signals-react`
 2. You have a specific performance optimization that makes batching unnecessary
 3. You're working with a small number of simple components where the performance impact is negligible
+4. You're using a different state management solution that handles batching internally
+
+## Edge Cases and Limitations
+
+1. **Nested Functions**:
+
+   ```typescript
+   function outer() {
+     // These won't be batched together
+     const inner1 = () => { signal1.value = 1; };
+     const inner2 = () => { signal2.value = 2; };
+     
+     // Only immediate mutations are batched
+     inner1();
+     inner2();
+   }
+   ```
+
+2. **Conditional Logic**:
+
+   ```typescript
+   function update(condition: boolean) {
+     // Only some mutations might be batched
+     signal1.value = 1;
+     if (condition) {
+       signal2.value = 2; // Not batched with the first mutation
+     }
+   }
+   ```
+
+3. **Loops and Iterations**:
+
+   ```typescript
+   function updateItems(items: string[]) {
+     // Each iteration is a separate mutation
+     items.forEach((item, i) => {
+       signals[i].value = item; // Not batched automatically
+     });
+     
+     // Better approach:
+     batch(() => {
+       items.forEach((item, i) => {
+         signals[i].value = item;
+       });
+     });
+   }
+   ```
+
+## Troubleshooting
+
+### False Positives
+
+If you encounter false positives, you can:
+
+1. Use an ESLint disable comment:
+
+   ```typescript
+   // eslint-disable-next-line react-signals-hooks/prefer-batch-for-multi-mutations
+   signal1.value = 1;
+   signal2.value = 2;
+   ```
+
+2. Adjust the `minMutations` option:
+
+   ```json
+   {
+     "rules": {
+       "react-signals-hooks/prefer-batch-for-multi-mutations": [
+         "warn",
+         { "minMutations": 3 }
+       ]
+     }
+   }
+   ```
+
+### Performance Issues
+
+If you experience performance problems:
+
+1. Increase the performance limits:
+
+   ```json
+   {
+     "rules": {
+       "react-signals-hooks/prefer-batch-for-multi-mutations": [
+         "warn",
+         {
+           "performance": {
+             "maxTime": 200,
+             "maxNodes": 5000
+           }
+         }
+       ]
+     }
+   }
+   ```
+
+2. Disable the rule for specific files using overrides:
+
+   ```json
+   {
+     "overrides": [
+       {
+         "files": ["**/*.test.tsx"],
+         "rules": {
+           "react-signals-hooks/prefer-batch-for-multi-mutations": "off"
+         }
+       }
+     ]
+   }
+   ```
 
 ## Related Rules
 

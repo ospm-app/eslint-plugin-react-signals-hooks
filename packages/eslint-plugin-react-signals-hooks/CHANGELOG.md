@@ -5,33 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.0] - 2025-07-25
+## [1.1.0] - 2025-07-30
 
 ### Added
 
-- New rules for better signal management:
+- New rules for comprehensive signal management:
+  - `exhaustive-deps`: Ensures all dependencies are properly specified in effects and callbacks
+  - `no-mutation-in-render`: Prevents direct signal mutations during render
   - `no-non-signal-with-signal-suffix`: Enforces that variables with 'signal' in their name are actually signals
   - `no-signal-assignment-in-effect`: Prevents direct signal assignments inside effects
   - `no-signal-creation-in-component`: Discourages creating signals inside components
   - `prefer-batch-for-multi-mutations`: Encourages using batch for multiple signal updates
   - `prefer-batch-updates`: Suggests batching multiple signal updates
+  - `prefer-computed`: Promotes using computed signals for derived state
+  - `prefer-for-over-map`: Suggests using `for` loops over `Array.map` for better performance
+  - `prefer-show-over-ternary`: Recommends using `show` component over ternary expressions
+  - `prefer-signal-effect`: Encourages using `useSignalEffect` for side effects
+  - `prefer-signal-in-jsx`: Promotes using signals directly in JSX
   - `prefer-signal-methods`: Promotes using signal-specific methods
   - `prefer-signal-reads`: Encourages reading signal values efficiently
   - `prefer-use-signal-over-use-state`: Suggests using `useSignal` over `useState`
+  - `require-use-signals`: Ensures proper signal usage in components
+  - `restrict-signal-locations`: Controls where signals can be created
+  - `signal-variable-name`: Enforces consistent naming for signal variables
   - `warn-on-unnecessary-untracked`: Warns about unnecessary `untracked` usage
 
 ### Changed
 
 - Improved type safety with enhanced TypeScript definitions
 - Added performance utilities for better optimization
+- Added severity configuration for all rules
+- Enhanced error messages and documentation for all rules
+- Improved rule autofix capabilities
+- Better handling of edge cases in all rules
 
 ### Fixed
 
-- Various bug fixes and performance improvements
+- Fixed various edge cases in rule implementations
+- Improved performance for large codebases
+- Fixed TypeScript type inference in several rules
+- Addressed false positives/negatives in rule detections
+- Improved compatibility with different React versions
 
-### Security
+### Performance
 
-- N/A
+- Optimized rule execution time
+- Reduced memory usage during linting
+- Improved caching mechanisms for better performance in watch mode
 
 [1.1.0]: https://github.com/ospm-app/eslint-plugin-react-signals-hooks/releases/tag/v1.1.0
 

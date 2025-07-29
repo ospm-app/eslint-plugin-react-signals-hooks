@@ -246,7 +246,7 @@ You can track various operations using these predefined constants from `Performa
      if (error instanceof PerformanceLimitExceededError) {
        context.report({
          node,
-         message: 'Rule processing stopped: {{message}}',
+         message: 'Rule processing stopped: ',
          data: {
            message: error.message,
          },
@@ -377,8 +377,9 @@ export const rule = createRule({
     } catch (error) {
       if (error instanceof PerformanceLimitExceededError) {
         context.report({
+          messageId: 'performanceLimitExceeded',
           node: context.sourceCode.ast,
-          message: 'Rule processing stopped: {{message}}',
+          message: 'Rule processing stopped: ',
           data: {
             message: error.message,
           },

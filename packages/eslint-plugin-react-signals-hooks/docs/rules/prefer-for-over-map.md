@@ -334,6 +334,190 @@ Using `<For>` instead of `.map()` provides several performance benefits:
 4. **Consider virtualization**: For very large lists, consider using a virtualized list component
 5. **Memoize callbacks**: If your render function is expensive, memoize it with `useCallback`
 
+## Configuration
+
+This rule accepts an options object with the following properties:
+
+```js
+{
+  "rules": {
+    "react-signals-hooks/prefer-for-over-map": [
+      "error",
+      {
+        "performance": {
+          "enableMetrics": false,  // Enable performance metrics
+          "logMetrics": false,     // Log metrics to console
+          "maxNodes": 2000        // Maximum nodes to process before bailing out
+        }
+      }
+    ]
+  }
+}
+```
+
+### Performance Options
+
+- `enableMetrics`: When `true`, enables collection of performance metrics
+- `logMetrics`: When `true`, logs performance metrics to the console
+- `maxNodes`: Maximum number of AST nodes to process before bailing out (prevents performance issues on large files)
+
+## When Not To Use It
+
+You might want to disable this rule in the following cases:
+
+1. **Performance is not a concern** for the specific use case
+2. **Chaining array methods** is required for your logic
+3. **Working with non-reactive arrays** that won't change over time
+4. **Using array methods** like `filter` or `sort` in combination with `map`
+5. **Legacy codebases** where migrating to `<For>` would be too disruptive
+
+## Edge Cases and Limitations
+
+1. **Chained Array Methods**
+
+   ```tsx
+   // The rule won't autofix chained array methods
+   {itemsSignal.value
+     .filter(x => x.active)
+     .map(item => <div key={item.id}>{item.name}</div>)}
+   ```
+
+2. **Complex Callbacks**
+
+   ```tsx
+   // Complex callbacks might need manual adjustment
+   {itemsSignal.value.map((item, index, array) => {
+     // Complex logic here
+     return <Item key={item.id} item={item} index={index} />;
+   })}
+   ```
+
+3. **Non-React Components**
+
+   ```tsx
+   // The rule only flags .map() in JSX contexts
+   const itemList = itemsSignal.value.map(item => createElement('div', null, item));
+   ```
+
+## Troubleshooting
+
+### False Positives
+
+If the rule reports issues incorrectly:
+
+1. Use an ESLint disable comment:
+
+   ```tsx
+   // eslint-disable-next-line react-signals-hooks/prefer-for-over-map
+   {itemsSignal.value.map(item => <Item key={item.id} item={item} />)}
+   ```
+
+2. Disable the rule for specific files:
+
+   ```json
+   {
+     "overrides": [
+       {
+         "files": ["*.test.tsx", "*.stories.tsx"],
+         "rules": {
+           "react-signals-hooks/prefer-for-over-map": "off"
+         }
+       }
+     ]
+   }
+   ```
+
+### Performance Issues
+
+If you experience performance problems with the rule:
+
+1. Increase the `maxNodes` threshold:
+
+   ```json
+   {
+     "rules": {
+       "react-signals-hooks/prefer-for-over-map": [
+         "error",
+         {
+           "performance": {
+             "maxNodes": 5000
+           }
+         }
+       ]
+     }
+   }
+   ```
+
+2. Disable performance metrics in production:
+
+   ```json
+   {
+     "rules": {
+       "react-signals-hooks/prefer-for-over-map": [
+         "error",
+         {
+           "performance": {
+             "enableMetrics": false,
+             "logMetrics": false
+           }
+         }
+       ]
+     }
+   }
+   ```
+
+## TypeScript Support
+
+This rule provides excellent TypeScript support and understands:
+
+1. **Type Narrowing**
+
+   ```tsx
+   function UserList({ users }: { users: Signal<Array<{ id: string; name: string }>> }) {
+     return (
+       <ul>
+         <For each={users}>
+           {(user) => (
+             // TypeScript knows user is { id: string; name: string }
+             <li key={user.id}>{user.name}</li>
+           )}
+         </For>
+       </ul>
+     );
+   }
+   ```
+
+2. **Generic Components**
+
+   ```tsx
+   function List<T>({ items, renderItem }: { 
+     items: Signal<Array<T>>;
+     renderItem: (item: T) => React.ReactNode;
+   }) {
+     return (
+       <div>
+         <For each={items}>
+           {(item) => (
+             // TypeScript preserves the generic type T
+             <div key={String(item.id)}>{renderItem(item)}</div>
+           )}
+         </For>
+       </div>
+     );
+   }
+   ```
+
+3. **Type Assertions**
+
+   ```tsx
+   const items = useSignal<Array<{ id: string; name: string }>>([]);
+   
+   // Type assertion works as expected
+   <For each={items as Signal<Array<{ id: string; name: string }>>}>
+     {(item) => <div key={item.id}>{item.name}</div>}
+   </For>
+   ```
+
 ## Migration Guide
 
 When migrating from `.map()` to `<For>`:

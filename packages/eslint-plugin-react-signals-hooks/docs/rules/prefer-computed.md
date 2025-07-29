@@ -6,6 +6,69 @@ This rule encourages using `computed()` from `@preact/signals-react` over `useMe
 
 This rule identifies instances where `useMemo` is used with signal dependencies and suggests replacing them with `computed()` for better performance and maintainability. The `computed()` function provides automatic dependency tracking and better optimization for signal-based computations.
 
+## Error Messages
+
+This rule can report the following messages:
+
+- `preferComputedWithSignal`: Suggests using `computed()` when a single signal is used
+- `preferComputedWithSignals`: Suggests using `computed()` when multiple signals are used
+- `suggestComputed`: Quick fix suggestion to convert to `computed()`
+- `addComputedImport`: Suggestion to add the `computed` import
+- `suggestAddComputedImport`: Suggestion to add the `computed` import with fix
+- `performanceLimitExceeded`: When analysis hits performance limits
+
+## Performance Considerations
+
+- `computed()` provides better performance than `useMemo` for signal-based computations
+- Computed values are only recalculated when their dependencies change
+- The rule includes performance optimizations to handle large codebases efficiently
+- For complex computations, consider using `computed` with `effect` for side effects
+
+## Configuration Options
+
+This rule accepts an options object with the following properties:
+
+```typescript
+{
+  "rules": {
+    "react-signals-hooks/prefer-computed": [
+      "warn",
+      {
+        "performance": {               // Performance tuning options
+          "maxTime": 100,             // Max time in ms to spend analyzing a file
+          "maxMemory": 100,           // Max memory in MB to use
+          "maxNodes": 2000,           // Max number of nodes to process
+          "maxOperations": {          // Operation-specific limits
+            "signalDependencyCheck": 500, // Max signal dependency checks
+            "computedConversion": 200     // Max computed conversions to process
+          },
+          "enableMetrics": false,     // Enable performance metrics collection
+          "logMetrics": false         // Log metrics to console
+        }
+      }
+    ]
+  }
+}
+```
+
+### Default Configuration
+
+```typescript
+{
+  performance: {
+    maxTime: 100,
+    maxMemory: 100,
+    maxNodes: 2000,
+    maxOperations: {
+      signalDependencyCheck: 500,
+      computedConversion: 200
+    },
+    enableMetrics: false,
+    logMetrics: false
+  }
+}
+```
+
 ### When to use `computed()` vs `useMemo`
 
 - **Use `computed()` when:**
@@ -255,6 +318,167 @@ You might want to disable this rule if:
 - `react-hooks/exhaustive-deps`: Ensures all dependencies are properly specified in hooks
 - `no-mutation-in-render`: Prevents direct signal mutations during render
 - `prefer-batch-updates`: Suggests batching multiple signal updates
+
+## When Not To Use It
+
+You might want to disable this rule in the following cases:
+
+1. **Working with non-reactive values** that don't depend on signals
+2. **Need to control execution timing** precisely with `useEffect`
+3. **Working with non-signal dependencies** that require manual dependency tracking
+4. **Using React's concurrent features** that depend on `useMemo`'s scheduling
+5. **Legacy codebases** where migrating to `computed()` would be too disruptive
+
+## Edge Cases and Limitations
+
+1. **Mixed Dependencies**
+
+   ```tsx
+   // The rule won't autofix when both signals and non-signals are used
+   const value = useMemo(() => {
+     return baseSignal.value * props.multiplier;
+   }, [baseSignal.value, props.multiplier]);
+   ```
+
+2. **Complex Dependencies**
+
+   ```tsx
+   // Complex dependency arrays might need manual adjustment
+   const result = useMemo(() => {
+     return computeExpensiveValue(
+       baseSignal.value,
+       anotherSignal.value,
+       props.value
+     );
+   }, [baseSignal.value, anotherSignal.value, props.value]);
+   ```
+
+3. **Non-Signal Dependencies**
+
+   ```tsx
+   // The rule ignores non-signal dependencies
+   const result = useMemo(() => {
+     return baseSignal.value * multiplier; // 'multiplier' is a prop or state
+   }, [baseSignal.value, multiplier]);
+   ```
+
+## Troubleshooting
+
+### False Positives
+
+If the rule reports issues incorrectly:
+
+1. Use an ESLint disable comment:
+
+   ```tsx
+   // eslint-disable-next-line react-signals-hooks/prefer-computed
+   const value = useMemo(() => {
+     return baseSignal.value * 2;
+   }, [baseSignal.value]);
+   ```
+
+2. Disable the rule for specific files:
+
+   ```json
+   {
+     "overrides": [
+       {
+         "files": ["*.test.tsx", "*.stories.tsx"],
+         "rules": {
+           "react-signals-hooks/prefer-computed": "off"
+         }
+       }
+     ]
+   }
+   ```
+
+### Performance Issues
+
+If you experience performance problems with the rule:
+
+1. Increase the `maxNodes` threshold:
+
+   ```json
+   {
+     "rules": {
+       "react-signals-hooks/prefer-computed": [
+         "warn",
+         {
+           "performance": {
+             "maxNodes": 5000
+           }
+         }
+       ]
+     }
+   }
+   ```
+
+2. Disable performance metrics in production:
+
+   ```json
+   {
+     "rules": {
+       "react-signals-hooks/prefer-computed": [
+         "warn",
+         {
+           "performance": {
+             "enableMetrics": false,
+             "logMetrics": false
+           }
+         }
+       ]
+     }
+   }
+   ```
+
+## TypeScript Support
+
+This rule provides excellent TypeScript support and understands:
+
+1. **Type Narrowing**
+
+   ```tsx
+   function UserProfile({ user }: { user: Signal<User | null> }) {
+     const fullName = computed(() => {
+       // TypeScript knows user is not null here
+       if (!user.value) return 'Guest';
+       return `${user.value.firstName} ${user.value.lastName}`;
+     });
+     
+     return <div>{fullName}</div>;
+   }
+   ```
+
+2. **Generic Types**
+
+   ```tsx
+   function List<T>({ items, renderItem }: { 
+     items: Signal<Array<T>>;
+     renderItem: (item: T) => React.ReactNode;
+   }) {
+     const itemCount = computed(() => items.value.length);
+     
+     return (
+       <div>
+         <p>Total items: {itemCount}</p>
+         <For each={items}>
+           {(item) => renderItem(item)}
+         </For>
+       </div>
+     );
+   }
+   ```
+
+3. **Type Assertions**
+
+   ```tsx
+   const data = useSignal<Data | null>(null);
+   
+   // Type assertion in computed
+   const processed = computed(() => {
+     return (data as Signal<Data>).value.items.map(processItem);
+   });
+   ```
 
 ## Performance Considerations
 

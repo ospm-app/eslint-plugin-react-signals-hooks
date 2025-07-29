@@ -25,6 +25,55 @@ This rule helps optimize React components by reducing the number of renders caus
 
 The rule activates when it detects multiple signal updates (default: 2 or more) in the same scope that could be batched together.
 
+## Configuration Options
+
+This rule accepts an options object with the following properties:
+
+```typescript
+{
+  "rules": {
+    "react-signals-hooks/prefer-batch-updates": [
+      "warn",
+      {
+        "minUpdates": 2,  // Minimum number of updates to trigger the rule
+        "performance": {  // Performance tuning options
+          "maxTime": 100,           // Max time in ms to spend analyzing a file
+          "maxMemory": 100,         // Max memory in MB to use
+          "maxNodes": 2000,         // Max number of nodes to process
+          "maxOperations": {        // Operation-specific limits
+            "batchMutation": 100,   // Max batch mutations to process
+            "signalUpdateFound": 1000, // Max signal updates to process
+            "nodeBudgetExceeded": 1  // Max node budget exceeded warnings
+          },
+          "enableMetrics": false,   // Enable performance metrics collection
+          "logMetrics": false       // Log metrics to console
+        }
+      }
+    ]
+  }
+}
+```
+
+### Default Configuration
+
+```typescript
+{
+  minUpdates: 2,
+  performance: {
+    maxTime: 100,
+    maxMemory: 100,
+    maxNodes: 2000,
+    maxOperations: {
+      batchMutation: 100,
+      signalUpdateFound: 1000,
+      nodeBudgetExceeded: 1
+    },
+    enableMetrics: false,
+    logMetrics: false
+  }
+}
+```
+
 ## Common Patterns and Anti-patterns
 
 ### ❌ Common Anti-patterns

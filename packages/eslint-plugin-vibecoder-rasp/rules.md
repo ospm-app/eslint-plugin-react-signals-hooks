@@ -529,90 +529,6 @@ useEffect(() => {
 - `allowEmptyDeps`: When `false`, warns about empty dependency arrays (default: `true`)
 - `ignoreStableDeps`: When `true`, skips checks for stable dependencies (default: `false`)
 
-#### `stable-dependencies`
-
-Ensures that all dependencies in React hooks are stable references to prevent unnecessary effect re-runs.
-
-**Incorrect** ❌:
-
-```tsx
-function UserProfile({ userId }) {
-  const [user, setUser] = useState(null);
-  
-  // New object created on each render
-  const fetchConfig = {
-    headers: { 'Authorization': 'Bearer token' }
-  };
-  
-  // Inline function in effect
-  useEffect(() => {
-    const fetchData = async () => {
-      const response = await fetch(`/api/users/${userId}`, fetchConfig);
-      setUser(await response.json());
-    };
-    
-    fetchData();
-  }, [userId, fetchConfig]); // ❌ fetchConfig changes on every render
-  
-  return <div>{user?.name}</div>;
-}
-```
-
-**Correct** ✅:
-
-```tsx
-function UserProfile({ userId }) {
-  const [user, setUser] = useState(null);
-  
-  // Memoize the config object
-  const fetchConfig = useMemo(() => ({
-    headers: { 'Authorization': 'Bearer token' }
-  }), []); // ✅ Stable reference
-  
-  // Memoize the fetch function
-  const fetchData = useCallback(async () => {
-    const response = await fetch(`/api/users/${userId}`, fetchConfig);
-    setUser(await response.json());
-  }, [userId, fetchConfig]);
-  
-  // Use the memoized function
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-  
-  return <div>{user?.name}</div>;
-}
-```
-
-**Configuration Options**:
-
-- `checkFunctionDeps`: When `true`, checks for stable function references (default: `true`)
-- `checkObjectDeps`: When `true`, checks for stable object/array references (default: `true`)
-- `allowedUnstableDeps`: Array of dependency names that are allowed to be unstable (default: `[]`)
-
-```
-
-**Correct** ✅:
-
-```tsx
-const [count, setCount] = useState(0);
-
-// Option 1: Include all dependencies
-useEffect(() => {
-  const timer = setInterval(() => {
-    setCount(c => c + 1); // Using functional update
-  }, 1000);
-  
-  return () => clearInterval(timer);
-}, []); // No dependencies needed with functional update
-
-// Option 2: Use useCallback for complex dependencies
-const fetchData = useCallback(async () => {
-  const result = await api.fetchData(count);
-  // ...
-}, [count]); // All dependencies properly declared
-```
-
 #### `missing-dependencies`
 
 Prevents missing dependencies in effect hooks that could lead to stale closures.
@@ -2385,62 +2301,6 @@ function UserProfile({ userId }) {
   }, [userId]); // ✅ All dependencies are specified
   
   // ...
-}
-```
-
-#### `rules-of-hooks`
-
-Enforces the Rules of Hooks to prevent bugs and unexpected behavior.
-
-**Incorrect** ❌:
-
-```tsx
-function BadExample({ shouldFetch }) {
-  // ❌ Conditional hook call
-  if (shouldFetch) {
-    const [data, setData] = useState(null);
-  }
-  
-  // ❌ Hook inside a loop
-  const items = [1, 2, 3].map(item => {
-    const [value, setValue] = useState(item);
-    return value;
-  });
-  
-  // ❌ Hook after early return
-  if (condition) return null;
-  const [state, setState] = useState(initialState);
-  
-  return <div>Bad example</div>;
-}
-```
-
-**Correct** ✅:
-
-```tsx
-function GoodExample({ shouldFetch }) {
-  // ✅ Call hooks at the top level
-  const [data, setData] = useState(null);
-  const [items, setItems] = useState([1, 2, 3]);
-  const [state, setState] = useState(initialState);
-  
-  // Handle conditional logic inside effects
-  useEffect(() => {
-    if (shouldFetch) {
-      fetchData().then(setData);
-    }
-  }, [shouldFetch]);
-  
-  // Handle derived state
-  const processedItems = useMemo(() => {
-    return items.map(item => processItem(item));
-  }, [items]);
-  
-  if (condition) {
-    return null;
-  }
-  
-  return <div>Good example</div>;
 }
 ```
 
@@ -4425,8 +4285,6 @@ Automatically configures and fixes ESLint configuration based on project type an
      // ...
      rules: {
        // React specific rules
-       'react-hooks/rules-of-hooks': 'error',
-       'react-hooks/exhaustive-deps': 'warn',
        'react/display-name': 'off',
        'react/jsx-uses-react': 'off',
        'react/react-in-jsx-scope': 'off',

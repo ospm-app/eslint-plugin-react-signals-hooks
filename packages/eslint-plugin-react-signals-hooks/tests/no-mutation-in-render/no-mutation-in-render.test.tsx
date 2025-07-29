@@ -381,6 +381,7 @@ export function TestForLoopMutation(): JSX.Element {
 
   // This should trigger a warning - mutation in for loop
   for (let i = 0; i < signals.length; i++) {
+    // @ts-expect-error
     signals[i].value = i * 10;
   }
 

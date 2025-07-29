@@ -145,24 +145,119 @@ For the purposes of this rule, a signal is considered to be:
 
 ## Options
 
-This rule accepts an options object with the following property:
+This rule accepts an options object with the following properties:
 
-- `ignorePattern` (string): A regex pattern for variable names to ignore. For example, you might want to ignore test files or certain utility functions.
+```typescript
+interface Options {
+  /** Regex pattern for variable names to ignore */
+  ignorePattern?: string;
+  
+  /** Custom signal function names to recognize (e.g., ['createSignal', 'customSignal']) */
+  signalNames?: string[];
+  
+  /** Severity levels for different violation types */
+  severity?: {
+    /** Severity for variables with Signal suffix that aren't signals */
+    variableWithSignalSuffixNotSignal?: 'error' | 'warn' | 'off';
+    /** Severity for parameters with Signal suffix that aren't signals */
+    parameterWithSignalSuffixNotSignal?: 'error' | 'warn' | 'off';
+    /** Severity for properties with Signal suffix that aren't signals */
+    propertyWithSignalSuffixNotSignal?: 'error' | 'warn' | 'off';
+  };
+  
+  /** Performance tuning options */
+  performance?: {
+    maxTime?: number;
+    maxMemory?: number;
+    maxNodes?: number;
+    enableMetrics?: boolean;
+    logMetrics?: boolean;
+    maxOperations?: Record<string, number>;
+  };
+}
+```
 
-### Example with options
+### Default Options
+
+```json
+{
+  "ignorePattern": "",
+  "signalNames": [],
+  "severity": {
+    "variableWithSignalSuffixNotSignal": "error",
+    "parameterWithSignalSuffixNotSignal": "error",
+    "propertyWithSignalSuffixNotSignal": "error"
+  },
+  "performance": {
+    "maxTime": 1000,
+    "maxNodes": 2000,
+    "enableMetrics": false,
+    "logMetrics": false
+  }
+}
+```
+
+### Example Configuration
 
 ```json
 {
   "rules": {
     "react-signals-hooks/no-non-signal-with-signal-suffix": [
       "error",
-      { "ignorePattern": "^Test" }
+      {
+        "ignorePattern": "^Test|mock",
+        "signalNames": ["createSignal", "customSignal"],
+        "severity": {
+          "variableWithSignalSuffixNotSignal": "error",
+          "parameterWithSignalSuffixNotSignal": "warn",
+          "propertyWithSignalSuffixNotSignal": "warn"
+        },
+        "performance": {
+          "maxTime": 2000,
+          "maxNodes": 3000
+        }
+      }
     ]
   }
 }
 ```
 
-This configuration would ignore variables that start with "Test" (case-sensitive).
+## Error Messages
+
+This rule can report the following types of issues:
+
+### Variable with Signal Suffix Not a Signal
+
+- **Message**: "Variable '{{name}}' has 'Signal' suffix but is not a signal."
+- **Description**: A variable with 'Signal' suffix is not initialized as a signal.
+- **Fix Suggestions**:
+  - Remove the 'Signal' suffix if the variable shouldn't be a signal
+  - Initialize the variable as a signal if it should be one
+
+### Parameter with Signal Suffix Not a Signal
+
+- **Message**: "Parameter '{{name}}' has 'Signal' suffix but is not typed as a signal."
+- **Description**: A function parameter with 'Signal' suffix is not typed as a signal.
+- **Fix Suggestions**:
+  - Remove the 'Signal' suffix if the parameter shouldn't be a signal
+  - Properly type the parameter as a signal (e.g., `Signal<T>`)
+
+### Property with Signal Suffix Not a Signal
+
+- **Message**: "Property '{{name}}' has 'Signal' suffix but is not a signal."
+- **Description**: An object/class property with 'Signal' suffix is not a signal.
+- **Fix Suggestions**:
+  - Remove the 'Signal' suffix if the property shouldn't be a signal
+  - Make the property a signal if it should be one
+
+### Performance Limit Exceeded
+
+- **Message**: "Performance limit exceeded for rule no-non-signal-with-signal-suffix {{message}}"
+- **Description**: The rule analysis took too long or used too many resources.
+- **How to fix**:
+  - Increase performance limits in rule options
+  - Split large files into smaller ones
+  - Use the `ignorePattern` option to exclude certain files
 
 ## Auto-fix
 

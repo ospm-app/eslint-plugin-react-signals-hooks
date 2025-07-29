@@ -1,6 +1,6 @@
 # Prefer Signal in JSX Rule
 
-This rule enforces direct usage of signals in JSX without explicit `.value` access. In JSX, signals can be used directly for better readability and cleaner code.
+This rule enforces direct usage of signals in JSX without explicit `.value` access. In JSX, signals can be used directly for better readability and cleaner code, as they are automatically unwrapped when used in JSX expressions.
 
 ## Rule Details
 
@@ -12,11 +12,16 @@ This rule identifies instances where `.value` is used to access signal values wi
   - Rendering a signal value directly in JSX
   - The signal is used as a prop value
   - The signal is used in a JSX expression
+  - The signal is used in JSX attributes
+  - The signal is used in JSX fragments
+  - The signal is used in conditional JSX rendering
 
 - **Keep `.value` access when:**
   - The signal is used in a function that's passed as a prop
   - The signal is used in a complex expression that requires explicit `.value` access
   - The signal is used in a template literal or string concatenation
+  - The signal is used in a callback function inside JSX
+  - The signal is used with `JSON.stringify()` or other functions that need the actual value
 
 ## Common Patterns and Anti-patterns
 
@@ -43,18 +48,273 @@ This rule identifies instances where `.value` is used to access signal values wi
    ```tsx
    function NotificationBadge({ countSignal }) {
      return (
-       <div>
+       <>
          {countSignal.value > 0 && (
-           <span className="badge">
-             {countSignal.value} new notifications
-           </span>
+           <span className="badge">{countSignal.value}</span>
          )}
+       </>
+     );
+   }
+   ```
+
+3. **.value in JSX attributes**
+
+   ```tsx
+   function Avatar({ userSignal }) {
+     const size = useSignal(32);
+     
+     return (
+       <img 
+         src={userSignal.value.avatar} 
+         alt={userSignal.value.name}
+         width={size.value}
+         height={size.value}
+       />
+     );
+   }
+   ```
+
+4. **.value in JSX fragments**
+
+   ```tsx
+   function UserInfo({ userSignal }) {
+     return (
+       <>
+         <h1>Welcome back, {userSignal.value.name}!</h1>
+         <p>Your email is: {userSignal.value.email}</p>
+       </>
+     );
+   }
+   ```
+
+### ✅ Correct Patterns
+
+1. **Direct signal usage in JSX**
+
+   ```tsx
+   function UserProfile({ userSignal }) {
+     const theme = useSignal('light');
+     
+     return (
+       <div className={`profile ${theme}`}>
+         <h1>{userSignal.name}'s Profile</h1>
+         <p>Email: {userSignal.email}</p>
+         <p>Member since: {new Date(userSignal.joinDate).toLocaleDateString()}</p>
        </div>
      );
    }
    ```
 
-3. **Redundant .value in string templates**
+2. **Direct signal in conditional rendering**
+
+   ```tsx
+   function NotificationBadge({ countSignal }) {
+     return (
+       <>
+         {countSignal > 0 && (
+           <span className="badge">{countSignal}</span>
+         )}
+       </>
+     );
+   }
+   ```
+
+3. **Direct signal in JSX attributes**
+
+   ```tsx
+   function Avatar({ userSignal }) {
+     const size = useSignal(32);
+     
+     return (
+       <img 
+         src={userSignal.avatar} 
+         alt={userSignal.name}
+         width={size}
+         height={size}
+       />
+     );
+   }
+   ```
+
+4. **When to keep .value**
+
+   ```tsx
+   function UserProfile({ userSignal }) {
+     // Keep .value when passing to functions
+     const fullName = `${userSignal.value.firstName} ${userSignal.value.lastName}`;
+     
+     // Keep .value in callbacks
+     const handleClick = useCallback(() => {
+       console.log('User ID:', userSignal.value.id);
+     }, [userSignal]);
+     
+     // Keep .value with JSON.stringify
+     const userData = JSON.stringify(userSignal.value);
+     
+     // But use directly in JSX
+     return (
+       <div>
+         <h1>{fullName}</h1>
+         <button onClick={handleClick}>Log User</button>
+         <pre>{userData}</pre>
+       </div>
+     );
+   }
+   ```
+
+## Performance Considerations
+
+### Benefits of Direct Signal Usage
+
+1. **Cleaner Code**: Removes unnecessary `.value` access, making JSX more readable
+2. **Better Performance**: Leverages React's automatic signal unwrapping in JSX
+3. **Consistency**: Encourages a consistent pattern across the codebase
+
+### When to Disable
+
+You might want to disable this rule in specific cases:
+
+1. **Complex Expressions**: When the signal is part of a complex expression
+
+   ```tsx
+   // eslint-disable-next-line react-signals-hooks/prefer-signal-in-jsx
+   const result = someCondition ? signal.value : defaultValue;
+   ```
+
+2. **Template Literals**: When using signals in template literals
+
+   ```tsx
+   // eslint-disable-next-line react-signals-hooks/prefer-signal-in-jsx
+   const greeting = `Hello, ${userSignal.value.name}!`;
+   ```
+
+## Options
+
+This rule accepts an options object with the following properties:
+
+```ts
+interface Options {
+  severity?: {
+    preferDirectSignalUsage?: 'error' | 'warn' | 'off';
+  };
+}
+```
+
+## TypeScript Support
+
+This rule works well with TypeScript and provides proper type checking:
+
+```tsx
+interface User {
+  id: string;
+  name: string;
+  email: string;
+}
+
+function UserProfile({ userSignal }: { userSignal: Signal<User> }) {
+  // TypeScript knows the type of userSignal.value
+  const userId = userSignal.value.id;
+  
+  // But in JSX, we can use it directly
+  return (
+    <div>
+      <h1>{userSignal.name}</h1>
+      <p>{userSignal.email}</p>
+    </div>
+  );
+}
+```
+
+## Edge Cases
+
+### Nested Signals
+
+When working with nested signals, you still don't need `.value` in JSX:
+
+```tsx
+function NestedSignalExample() {
+  const userSignal = useSignal({
+    name: 'John',
+    address: signal({
+      street: '123 Main St',
+      city: 'Anytown'
+    })
+  });
+  
+  return (
+    <div>
+      <h1>{userSignal.name}</h1>
+      <p>{userSignal.address.street}, {userSignal.address.city}</p>
+    </div>
+  );
+}
+```
+
+### Signal Arrays
+
+When working with arrays of signals:
+
+```tsx
+function TodoList() {
+  const todos = useSignal([
+    signal({ id: 1, text: 'Learn Signals', completed: false }),
+    signal({ id: 2, text: 'Build app', completed: false })
+  ]);
+  
+  return (
+    <ul>
+      {todos.map(todo => (
+        <li key={todo.id}>
+          <input 
+            type="checkbox" 
+            checked={todo.completed} 
+            onChange={() => {
+              // Need .value here to update the signal
+              todo.value = { ...todo.value, completed: !todo.value.completed };
+            }} 
+          />
+          {todo.text}
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+## Migration Guide
+
+### From .value to Direct Signal Usage
+
+1. **Identify .value usage in JSX**: Look for `.value` in JSX expressions and attributes
+
+2. **Remove .value in JSX**:
+
+   ```tsx
+   // Before
+   <div>{signal.value}</div>
+   
+   // After
+   <div>{signal}</div>
+   ```
+
+3. **Keep .value in callbacks and effects**:
+
+   ```tsx
+   // Keep .value in callbacks
+   const handleClick = useCallback(() => {
+     console.log(signal.value);
+   }, [signal]);
+   
+   // Keep .value in effects
+   useEffect(() => {
+     const subscription = someObservable.subscribe(value => {
+       signal.value = value;
+     });
+     return () => subscription.unsubscribe();
+   }, [signal]);
+   ```
+
+4. **Redundant .value in string templates**
 
    ```tsx
    function WelcomeBanner({ userSignal }) {
@@ -67,7 +327,7 @@ This rule identifies instances where `.value` is used to access signal values wi
    }
    ```
 
-4. **Overusing .value in complex expressions**
+5. **Overusing .value in complex expressions**
 
    ```tsx
    function PriceDisplay({ priceSignal, discountSignal }) {

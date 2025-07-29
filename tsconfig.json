@@ -17,10 +17,14 @@
     "resolveJsonModule": true,
     "noImplicitReturns": true,
     "strictFunctionTypes": true,
-    "noUncheckedIndexedAccess": false,
+    "verbatimModuleSyntax": true,
+    "noUncheckedIndexedAccess": true,
     "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
     "allowSyntheticDefaultImports": true,
+    "noUncheckedSideEffectImports": true,
     "forceConsistentCasingInFileNames": true,
+    "moduleDetection": "force",
     "types": ["node"]
   },
   "exclude": ["node_modules"]

@@ -1,317 +1,397 @@
 /** biome-ignore-all assist/source/organizeImports: off */
-import { ESLintUtils, type TSESLint, type TSESTree } from '@typescript-eslint/utils';
-import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
-
 import {
-  endPhase,
-  startPhase,
-  recordMetric,
-  stopTracking,
-  startTracking,
-  trackOperation,
-  createPerformanceTracker,
-  DEFAULT_PERFORMANCE_BUDGET,
-} from './utils/performance.js';
-import { getRuleDocUrl } from './utils/urls.js';
-import type { PerformanceBudget } from './utils/types.js';
-import { PerformanceOperations } from './utils/performance-constants.js';
+	ESLintUtils,
+	type TSESLint,
+	type TSESTree,
+} from "@typescript-eslint/utils";
+import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
-type Option = {
-  performance: PerformanceBudget;
+import { PerformanceOperations } from "./utils/performance-constants.js";
+import {
+	endPhase,
+	startPhase,
+	recordMetric,
+	stopTracking,
+	startTracking,
+	trackOperation,
+	createPerformanceTracker,
+	DEFAULT_PERFORMANCE_BUDGET,
+} from "./utils/performance.js";
+import type { PerformanceBudget } from "./utils/types.js";
+import { getRuleDocUrl } from "./utils/urls.js";
+
+type Severity = {
+	usePeekInEffect?: "error" | "warn" | "off";
+	useValueInJSX?: "error" | "warn" | "off";
+	preferDirectSignalUsage?: "error" | "warn" | "off";
+	preferPeekInNonReactiveContext?: "error" | "warn" | "off";
 };
 
-type Options = [Option];
+type Option = {
+	performance?: PerformanceBudget;
+	severity?: Severity;
+};
+
+type Options = [Option?];
 
 type MessageIds =
-  | 'usePeekInEffect'
-  | 'useValueInJSX'
-  | 'preferDirectSignalUsage'
-  | 'preferPeekInNonReactiveContext';
+	| "usePeekInEffect"
+	| "useValueInJSX"
+	| "preferDirectSignalUsage"
+	| "preferPeekInNonReactiveContext";
 
 function isInDependencyArray(node: TSESTree.Node): boolean {
-  let current = node;
+	let current = node;
 
-  while (current.parent) {
-    current = current.parent;
-    if (
-      current.type === 'ArrayExpression' &&
-      current.parent?.type === 'CallExpression' &&
-      current.parent.callee.type === 'Identifier' &&
-      current.parent.callee.name === 'useEffect'
-    ) {
-      return true;
-    }
-  }
+	while (current.parent) {
+		current = current.parent;
+		if (
+			current.type === "ArrayExpression" &&
+			current.parent.type === "CallExpression" &&
+			current.parent.callee.type === "Identifier" &&
+			current.parent.callee.name === "useEffect"
+		) {
+			return true;
+		}
+	}
 
-  return false;
+	return false;
 }
 
 function isInJSXContext(node: TSESTree.Node): boolean {
-  let parent: TSESTree.Node | undefined = node.parent;
+	let parent: TSESTree.Node | undefined = node.parent;
 
-  while (parent) {
-    if (parent.type === 'JSXElement' || parent.type === 'JSXFragment') {
-      return true;
-    }
+	while (parent) {
+		if (parent.type === "JSXElement" || parent.type === "JSXFragment") {
+			return true;
+		}
 
-    parent = parent.parent;
-  }
+		parent = parent.parent;
+	}
 
-  return false;
+	return false;
 }
 
 let isInEffect = false;
 let isInJSX = false;
 
-const ruleName = 'prefer-signal-methods';
+const ruleName = "prefer-signal-methods";
 
-export const preferSignalMethodsRule = ESLintUtils.RuleCreator((name: string) => {
-  return getRuleDocUrl(name);
-})<Options, MessageIds>({
-  name: ruleName,
-  meta: {
-    type: 'suggestion',
-    fixable: 'code',
-    hasSuggestions: true,
-    docs: {
-      description:
-        "Enforces proper usage of signal methods (`.value`, `.peek()`) in different contexts. This rule helps ensure you're using the right signal access pattern for the context, whether it's in JSX, effects, or regular code. It promotes best practices for signal usage to optimize reactivity and performance.",
-      url: getRuleDocUrl(ruleName),
-    },
-    messages: {
-      usePeekInEffect:
-        'Use signal.peek() to read the current value without subscribing to changes in this effect',
-      useValueInJSX: 'Use the signal directly in JSX instead of accessing .value',
-      preferDirectSignalUsage: 'Use the signal directly in JSX instead of .peek()',
-      preferPeekInNonReactiveContext:
-        'Prefer .peek() when reading signal value without using its reactive value',
-    },
-    schema: [
-      {
-        type: 'object',
-        properties: {
-          performance: {
-            type: 'object',
-            properties: {
-              maxTime: { type: 'number', minimum: 1 },
-              maxMemory: { type: 'number', minimum: 1 },
-              maxNodes: { type: 'number', minimum: 1 },
-              enableMetrics: { type: 'boolean' },
-              logMetrics: { type: 'boolean' },
-              maxOperations: {
-                type: 'object',
-                properties: Object.fromEntries(
-                  Object.entries(PerformanceOperations).map(([key]) => [
-                    key,
-                    { type: 'number', minimum: 1 },
-                  ])
-                ),
-              },
-            },
-            additionalProperties: false,
-          },
-        },
-        additionalProperties: false,
-      },
-    ],
-  },
-  defaultOptions: [
-    {
-      performance: DEFAULT_PERFORMANCE_BUDGET,
-    },
-  ],
-  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
-    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
+function getSeverity(
+	messageId: MessageIds,
+	options: Option | undefined,
+): "error" | "warn" | "off" {
+	if (!options?.severity) {
+		return "error";
+	}
 
-    startPhase(perfKey, 'ruleInit');
+	// eslint-disable-next-line security/detect-object-injection
+	const severity = options.severity[messageId];
 
-    const perf = createPerformanceTracker<Options>(perfKey, option.performance, context);
+	return severity ?? "error";
+}
 
-    if (option.performance.enableMetrics === true) {
-      startTracking(context, perfKey, option.performance, ruleName);
-    }
+export const preferSignalMethodsRule = ESLintUtils.RuleCreator(
+	(name: string): string => {
+		return getRuleDocUrl(name);
+	},
+)<Options, MessageIds>({
+	name: ruleName,
+	meta: {
+		type: "suggestion",
+		fixable: "code",
+		hasSuggestions: true,
+		docs: {
+			description:
+				"Enforces proper usage of signal methods (`.value`, `.peek()`) in different contexts. This rule helps ensure you're using the right signal access pattern for the context, whether it's in JSX, effects, or regular code. It promotes best practices for signal usage to optimize reactivity and performance.",
+			url: getRuleDocUrl(ruleName),
+		},
+		messages: {
+			usePeekInEffect:
+				"Use signal.peek() to read the current value without subscribing to changes in this effect",
+			useValueInJSX:
+				"Use the signal directly in JSX instead of accessing .value",
+			preferDirectSignalUsage:
+				"Use the signal directly in JSX instead of .peek()",
+			preferPeekInNonReactiveContext:
+				"Prefer .peek() when reading signal value without using its reactive value",
+		},
+		schema: [
+			{
+				type: "object",
+				properties: {
+					performance: {
+						type: "object",
+						properties: {
+							maxTime: { type: "number", minimum: 1 },
+							maxMemory: { type: "number", minimum: 1 },
+							maxNodes: { type: "number", minimum: 1 },
+							enableMetrics: { type: "boolean" },
+							logMetrics: { type: "boolean" },
+							maxOperations: {
+								type: "object",
+								properties: Object.fromEntries(
+									Object.entries(PerformanceOperations).map(([key]) => [
+										key,
+										{ type: "number", minimum: 1 },
+									]),
+								),
+							},
+						},
+						additionalProperties: false,
+					},
+				},
+				additionalProperties: false,
+			},
+		],
+	},
+	defaultOptions: [
+		{
+			performance: DEFAULT_PERFORMANCE_BUDGET,
+		},
+	],
+	create(
+		context: Readonly<RuleContext<MessageIds, Options>>,
+		[option],
+	): ESLintUtils.RuleListener {
+		const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    console.info(`${ruleName}: Rule configuration:`, option);
+		startPhase(perfKey, "ruleInit");
 
-    recordMetric(perfKey, 'config', {
-      performance: {
-        enableMetrics: option.performance.enableMetrics,
-        logMetrics: option.performance.logMetrics,
-      },
-    });
+		const perf = createPerformanceTracker<Options>(
+			perfKey,
+			option?.performance,
+			context,
+		);
 
-    trackOperation(perfKey, PerformanceOperations.ruleInit);
+		if (option?.performance?.enableMetrics === true) {
+			startTracking(context, perfKey, option.performance, ruleName);
+		}
 
-    endPhase(perfKey, 'ruleInit');
+		console.info(
+			`${ruleName}: Initializing rule for file: ${context.filename}`,
+		);
+		console.info(`${ruleName}: Rule configuration:`, option);
 
-    let nodeCount = 0;
+		recordMetric(perfKey, "config", {
+			performance: {
+				enableMetrics: option?.performance?.enableMetrics,
+				logMetrics: option?.performance?.logMetrics,
+			},
+		});
 
-    function shouldContinue(): boolean {
-      nodeCount++;
+		trackOperation(perfKey, PerformanceOperations.ruleInit);
 
-      if (nodeCount > (option.performance?.maxNodes ?? 2_000)) {
-        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+		endPhase(perfKey, "ruleInit");
 
-        return false;
-      }
+		let nodeCount = 0;
 
-      return true;
-    }
+		function shouldContinue(): boolean {
+			nodeCount++;
 
-    startPhase(perfKey, 'ruleExecution');
+			if (
+				typeof option?.performance?.maxNodes === "number" &&
+				nodeCount > option.performance.maxNodes
+			) {
+				trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
-    return {
-      '*': (node: TSESTree.Node): void => {
-        if (!shouldContinue()) {
-          endPhase(perfKey, 'recordMetrics');
+				return false;
+			}
 
-          stopTracking(perfKey);
+			return true;
+		}
 
-          return;
-        }
+		startPhase(perfKey, "ruleExecution");
 
-        perf.trackNode(node);
+		return {
+			"*": (node: TSESTree.Node): void => {
+				if (!shouldContinue()) {
+					endPhase(perfKey, "recordMetrics");
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-      },
+					stopTracking(perfKey);
 
-      'CallExpression[callee.name="useEffect"]'(): void {
-        isInEffect = true;
-      },
-      'CallExpression[callee.name="useEffect"]:exit'(): void {
-        isInEffect = false;
-      },
+					return;
+				}
 
-      JSXElement(): void {
-        isInJSX = true;
-      },
-      'JSXElement:exit'(): void {
-        isInJSX = false;
-      },
-      JSXFragment(): void {
-        isInJSX = true;
-      },
-      'JSXFragment:exit'(): void {
-        isInJSX = false;
-      },
+				perf.trackNode(node);
 
-      'Identifier:matches([name$="Signal"], [name$="signal"])'(node: TSESTree.Node): void {
-        if (
-          !(
-            node.type === 'Identifier' &&
-            (node.name.endsWith('Signal') || node.name.endsWith('signal'))
-          )
-        ) {
-          return;
-        }
+				trackOperation(
+					perfKey,
+					PerformanceOperations[`${node.type}Processing`],
+				);
+			},
 
-        // Handle direct signal usage (not a member expression)
-        if (node.parent?.type !== 'MemberExpression' || node.parent.object !== node) {
-          if (isInEffect && !isInDependencyArray(node)) {
-            context.report({
-              node,
-              messageId: 'usePeekInEffect',
-              fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-                return fixer.insertTextAfter(node, '.peek()');
-              },
-            });
-          } else if (isInJSX || isInJSXContext(node)) {
-            context.report({
-              node,
-              messageId: 'useValueInJSX',
-              fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-                return fixer.insertTextAfter(node, '.value');
-              },
-            });
-          }
+			'CallExpression[callee.name="useEffect"]'(): void {
+				isInEffect = true;
+			},
+			'CallExpression[callee.name="useEffect"]:exit'(): void {
+				isInEffect = false;
+			},
 
-          return;
-        }
+			JSXElement(): void {
+				isInJSX = true;
+			},
+			"JSXElement:exit"(): void {
+				isInJSX = false;
+			},
+			JSXFragment(): void {
+				isInJSX = true;
+			},
+			"JSXFragment:exit"(): void {
+				isInJSX = false;
+			},
 
-        if (!('name' in node.parent.property)) {
-          return;
-        }
+			'Identifier:matches([name$="Signal"], [name$="signal"])'(
+				node: TSESTree.Node,
+			): void {
+				if (
+					!(
+						node.type === "Identifier" &&
+						(node.name.endsWith("Signal") || node.name.endsWith("signal"))
+					)
+				) {
+					return;
+				}
 
-        // Handle .value usage in JSX
-        if ((isInJSX || isInJSXContext(node)) && node.parent.property.name === 'value') {
-          context.report({
-            node: node.parent.property,
-            messageId: 'useValueInJSX',
-            fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-              if ('property' in node.parent) {
-                return fixer.remove(node.parent.property);
-              }
+				// Handle direct signal usage (not a member expression)
+				if (
+					node.parent.type !== "MemberExpression" ||
+					node.parent.object !== node
+				) {
+					if (isInEffect && !isInDependencyArray(node)) {
+						const severity = getSeverity("usePeekInEffect", option);
+						if (severity === "off") return;
 
-              return null;
-            },
-          });
+						context.report({
+							node,
+							messageId: "usePeekInEffect",
+							fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+								return fixer.insertTextAfter(node, ".peek()");
+							},
+						});
+					} else if (isInJSX || isInJSXContext(node)) {
+						const severity = getSeverity("useValueInJSX", option);
+						if (severity === "off") return;
 
-          return;
-        }
+						context.report({
+							node,
+							messageId: "useValueInJSX",
+							fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+								return fixer.insertTextAfter(node, ".value");
+							},
+						});
+					}
 
-        // Handle .peek() usage in JSX
-        if ((isInJSX || isInJSXContext(node)) && node.parent.property.name === 'peek') {
-          context.report({
-            node: node.parent.property,
-            messageId: 'preferDirectSignalUsage',
-            fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-              return fixer.remove(node.parent);
-            },
-          });
+					return;
+				}
 
-          return;
-        }
+				if (!("name" in node.parent.property)) {
+					return;
+				}
 
-        // Handle .value usage in effects outside of dependency arrays
-        if (isInEffect && !isInDependencyArray(node) && node.parent.property.name === 'value') {
-          context.report({
-            node: node.parent.property,
-            messageId: 'preferPeekInNonReactiveContext',
-            fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-              if ('property' in node.parent) {
-                return fixer.replaceText(node.parent.property, 'peek()');
-              }
+				// Handle .value usage in JSX
+				if (
+					(isInJSX || isInJSXContext(node)) &&
+					node.parent.property.name === "value"
+				) {
+					const severity = getSeverity("useValueInJSX", option);
 
-              return null;
-            },
-          });
-        }
-      },
+					if (severity === "off") return;
 
-      // Clean up
-      'Program:exit'(): void {
-        startPhase(perfKey, 'programExit');
+					context.report({
+						node: node.parent.property,
+						messageId: "useValueInJSX",
+						fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+							if ("property" in node.parent) {
+								return fixer.remove(node.parent.property);
+							}
 
-        try {
-          startPhase(perfKey, 'recordMetrics');
+							return null;
+						},
+					});
 
-          const finalMetrics = stopTracking(perfKey);
+					return;
+				}
 
-          if (typeof finalMetrics !== 'undefined') {
-            console.info(
-              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+				// Handle .peek() usage in JSX
+				if (
+					(isInJSX || isInJSXContext(node)) &&
+					node.parent.property.name === "peek"
+				) {
+					const severity = getSeverity("preferDirectSignalUsage", option);
 
-            if (finalMetrics.exceededBudget) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
+					if (severity === "off") return;
 
-          stopTracking(perfKey);
-        }
+					context.report({
+						node: node.parent.property,
+						messageId: "preferDirectSignalUsage",
+						fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+							return fixer.remove(node.parent);
+						},
+					});
 
-        perf['Program:exit']();
+					return;
+				}
 
-        endPhase(perfKey, 'programExit');
-      },
-    };
-  },
+				// Handle .value usage in effects outside of dependency arrays
+				if (
+					isInEffect &&
+					!isInDependencyArray(node) &&
+					node.parent.property.name === "value"
+				) {
+					const severity = getSeverity(
+						"preferPeekInNonReactiveContext",
+						option,
+					);
+					if (severity === "off") return;
+
+					context.report({
+						node: node.parent.property,
+						messageId: "preferPeekInNonReactiveContext",
+						fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+							if ("property" in node.parent) {
+								return fixer.replaceText(node.parent.property, "peek()");
+							}
+
+							return null;
+						},
+					});
+				}
+			},
+
+			// Clean up
+			"Program:exit"(): void {
+				startPhase(perfKey, "programExit");
+
+				try {
+					startPhase(perfKey, "recordMetrics");
+
+					const finalMetrics = stopTracking(perfKey);
+
+					if (typeof finalMetrics !== "undefined") {
+						console.info(
+							`\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? "EXCEEDED" : "OK"}):`,
+						);
+						console.info(`  File: ${context.filename}`);
+						console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
+						console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+
+						if (finalMetrics.exceededBudget === true) {
+							console.warn("\n⚠️  Performance budget exceeded!");
+						}
+					}
+				} catch (error: unknown) {
+					console.error("Error recording metrics:", error);
+				} finally {
+					endPhase(perfKey, "recordMetrics");
+
+					stopTracking(perfKey);
+				}
+
+				perf["Program:exit"]();
+
+				endPhase(perfKey, "programExit");
+			},
+		};
+	},
 });

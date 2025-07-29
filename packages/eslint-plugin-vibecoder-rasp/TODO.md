@@ -153,6 +153,17 @@
 - Document complex state logic
 - Document side effects
 
+## Code Quality
+
+### Syntax Validation
+
+- [ ] Detect and fix broken if/for/while/switch statements with missing closing brackets
+  - Should validate semantic code structure
+  - Identify correct line and indentation for missing closing brackets
+  - autofix
+  - Should handle nested blocks and complex scopes
+  - Must work with JSX and TypeScript syntax
+
 ## Styling
 
 ### CSS-in-JS

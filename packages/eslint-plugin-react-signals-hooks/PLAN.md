@@ -22,6 +22,7 @@ This document outlines the implementation status and plan for all rules in the p
 | ✅ | `prefer-signal-reads` | ✅ Complete | ✅ Complete | ✅ Complete |
 | ✅ | `prefer-use-signal-over-use-state` | ✅ Complete | ✅ Complete | ✅ Complete |
 | ✅ | `require-use-signals` | ✅ Complete | ✅ Complete | ✅ Complete |
+| ✅ | `restrict-signal-locations` | ✅ Complete | ✅ Complete | ✅ Complete |
 | ✅ | `signal-variable-name` | ✅ Complete | ✅ Complete | ✅ Complete |
 | ✅ | `warn-on-unnecessary-untracked` | ✅ Complete | ✅ Complete | ✅ Complete |
 

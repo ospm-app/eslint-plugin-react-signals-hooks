@@ -51,8 +51,8 @@
 - **Version**: 4.6.0
 - **Release**: 2023-01-10
 - **Key Rules**:
-  - `react-hooks/rules-of-hooks`
   - `react-hooks/exhaustive-deps`
+  - `react-hooks/rules-of-hooks`
 
 ### 6. eslint-plugin-prettier
 

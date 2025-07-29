@@ -2,11 +2,140 @@
 
 This rule prevents direct signal assignments inside React's `useEffect` and `useLayoutEffect` hooks, which can cause unexpected behavior in React 18+ strict mode. Instead, it suggests using `useSignalsEffect` or `useSignalsLayoutEffect` from `@preact/signals-react/runtime`.
 
+## Options
+
+This rule accepts an options object with the following properties:
+
+```typescript
+interface Options {
+  /** Custom signal function names (e.g., ['createSignal', 'useSignal']) */
+  signalNames?: string[];
+  
+  /** File patterns where signal assignments are allowed (e.g., ['^test/', '.spec.ts$']) */
+  allowedPatterns?: string[];
+  
+  /** 
+   * Custom severity levels for different violation types 
+   * @default { signalAssignmentInEffect: 'error', signalAssignmentInLayoutEffect: 'error' }
+   */
+  severity?: {
+    // Severity for signal assignments in useEffect hooks
+    signalAssignmentInEffect?: 'error' | 'warn' | 'off';
+    // Severity for signal assignments in useLayoutEffect hooks
+    signalAssignmentInLayoutEffect?: 'error' | 'warn' | 'off';
+    // Severity for performance limit exceeded warnings
+    performanceLimitExceeded?: 'error' | 'warn' | 'off';
+  };
+  
+  /** Performance tuning options */
+  performance?: {
+    maxTime?: number;
+    maxMemory?: number;
+    maxNodes?: number;
+    enableMetrics?: boolean;
+    logMetrics?: boolean;
+    maxOperations?: Record<string, number>;
+  };
+}
+```
+
+### Default Options
+
+```json
+{
+  "signalNames": ["Signal"],
+  "allowedPatterns": [],
+  "severity": {
+    "signalAssignmentInEffect": "error",
+    "signalAssignmentInLayoutEffect": "error",
+    "performanceLimitExceeded": "warn"
+  },
+  "performance": {
+    "maxTime": 1000,
+    "maxNodes": 2000,
+    "enableMetrics": false,
+    "logMetrics": false
+  }
+}
+```
+
+### Example Configuration
+
+```json
+{
+  "rules": {
+    "react-signals-hooks/no-signal-assignment-in-effect": [
+      "error",
+      {
+        "signalNames": ["Signal", "useSignal", "createSignal"],
+        "allowedPatterns": ["^test/", ".spec.ts$"],
+        "severity": {
+          "signalAssignmentInEffect": "error",
+          "signalAssignmentInLayoutEffect": "warn"
+        },
+        "performance": {
+          "maxTime": 2000,
+          "maxNodes": 3000
+        }
+      }
+    ]
+  }
+}
+```
+
 ## Rule Details
 
 This rule helps prevent common issues that can occur when directly mutating signals inside React effects, especially in concurrent rendering scenarios.
 
-### Why is this important?
+## Error Messages
+
+This rule can report the following types of issues:
+
+### Signal Assignment in Effect
+
+- **Message**: "Avoid direct signal assignments inside useEffect. Use useSignalsEffect from '@preact/signals-react/runtime' instead."
+- **Description**: Direct signal assignments in useEffect can cause issues with React's concurrent features.
+- **Fix Suggestion**: Replace useEffect with useSignalsEffect
+
+### Signal Assignment in Layout Effect
+
+- **Message**: "Avoid direct signal assignments inside useLayoutEffect. Use useSignalsLayoutEffect from '@preact/signals-react/runtime' instead."
+- **Description**: Direct signal assignments in useLayoutEffect can cause issues with React's concurrent features.
+- **Fix Suggestion**: Replace useLayoutEffect with useSignalsLayoutEffect
+
+### Performance Limit Exceeded
+
+- **Message**: "Performance limit exceeded for rule no-signal-assignment-in-effect {{message}}"
+- **Description**: The rule analysis took too long or used too many resources.
+- **How to fix**
+  - Increase performance limits in rule options
+  - Split large components into smaller ones
+  - Use the `allowedPatterns` option to exclude test files
+
+### When Not To Use It
+
+You might want to disable this rule in these cases:
+
+1. **Testing**: When writing tests that verify effect behavior
+
+   ```tsx
+   // test/Component.test.tsx
+   test('updates signal in effect', () => {
+     // eslint-disable-next-line react-signals-hooks/no-signal-assignment-in-effect
+     useEffect(() => {
+       testSignal.value = 'test';
+     }, []);
+     // ...
+   });
+   ```
+
+2. **Legacy Code**: When migrating large codebases, you might want to disable the rule temporarily
+
+3. **Third-party Libraries**: When working with libraries that have their own signal management
+
+4. **Performance-sensitive Code**: In rare cases where the performance overhead of `useSignalsEffect` is not acceptable
+
+## Why is this important?
 
 In React 18+ with strict mode, effects can run multiple times in development. Direct signal assignments in effects can lead to:
 
@@ -22,6 +151,66 @@ A signal assignment is any assignment to a property named `value` on an identifi
 ```typescript
 countSignal.value = newValue;
 userSignal.value.name = 'New Name';
+```
+
+## TypeScript Support
+
+This rule works well with TypeScript and provides proper type checking for signal assignments. Here are some TypeScript-specific examples:
+
+```tsx
+// TypeScript correctly infers signal types
+const count = useSignal(0);
+const user = useSignal({ name: 'John', age: 30 });
+
+// The rule understands type guards and type narrowing
+function processUser(userSignal: Signal<{ name: string; age: number }>) {
+  useEffect(() => {
+    // ❌ Still caught by the rule despite type narrowing
+    if (userSignal.value.age > 18) {
+      userSignal.value = { ...userSignal.value, isAdult: true };
+    }
+  }, []);
+}
+
+// Works with generic components and hooks
+function useCustomHook<T>(initialValue: T) {
+  const signal = useSignal(initialValue);
+  
+  useEffect(() => {
+    // ❌ Caught by the rule
+    signal.value = initialValue;
+  }, [initialValue]);
+  
+  return signal;
+}
+```
+
+## Performance Considerations
+
+This rule includes several performance optimizations:
+
+1. **Selective Analysis**: Only analyzes functions that contain signal assignments
+2. **Pattern Caching**: Caches signal name patterns for faster matching
+3. **Early Exit**: Stops processing once the maximum number of issues is found
+4. **Configurable Limits**: All performance limits are configurable via options
+
+For large codebases, consider these optimizations:
+
+```json
+{
+  "rules": {
+    "react-signals-hooks/no-signal-assignment-in-effect": [
+      "error",
+      {
+        "performance": {
+          "maxTime": 2000,  // Increase time limit for large files
+          "maxNodes": 5000,  // Increase node limit for complex components
+          "enableMetrics": false  // Disable in production
+        }
+      }
+    ]
+  }
+}
 ```
 
 ## Common Patterns and Anti-patterns

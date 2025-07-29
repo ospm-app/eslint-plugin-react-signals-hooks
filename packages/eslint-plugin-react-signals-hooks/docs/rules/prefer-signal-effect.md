@@ -14,6 +14,43 @@ This rule detects `useEffect` hooks where all dependencies are signals and sugge
 - **Cleaner Code**: Removes boilerplate dependency arrays
 - **Better Type Safety**: TypeScript can better infer types and dependencies
 
+## Configuration
+
+This rule accepts an options object with performance tuning options:
+
+```typescript
+{
+  "rules": {
+    "react-signals-hooks/prefer-signal-effect": [
+      "error",
+      {
+        "performance": {
+          "maxTime": 100,             // Max time in ms to spend analyzing a file
+          "maxMemory": 100,           // Max memory in MB to use
+          "maxNodes": 2000,           // Max number of nodes to process
+          "enableMetrics": false,     // Enable performance metrics collection
+          "logMetrics": false         // Log metrics to console
+        }
+      }
+    ]
+  }
+}
+```
+
+### Default Configuration
+
+```typescript
+{
+  performance: {
+    maxTime: 100,
+    maxMemory: 100,
+    maxNodes: 2000,
+    enableMetrics: false,
+    logMetrics: false
+  }
+}
+```
+
 ## Examples
 
 ### ❌ Incorrect
@@ -79,9 +116,47 @@ This rule currently doesn't have any configuration options, but future versions 
 
 You might want to disable this rule if:
 
-1. You're not using `@preact/signals` in your project
-2. You have a specific reason to use `useEffect` with signals
-3. You're working with a codebase that hasn't adopted signals yet
+1. **Mixed Dependencies**: When your effect depends on both signals and non-signal values
+
+   ```typescript
+   // Disable when mixing signals with regular state/props
+   useEffect(() => {
+     console.log(`Count: ${countSignal.value}, User: ${userName}`);
+   }, [countSignal, userName]); // userName is not a signal
+   ```
+
+2. **Lifecycle Requirements**: When you need specific React lifecycle behavior
+
+   ```typescript
+   // Use useEffect for component mount/unmount behavior
+   useEffect(() => {
+     // Setup code
+     return () => {
+       // Cleanup code that needs to run on unmount
+     };
+   }, []);
+   ```
+
+3. **Concurrent Mode**: When using React's concurrent features that depend on `useEffect`'s scheduling
+
+   ```typescript
+   // Use useEffect for concurrent mode transitions
+   useEffect(() => {
+     startTransition(() => {
+       // State updates that can be interrupted
+     });
+   }, [someValue]);
+   ```
+
+4. **Legacy Codebases**: When migrating incrementally to signals
+
+   ```typescript
+   // Disable rule during migration phase
+   // eslint-disable-next-line react-signals-hooks/prefer-signal-effect
+   useEffect(() => {
+     // Legacy effect code
+   }, [legacyDeps]);
+   ```
 
 ## Related Rules
 
@@ -97,6 +172,33 @@ You might want to disable this rule if:
    // Good: Using effect() for signal side effects
    effect(() => {
      document.title = `Count: ${count.value}`;
+   });
+   ```
+
+2. **Cleanup with effect()**:
+
+   ```typescript
+   // Proper cleanup with effect()
+   effect(() => {
+     const timer = setTimeout(() => {
+       console.log('Delayed log:', count.value);
+     }, 1000);
+     
+     return () => clearTimeout(timer);
+   });
+   ```
+
+3. **Batch signal updates**:
+
+   ```typescript
+   // Batch multiple signal updates
+   effect(() => {
+     // All signal updates are batched
+     const total = items.value.reduce((sum, item) => sum + item.price, 0);
+     const discount = total * 0.1;
+     
+     // Both updates will be batched
+     summary.value = { total, discount };
    });
    ```
 
@@ -170,11 +272,154 @@ When migrating from `useEffect` to `effect()`:
    });
    ```
 
-3. **Mixed Dependencies**: For effects that depend on both signals and regular values, you have a few options:
+## Edge Cases and Limitations
 
-   - **Option 1**: Split into separate effects
-   - **Option 2**: Use `useEffect` with `toValue` from `@preact/signals`
-   - **Option 3**: Convert regular values to signals if they change often
+1. **Mixed Dependencies**: For effects that depend on both signals and regular values:
+
+   ```typescript
+   // Option 1: Split into separate effects
+   effect(() => {
+     // Signal-only logic
+     const fullName = `${firstNameSignal.value} ${lastNameSignal.value}`;
+   });
+   
+   useEffect(() => {
+     // Regular effect with non-signal dependencies
+     console.log(`User ID: ${userId}`);
+   }, [userId]);
+   
+   // Option 2: Convert to signals if possible
+   const userIdSignal = useSignal(userId);
+   effect(() => {
+     console.log(`User ID: ${userIdSignal.value}`);
+   });
+   ```
+
+2. **Nested Signal Access**:
+
+   ```typescript
+   // Handles nested signal access
+   effect(() => {
+     // Correctly tracks nested signal access
+     console.log(userProfile.value.preferences.notifications);
+   });
+   ```
+
+3. **Array and Object Signals**:
+
+   ```typescript
+   // Works with array and object signals
+   effect(() => {
+     const activeItems = items.value.filter(item => item.isActive);
+     console.log('Active items:', activeItems);
+   });
+   ```
+
+## TypeScript Support
+
+This rule provides excellent TypeScript support:
+
+1. **Type Inference**:
+
+   ```typescript
+   const count = signal(0); // Inferred as Signal<number>
+   effect(() => {
+     // count.value is properly typed as number
+     const doubled = count.value * 2;
+   });
+   ```
+
+2. **Generic Types**:
+
+   ```typescript
+   function createEffectWithSignal<T>(signal: Signal<T>, callback: (value: T) => void) {
+     effect(() => {
+       callback(signal.value);
+     });
+   }
+   ```
+
+3. **Type Guards**:
+
+   ```typescript
+   const data = signal<Data | null>(null);
+   
+   effect(() => {
+     if (data.value) {
+       // TypeScript knows data.value is not null here
+       console.log(data.value.id);
+     }
+   });
+   ```
+
+## Troubleshooting
+
+### False Positives
+
+If the rule reports issues incorrectly:
+
+1. Use an ESLint disable comment:
+
+   ```typescript
+   // eslint-disable-next-line react-signals-hooks/prefer-signal-effect
+   useEffect(() => {
+     // Effect with signal that needs to stay as useEffect
+   }, [signal.value]);
+   ```
+
+2. Disable for specific files:
+
+   ```json
+   {
+     "overrides": [
+       {
+         "files": ["*.test.tsx", "*.stories.tsx"],
+         "rules": {
+           "react-signals-hooks/prefer-signal-effect": "off"
+         }
+       }
+     ]
+   }
+   ```
+
+### Performance Issues
+
+If you experience performance problems with the rule:
+
+1. Increase the `maxNodes` threshold:
+
+   ```json
+   {
+     "rules": {
+       "react-signals-hooks/prefer-signal-effect": [
+         "error",
+         {
+           "performance": {
+             "maxNodes": 5000
+           }
+         }
+       ]
+     }
+   }
+   ```
+
+2. Disable performance metrics in production:
+
+   ```json
+   {
+     "rules": {
+       "react-signals-hooks/prefer-signal-effect": [
+         "error",
+         {
+           "performance": {
+             "enableMetrics": false,
+             "logMetrics": false
+           }
+         }
+       ]
+     }
+   }
+   ```
 
 ## TypeScript Support
 

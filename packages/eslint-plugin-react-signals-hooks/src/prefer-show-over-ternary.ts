@@ -1,461 +1,569 @@
 /** biome-ignore-all assist/source/organizeImports: off */
+import type { Definition } from "@typescript-eslint/scope-manager";
 import {
-  ESLintUtils,
-  type TSESLint,
-  type TSESTree,
-  AST_NODE_TYPES,
-} from '@typescript-eslint/utils';
-import type { RuleContext, SuggestionReportDescriptor } from '@typescript-eslint/utils/ts-eslint';
-import {
-  endPhase,
-  startPhase,
-  recordMetric,
-  stopTracking,
-  startTracking,
-  trackOperation,
-  createPerformanceTracker,
-  DEFAULT_PERFORMANCE_BUDGET,
-  PerformanceLimitExceededError,
-} from './utils/performance.js';
-import { getRuleDocUrl } from './utils/urls.js';
-import type { PerformanceBudget } from './utils/types.js';
-import type { Definition } from '@typescript-eslint/scope-manager';
-import { PerformanceOperations } from './utils/performance-constants.js';
+	ESLintUtils,
+	type TSESLint,
+	type TSESTree,
+	AST_NODE_TYPES,
+} from "@typescript-eslint/utils";
+import type {
+	RuleContext,
+	SuggestionReportDescriptor,
+} from "@typescript-eslint/utils/ts-eslint";
 
-type Option = {
-  /** Minimum complexity score to trigger the rule */
-  minComplexity: number;
-  /** Custom signal function names (e.g., ['createSignal', 'useSignal']) */
-  signalNames: string[];
-  performance: PerformanceBudget;
+import { PerformanceOperations } from "./utils/performance-constants.js";
+import {
+	endPhase,
+	startPhase,
+	recordMetric,
+	stopTracking,
+	startTracking,
+	trackOperation,
+	createPerformanceTracker,
+	DEFAULT_PERFORMANCE_BUDGET,
+	PerformanceLimitExceededError,
+} from "./utils/performance.js";
+import type { PerformanceBudget } from "./utils/types.js";
+import { getRuleDocUrl } from "./utils/urls.js";
+
+type Severity = {
+	preferShowOverTernary?: "error" | "warn" | "off";
+	suggestShowComponent?: "error" | "warn" | "off";
+	addShowImport?: "error" | "warn" | "off";
+	performanceLimitExceeded?: "error" | "warn" | "off";
 };
 
-type Options = [Option];
+type Option = {
+	/** Minimum complexity score to trigger the rule */
+	minComplexity?: number;
+	/** Custom signal function names (e.g., ['createSignal', 'useSignal']) */
+	signalNames?: Array<string>;
+	performance?: PerformanceBudget;
+	severity?: Severity;
+};
+
+type Options = [Option?];
 
 type MessageIds =
-  | 'preferShowOverTernary'
-  | 'suggestShowComponent'
-  | 'addShowImport'
-  | 'performanceLimitExceeded';
-
-const childProperties = [
-  'body',
-  'consequent',
-  'alternate',
-  'test',
-  'left',
-  'right',
-  'argument',
-  'callee',
-  'arguments',
-  'elements',
-  'properties',
-] as const;
+	| "preferShowOverTernary"
+	| "suggestShowComponent"
+	| "addShowImport"
+	| "performanceLimitExceeded";
 
 function isJSXNode(node: TSESTree.Node): boolean {
-  return (
-    node.type === 'JSXElement' ||
-    node.type === 'JSXFragment' ||
-    (node.type === 'ExpressionStatement' &&
-      'expression' in node &&
-      node.expression &&
-      'type' in node.expression &&
-      (node.expression.type === 'JSXElement' || node.expression.type === 'JSXFragment'))
-  );
+	return (
+		node.type === "JSXElement" ||
+		node.type === "JSXFragment" ||
+		(node.type === "ExpressionStatement" &&
+			"expression" in node &&
+			"type" in node.expression &&
+			(node.expression.type === "JSXElement" ||
+				node.expression.type === "JSXFragment"))
+	);
 }
 
 function getComplexity(
-  node: TSESTree.Node | TSESTree.Expression | TSESTree.PrivateIdentifier,
-  visited = new Set<TSESTree.Node | TSESTree.Expression | TSESTree.PrivateIdentifier>()
+	node: TSESTree.Node | TSESTree.Expression | TSESTree.PrivateIdentifier,
+	visited = new Set<
+		TSESTree.Node | TSESTree.Expression | TSESTree.PrivateIdentifier
+	>(),
 ): number {
-  if (visited.has(node)) {
-    return 0;
-  }
+	if (visited.has(node)) {
+		return 0;
+	}
 
-  visited.add(node);
+	visited.add(node);
 
-  let complexity = 0;
+	let complexity = 0;
 
-  if (isJSXNode(node)) {
-    complexity++;
-  } else if ('type' in node && node.type === 'CallExpression') {
-    complexity++;
-  } else if ('type' in node && node.type === 'ConditionalExpression') {
-    complexity += 2;
-  }
+	if (isJSXNode(node)) {
+		complexity++;
+	} else if ("type" in node && node.type === "CallExpression") {
+		complexity++;
+	} else if ("type" in node && node.type === "ConditionalExpression") {
+		complexity += 2;
+	}
 
-  for (const key of childProperties) {
-    const value = node[key as keyof typeof node];
+	for (const key of [
+		"body",
+		"consequent",
+		"alternate",
+		"test",
+		"left",
+		"right",
+		"argument",
+		"callee",
+		"arguments",
+		"elements",
+		"properties",
+	] as const) {
+		const value = node[key as keyof typeof node];
 
-    if (typeof value !== 'undefined') {
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          if (item && typeof item === 'object' && 'type' in item) {
-            complexity += getComplexity(item, visited);
-          }
-        }
-      } else if (typeof value === 'object' && value !== null && 'type' in value) {
-        complexity += getComplexity(value, visited);
-      }
-    }
-  }
+		if (typeof value !== "undefined") {
+			if (Array.isArray(value)) {
+				for (const item of value) {
+					if (item && typeof item === "object" && "type" in item) {
+						complexity += getComplexity(item, visited);
+					}
+				}
+			} else if (typeof value === "object" && "type" in value) {
+				complexity += getComplexity(value, visited);
+			}
+		}
+	}
 
-  visited.delete(node);
+	visited.delete(node);
 
-  return complexity;
+	return complexity;
 }
 
 let hasShowImport = false;
 
 const signalVariables = new Set<string>();
 
-const ruleName = 'prefer-show-over-ternary';
+const ruleName = "prefer-show-over-ternary";
 
-export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string): string => {
-  return getRuleDocUrl(name);
-})<Options, MessageIds>({
-  name: ruleName,
-  meta: {
-    type: 'suggestion',
-    fixable: 'code',
-    hasSuggestions: true,
-    docs: {
-      description: 'Prefer Show component over ternary for conditional rendering with signals',
-      url: getRuleDocUrl(ruleName),
-    },
-    messages: {
-      preferShowOverTernary:
-        'Prefer using the `<Show>` component instead of ternary for better performance with signal conditions.',
-      suggestShowComponent: 'Replace ternary with `<Show>` component',
-      addShowImport: 'Add `Show` import from @preact/signals-react',
-      performanceLimitExceeded: 'Performance limit exceeded ',
-    },
-    schema: [
-      {
-        type: 'object',
-        properties: {
-          minComplexity: {
-            type: 'number',
-            minimum: 1,
-            default: 2,
-          },
-          signalNames: {
-            type: 'array',
-            items: { type: 'string' },
-            default: ['signal', 'useSignal', 'createSignal'],
-          },
-          performance: {
-            type: 'object',
-            properties: {
-              maxTime: { type: 'number', minimum: 1 },
-              maxMemory: { type: 'number', minimum: 1 },
-              maxNodes: { type: 'number', minimum: 1 },
-              enableMetrics: { type: 'boolean' },
-              logMetrics: { type: 'boolean' },
-              maxOperations: {
-                type: 'object',
-                properties: Object.fromEntries(
-                  Object.entries(PerformanceOperations).map(([key]) => [
-                    key,
-                    { type: 'number', minimum: 1 },
-                  ])
-                ),
-              },
-            },
-            additionalProperties: false,
-          },
-        },
-        additionalProperties: false,
-      },
-    ],
-  },
-  defaultOptions: [
-    {
-      minComplexity: 2,
-      signalNames: ['signal', 'useSignal', 'createSignal'],
-      performance: DEFAULT_PERFORMANCE_BUDGET,
-    },
-  ],
-  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
-    const perfKey = `${ruleName}:${context.filename}${Date.now()}`;
+function getSeverity(
+	messageId: MessageIds,
+	options: Option | undefined,
+): "error" | "warn" | "off" {
+	if (!options?.severity) {
+		return "error";
+	}
 
-    startPhase(perfKey, 'ruleInit');
+	// eslint-disable-next-line security/detect-object-injection
+	const severity = options.severity[messageId];
+	return severity ?? "error";
+}
 
-    const perf = createPerformanceTracker<Options>(perfKey, option.performance, context);
+export const preferShowOverTernaryRule = ESLintUtils.RuleCreator(
+	(name: string): string => {
+		return getRuleDocUrl(name);
+	},
+)<Options, MessageIds>({
+	name: ruleName,
+	meta: {
+		type: "suggestion",
+		fixable: "code",
+		hasSuggestions: true,
+		docs: {
+			description:
+				"Prefer Show component over ternary for conditional rendering with signals",
+			url: getRuleDocUrl(ruleName),
+		},
+		messages: {
+			preferShowOverTernary:
+				"Prefer using the `<Show>` component instead of ternary for better performance with signal conditions.",
+			suggestShowComponent: "Replace ternary with `<Show>` component",
+			addShowImport: "Add `Show` import from @preact/signals-react",
+			performanceLimitExceeded: "Performance limit exceeded ",
+		},
+		schema: [
+			{
+				type: "object",
+				properties: {
+					minComplexity: {
+						type: "number",
+						minimum: 1,
+						default: 2,
+					},
+					signalNames: {
+						type: "array",
+						items: { type: "string" },
+						default: ["signal", "useSignal", "createSignal"],
+					},
+					performance: {
+						type: "object",
+						properties: {
+							maxTime: { type: "number", minimum: 1 },
+							maxMemory: { type: "number", minimum: 1 },
+							maxNodes: { type: "number", minimum: 1 },
+							enableMetrics: { type: "boolean" },
+							logMetrics: { type: "boolean" },
+							maxOperations: {
+								type: "object",
+								properties: Object.fromEntries(
+									Object.entries(PerformanceOperations).map(([key]) => [
+										key,
+										{ type: "number", minimum: 1 },
+									]),
+								),
+							},
+						},
+						additionalProperties: false,
+					},
+					severity: {
+						type: "object",
+						properties: {
+							preferShowOverTernary: {
+								type: "string",
+								enum: ["error", "warn", "off"],
+							},
+							suggestShowComponent: {
+								type: "string",
+								enum: ["error", "warn", "off"],
+							},
+							addShowImport: {
+								type: "string",
+								enum: ["error", "warn", "off"],
+							},
+							performanceLimitExceeded: {
+								type: "string",
+								enum: ["error", "warn", "off"],
+							},
+						},
+						additionalProperties: false,
+					},
+				},
+				additionalProperties: false,
+			},
+		],
+	},
+	defaultOptions: [
+		{
+			minComplexity: 2,
+			signalNames: ["signal", "useSignal", "createSignal"],
+			performance: DEFAULT_PERFORMANCE_BUDGET,
+		},
+	],
+	create(
+		context: Readonly<RuleContext<MessageIds, Options>>,
+		[option],
+	): ESLintUtils.RuleListener {
+		const perfKey = `${ruleName}:${context.filename}${Date.now()}`;
 
-    if (option.performance.enableMetrics === true) {
-      startTracking(context, perfKey, option.performance, ruleName);
-    }
+		startPhase(perfKey, "ruleInit");
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    console.info(`${ruleName}: Rule configuration:`, option);
+		const perf = createPerformanceTracker<Options>(
+			perfKey,
+			option?.performance,
+			context,
+		);
 
-    recordMetric(perfKey, 'config', {
-      performance: {
-        enableMetrics: option.performance.enableMetrics,
-        logMetrics: option.performance.logMetrics,
-      },
-    });
+		if (option?.performance?.enableMetrics === true) {
+			startTracking(context, perfKey, option.performance, ruleName);
+		}
 
-    let nodeCount = 0;
+		console.info(
+			`${ruleName}: Initializing rule for file: ${context.filename}`,
+		);
+		console.info(`${ruleName}: Rule configuration:`, option);
 
-    function shouldContinue(): boolean {
-      nodeCount++;
+		recordMetric(perfKey, "config", {
+			performance: {
+				enableMetrics: option?.performance?.enableMetrics,
+				logMetrics: option?.performance?.logMetrics,
+			},
+		});
 
-      if (nodeCount > (option.performance?.maxNodes ?? 2000)) {
-        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+		let nodeCount = 0;
 
-        return false;
-      }
+		function shouldContinue(): boolean {
+			nodeCount++;
 
-      return true;
-    }
+			if (
+				typeof option?.performance?.maxNodes === "number" &&
+				nodeCount > option.performance.maxNodes
+			) {
+				trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
-    trackOperation(perfKey, PerformanceOperations.ruleInit);
+				return false;
+			}
 
-    endPhase(perfKey, 'ruleInit');
+			return true;
+		}
 
-    hasShowImport = context.sourceCode.ast.body.some(
-      (node: TSESTree.ProgramStatement): node is TSESTree.ImportDeclaration => {
-        if (node.type !== 'ImportDeclaration' || !node.source) {
-          return false;
-        }
+		trackOperation(perfKey, PerformanceOperations.ruleInit);
 
-        if (
-          typeof node.source.value !== 'string' ||
-          node.source.value !== '@preact/signals-react'
-        ) {
-          return false;
-        }
+		endPhase(perfKey, "ruleInit");
 
-        return node.specifiers.some((s: TSESTree.ImportClause): boolean => {
-          return s.type === 'ImportSpecifier' && 'name' in s.imported && s.imported.name === 'Show';
-        });
-      }
-    );
+		hasShowImport = context.sourceCode.ast.body.some(
+			(node: TSESTree.ProgramStatement): node is TSESTree.ImportDeclaration => {
+				if (node.type !== "ImportDeclaration") {
+					return false;
+				}
 
-    startPhase(perfKey, 'ruleExecution');
+				if (
+					typeof node.source.value !== "string" ||
+					node.source.value !== "@preact/signals-react"
+				) {
+					return false;
+				}
 
-    return {
-      '*': (node: TSESTree.Node): void => {
-        if (!shouldContinue()) {
-          endPhase(perfKey, 'recordMetrics');
+				return node.specifiers.some((s: TSESTree.ImportClause): boolean => {
+					return (
+						s.type === "ImportSpecifier" &&
+						"name" in s.imported &&
+						s.imported.name === "Show"
+					);
+				});
+			},
+		);
 
-          stopTracking(perfKey);
+		startPhase(perfKey, "ruleExecution");
 
-          return;
-        }
+		return {
+			"*": (node: TSESTree.Node): void => {
+				if (!shouldContinue()) {
+					endPhase(perfKey, "recordMetrics");
 
-        perf.trackNode(node);
+					stopTracking(perfKey);
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+					return;
+				}
 
-        // Handle function declarations and variables
-        if (
-          node.type === AST_NODE_TYPES.FunctionDeclaration ||
-          node.type === AST_NODE_TYPES.FunctionExpression ||
-          node.type === AST_NODE_TYPES.ArrowFunctionExpression
-        ) {
-          try {
-            const scope = context.sourceCode.getScope(node);
+				perf.trackNode(node);
 
-            for (const variable of scope.variables) {
-              if (
-                variable.defs.some((def: Definition) => {
-                  trackOperation(perfKey, PerformanceOperations.signalCheck);
-                  return (
-                    'init' in def.node &&
-                    def.node.init?.type === AST_NODE_TYPES.CallExpression &&
-                    def.node.init.callee.type === AST_NODE_TYPES.Identifier &&
-                    new Set(option.signalNames ?? ['signal', 'useSignal', 'createSignal']).has(
-                      def.node.init.callee.name
-                    )
-                  );
-                })
-              ) {
-                signalVariables.add(variable.name);
-              }
-            }
-          } catch (error: unknown) {
-            if (error instanceof PerformanceLimitExceededError) {
-              context.report({
-                node,
-                messageId: 'performanceLimitExceeded',
-                data: { message: error.message, ruleName },
-              });
-            } else {
-              throw error;
-            }
-          }
-        }
-      },
+				trackOperation(
+					perfKey,
+					PerformanceOperations[`${node.type}Processing`],
+				);
 
-      Program(node: TSESTree.Program): void {
-        // Track node processing
-        perf.trackNode(node);
+				// Handle function declarations and variables
+				if (
+					node.type === AST_NODE_TYPES.FunctionDeclaration ||
+					node.type === AST_NODE_TYPES.FunctionExpression ||
+					node.type === AST_NODE_TYPES.ArrowFunctionExpression
+				) {
+					try {
+						const scope = context.sourceCode.getScope(node);
 
-        // Start analysis phase
-        startPhase(perfKey, 'importAnalysis');
+						for (const variable of scope.variables) {
+							if (
+								variable.defs.some((def: Definition) => {
+									trackOperation(perfKey, PerformanceOperations.signalCheck);
+									return (
+										"init" in def.node &&
+										def.node.init?.type === AST_NODE_TYPES.CallExpression &&
+										def.node.init.callee.type === AST_NODE_TYPES.Identifier &&
+										new Set(
+											option?.signalNames ?? [
+												"signal",
+												"useSignal",
+												"createSignal",
+											],
+										).has(def.node.init.callee.name)
+									);
+								})
+							) {
+								signalVariables.add(variable.name);
+							}
+						}
+					} catch (error: unknown) {
+						if (error instanceof PerformanceLimitExceededError) {
+							const severity = getSeverity("performanceLimitExceeded", option);
+							if (severity === "off") return;
 
-        const hasJSX = node.body.some((n: TSESTree.ProgramStatement): boolean => {
-          return isJSXNode(n);
-        });
+							context.report({
+								node,
+								messageId: "performanceLimitExceeded",
+								data: { message: error.message, ruleName },
+							});
+						} else {
+							throw error;
+						}
+					}
+				}
+			},
 
-        if (!hasJSX) {
-          endPhase(perfKey, 'importAnalysis');
-          return;
-        }
+			Program(node: TSESTree.Program): void {
+				// Track node processing
+				perf.trackNode(node);
 
-        // Check if Show is already imported
-        hasShowImport = node.body.some(
-          (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
-            return (
-              n.type === 'ImportDeclaration' &&
-              n.source.value === '@preact/signals-react' &&
-              n.specifiers.some(
-                (s) =>
-                  s.type === 'ImportSpecifier' && 'name' in s.imported && s.imported.name === 'Show'
-              )
-            );
-          }
-        );
+				// Start analysis phase
+				startPhase(perfKey, "importAnalysis");
 
-        endPhase(perfKey, 'importAnalysis');
-      },
+				const hasJSX = node.body.some(
+					(n: TSESTree.ProgramStatement): boolean => {
+						return isJSXNode(n);
+					},
+				);
 
-      ConditionalExpression(node: TSESTree.ConditionalExpression): void {
-        perf.trackNode(node);
+				if (!hasJSX) {
+					endPhase(perfKey, "importAnalysis");
+					return;
+				}
 
-        if (!node.parent || !('type' in node.parent) || !isJSXNode(node.parent as TSESTree.Node)) {
-          return;
-        }
+				// Check if Show is already imported
+				hasShowImport = node.body.some(
+					(n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
+						return (
+							n.type === "ImportDeclaration" &&
+							n.source.value === "@preact/signals-react" &&
+							n.specifiers.some(
+								(s) =>
+									s.type === "ImportSpecifier" &&
+									"name" in s.imported &&
+									s.imported.name === "Show",
+							)
+						);
+					},
+				);
 
-        // Check if the condition contains any signal variables
-        const testText = context.sourceCode.getText(node.test);
+				endPhase(perfKey, "importAnalysis");
+			},
 
-        const containsSignal = [...signalVariables].some((signal) => {
-          return new RegExp(`\\b${signal}\\b`).test(testText);
-        });
+			ConditionalExpression(node: TSESTree.ConditionalExpression): void {
+				perf.trackNode(node);
 
-        // Skip if no signal variables are found in the condition
-        if (!containsSignal) {
-          return;
-        }
+				if (!("type" in node.parent) || !isJSXNode(node.parent)) {
+					return;
+				}
 
-        // Track conditional analysis
-        trackOperation(perfKey, PerformanceOperations.conditionalAnalysis);
+				// Check if the condition contains any signal variables
+				const testText = context.sourceCode.getText(node.test);
 
-        const complexity = getComplexity(node);
-        trackOperation(perfKey, PerformanceOperations.complexityAnalysis);
+				const containsSignal = [...signalVariables].some(
+					(signal: string): boolean => {
+						// eslint-disable-next-line security/detect-non-literal-regexp
+						return new RegExp(`\\b${signal}\\b`).test(testText);
+					},
+				);
 
-        if (complexity >= (option?.minComplexity ?? 2)) {
-          context.report({
-            node,
-            messageId: 'preferShowOverTernary',
-            suggest: [
-              {
-                messageId: 'suggestShowComponent',
-                *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix, void, unknown> {
-                  const consequentText = context.sourceCode.getText(node.consequent);
+				// Skip if no signal variables are found in the condition
+				if (!containsSignal) {
+					return;
+				}
 
-                  const alternateText = node.alternate
-                    ? context.sourceCode.getText(node.alternate)
-                    : null;
+				// Track conditional analysis
+				trackOperation(perfKey, PerformanceOperations.conditionalAnalysis);
 
-                  const fixText = alternateText
-                    ? `{/* @ts-expect-error Server Component */}
-                    <Show when={${context.sourceCode.getText(node.test)}} fallback={${alternateText}}>
-                    {${consequentText}}
-                    </Show>`
-                    : `{/* @ts-expect-error Server Component */}
-                    <Show when={${context.sourceCode.getText(node.test)}}>
-                    {${consequentText}}
-                    </Show>
-                  `;
+				const complexity = getComplexity(node);
 
-                  yield fixer.replaceText(node, fixText);
+				trackOperation(perfKey, PerformanceOperations.complexityAnalysis);
 
-                  if (hasShowImport) {
-                    return;
-                  }
-                },
-              },
-              ...(hasShowImport
-                ? ([] satisfies Array<SuggestionReportDescriptor<MessageIds>>)
-                : ([
-                    {
-                      messageId: 'addShowImport',
-                      fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
-                        if (!context.sourceCode.ast) {
-                          return null;
-                        }
+				if (
+					typeof option?.minComplexity === "number" &&
+					complexity >= option.minComplexity
+				) {
+					const severity = getSeverity("preferShowOverTernary", option);
 
-                        const signalsImport = context.sourceCode.ast.body.find(
-                          (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
-                            return (
-                              n.type === 'ImportDeclaration' &&
-                              n.source.value === '@preact/signals-react'
-                            );
-                          }
-                        );
+					if (severity === "off") {
+						return;
+					}
 
-                        return signalsImport
-                          ? [
-                              fixer.insertTextAfter(
-                                signalsImport.specifiers[signalsImport.specifiers.length - 1],
-                                ', Show'
-                              ),
-                            ]
-                          : [
-                              fixer.insertTextBefore(
-                                context.sourceCode.ast.body[0],
-                                "import { Show } from '@preact/signals-react';\n"
-                              ),
-                            ];
-                      },
-                    } satisfies SuggestionReportDescriptor<MessageIds>,
-                  ] satisfies Array<SuggestionReportDescriptor<MessageIds>>)),
-            ],
-          });
-        }
-      },
+					const suggestShowComponentSeverity = getSeverity(
+						"suggestShowComponent",
+						option,
+					);
+					const addShowImportSeverity = getSeverity("addShowImport", option);
 
-      'Program:exit'(node: TSESTree.Node): void {
-        startPhase(perfKey, 'programExit');
+					const suggestions: Array<SuggestionReportDescriptor<MessageIds>> = [];
 
-        perf.trackNode(node);
+					if (suggestShowComponentSeverity !== "off") {
+						suggestions.push({
+							messageId: "suggestShowComponent",
+							*fix(
+								fixer: TSESLint.RuleFixer,
+							): Generator<TSESLint.RuleFix, void, unknown> {
+								const consequentText = context.sourceCode.getText(
+									node.consequent,
+								);
 
-        try {
-          startPhase(perfKey, 'recordMetrics');
+								const alternateText = context.sourceCode.getText(
+									node.alternate,
+								);
 
-          const finalMetrics = stopTracking(perfKey);
+								const fixText =
+									alternateText === ""
+										? `{/* @ts-expect-error Server Component */}
+                        <Show when={${context.sourceCode.getText(node.test)}}>
+                        {${consequentText}}
+                        </Show>
+                      `
+										: `{/* @ts-expect-error Server Component */}
+                        <Show when={${context.sourceCode.getText(node.test)}} fallback={${alternateText}}>
+                        {${consequentText}}
+                        </Show>`;
 
-          if (finalMetrics) {
-            console.info(
-              `\n[prefer-batch-updates] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+								yield fixer.replaceText(node, fixText);
 
-            if (finalMetrics.exceededBudget) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
+								if (hasShowImport) {
+									return;
+								}
+							},
+						});
+					}
 
-          stopTracking(perfKey);
-        }
+					if (!hasShowImport && addShowImportSeverity !== "off") {
+						suggestions.push({
+							messageId: "addShowImport",
+							fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+								const signalsImport = context.sourceCode.ast.body.find(
+									(
+										n: TSESTree.ProgramStatement,
+									): n is TSESTree.ImportDeclaration => {
+										return (
+											n.type === "ImportDeclaration" &&
+											n.source.value === "@preact/signals-react"
+										);
+									},
+								);
 
-        perf['Program:exit']();
+								if (!signalsImport) {
+									return null;
+								}
 
-        endPhase(perfKey, 'programExit');
-      },
-    };
-  },
+								const last =
+									signalsImport.specifiers[signalsImport.specifiers.length - 1];
+
+								if (!last) {
+									return null;
+								}
+
+								const b = context.sourceCode.ast.body[0];
+
+								if (!b) {
+									return null;
+								}
+
+								return [fixer.insertTextAfter(last, ", Show")];
+							},
+						});
+					}
+
+					context.report({
+						node,
+						messageId: "preferShowOverTernary",
+						suggest: suggestions,
+					});
+				}
+			},
+
+			"Program:exit"(node: TSESTree.Node): void {
+				startPhase(perfKey, "programExit");
+
+				perf.trackNode(node);
+
+				try {
+					startPhase(perfKey, "recordMetrics");
+
+					const finalMetrics = stopTracking(perfKey);
+
+					if (finalMetrics) {
+						console.info(
+							`\n[prefer-batch-updates] Performance Metrics (${finalMetrics.exceededBudget === true ? "EXCEEDED" : "OK"}):`,
+						);
+						console.info(`  File: ${context.filename}`);
+						console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
+						console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+
+						if (finalMetrics.exceededBudget === true) {
+							console.warn("\n⚠️  Performance budget exceeded!");
+						}
+					}
+				} catch (error: unknown) {
+					console.error("Error recording metrics:", error);
+				} finally {
+					endPhase(perfKey, "recordMetrics");
+
+					stopTracking(perfKey);
+				}
+
+				perf["Program:exit"]();
+
+				endPhase(perfKey, "programExit");
+			},
+		};
+	},
 });
-
-export default preferShowOverTernaryRule;

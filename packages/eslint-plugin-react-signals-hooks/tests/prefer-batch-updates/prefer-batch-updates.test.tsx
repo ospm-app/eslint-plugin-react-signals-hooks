@@ -1,3 +1,6 @@
+// oxlint-disable no-unused-vars
+/* eslint-disable react-signals-hooks/restrict-signal-locations */
+/** biome-ignore-all lint/correctness/noUnusedVariables: <explanation> */
 /** biome-ignore-all lint/correctness/useExhaustiveDependencies: not relevant */
 import { type JSX, useCallback, useEffect, useState } from 'react';
 import { signal, batch } from '@preact/signals-react';
@@ -447,3 +450,166 @@ export const minimumUpdatesConfig = {
     ],
   },
 };
+
+// Test component for single update scenario (should not warn)
+export function TestSingleUpdateScenario(): JSX.Element {
+  useSignals();
+  const countSignal = signal(0);
+
+  // Single update - no batching needed
+  const handleClick = useCallback(() => {
+    countSignal.value += 1; // Single update - batching not needed
+  }, []);
+
+  return (
+    <div>
+      <div>Count: {countSignal}</div>
+      <button type='button' onClick={handleClick}>
+        Increment
+      </button>
+    </div>
+  );
+}
+
+// Test component for independent components scenario (should not warn)
+export function TestIndependentComponents(): JSX.Element {
+  return (
+    <div>
+      <ComponentA />
+      <ComponentB />
+    </div>
+  );
+}
+
+function ComponentA() {
+  useSignals();
+  const aSignal = signal('A');
+
+  // Independent update - no need to batch with ComponentB's update
+  const handleClick = useCallback(() => {
+    aSignal.value = 'Updated A';
+  }, []);
+
+  return (
+    <div>
+      <div>Component A: {aSignal}</div>
+      <button type='button' onClick={handleClick}>
+        Update A
+      </button>
+    </div>
+  );
+}
+
+function ComponentB() {
+  useSignals();
+  const bSignal = signal('B');
+
+  // Independent update - no need to batch with ComponentA's update
+  const handleClick = useCallback(() => {
+    bSignal.value = 'Updated B';
+  }, []);
+
+  return (
+    <div>
+      <div>Component B: {bSignal}</div>
+      <button type='button' onClick={handleClick}>
+        Update B
+      </button>
+    </div>
+  );
+}
+
+// Test component for performance critical paths (should not warn)
+export function TestPerformanceCriticalPath(): JSX.Element {
+  useSignals();
+  const processedCount = signal(0);
+
+  // Performance critical loop - avoid batching overhead
+  const processBatch = useCallback(() => {
+    for (let i = 0; i < 1000; i++) {
+      // Avoid batching overhead in tight loops
+      processedCount.value = i;
+      // Simulate processing
+      const result = Math.sqrt(i) * Math.random();
+    }
+  }, []);
+
+  return (
+    <div>
+      <div>Processed: {processedCount}</div>
+      <button type='button' onClick={processBatch}>
+        Process Batch
+      </button>
+    </div>
+  );
+}
+
+// Test component for testing environments (should not warn)
+export function TestSignalInTestEnvironment(): JSX.Element {
+  useSignals();
+  const testSignal = signal('initial');
+
+  // Test individual signal updates - no batching needed in tests
+  const runTest = useCallback(() => {
+    testSignal.value = 'test';
+    console.assert(testSignal.value === 'test', 'Test failed');
+
+    // Reset for next test
+    testSignal.value = 'reset';
+  }, []);
+
+  return (
+    <div>
+      <div>Test Signal: {testSignal}</div>
+      <button type='button' onClick={runTest}>
+        Run Test
+      </button>
+    </div>
+  );
+}
+
+// Test component for async operations (should not warn about missing batching across async)
+export function TestAsyncOperations(): JSX.Element {
+  useSignals();
+  const loadingSignal = signal(false);
+  const dataSignal = signal<string | null>(null);
+  const errorSignal = signal<Error | null>(null);
+
+  const fetchData = useCallback(async () => {
+    // These will be batched together
+    batch(() => {
+      loadingSignal.value = true;
+      errorSignal.value = null;
+    });
+
+    try {
+      // Simulate API call
+      const result = await new Promise<string>((resolve) => {
+        setTimeout(() => resolve('Sample Data'), 100);
+      });
+
+      // These will be batched together
+      batch(() => {
+        dataSignal.value = result;
+        loadingSignal.value = false;
+      });
+    } catch (err) {
+      // These will be batched together
+      batch(() => {
+        errorSignal.value = err as Error;
+        loadingSignal.value = false;
+      });
+    }
+  }, []);
+
+  return (
+    <div>
+      <div>Loading: {loadingSignal.value.toString()}</div>
+      <div>Data: {dataSignal.value || 'No data'}</div>
+      {errorSignal.value && <div>Error: {errorSignal.value.message}</div>}
+      <button type='button' onClick={fetchData} disabled={loadingSignal.value}>
+        {loadingSignal ? 'Loading...' : 'Fetch Data'}
+      </button>
+    </div>
+  );
+}
