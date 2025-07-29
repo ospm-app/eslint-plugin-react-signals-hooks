@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "baseUrl": ".",
+
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist/esm",
+
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": true,
+
+    "paths": {
+      "*": ["src/*"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "tests"]
+}

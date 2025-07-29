@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "bit": {
+      "type": "stdio",
+      "command": "bit",
+      "args": [
+        "mcp-server",
+        "start"
+      ]
+    }
+  }
+}

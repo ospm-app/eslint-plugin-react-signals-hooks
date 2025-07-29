@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "types": ["@types/node", "@types/react", "@types/react-dom"]
+  },
+  "include": ["tests/**/*.ts", "tests/**/*.tsx"],
+  "exclude": ["node_modules", "src", "dist"]
+}

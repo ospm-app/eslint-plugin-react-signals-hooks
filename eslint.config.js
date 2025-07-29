@@ -1,6 +1,7 @@
 import babelParser from '@babel/eslint-parser';
 import babelPresetEnv from '@babel/preset-env';
-import typescript from '@typescript-eslint/eslint-plugin';
+
+import typescriptPlugin from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
 import pluginESx from 'eslint-plugin-es-x';
 import importPlugin from 'eslint-plugin-import';
@@ -10,10 +11,15 @@ import optimizeRegexPlugin from 'eslint-plugin-optimize-regex';
 import oxlintPlugin from 'eslint-plugin-oxlint';
 import promisePlugin from 'eslint-plugin-promise';
 import globals from 'globals';
+import eslintPlugin from 'eslint-plugin-eslint-plugin';
+import jsxA11y from 'eslint-plugin-jsx-a11y';
+import securityPlugin from 'eslint-plugin-security';
 
-import reactSignalsHooksPlugin from './dist/cjs/index.js';
+import reactSignalsHooksPlugin from './packages/eslint-plugin-react-signals-hooks/dist/esm/index.js';
+import eslintRulePlugin from './packages/eslint-plugin-eslint-rule/dist/esm/index.js';
 
 const commonRules = {
+  // Disabled rules
   'n/no-missing-import': 'off',
   'n/no-extraneous-import': 'off',
   indent: 'off',
@@ -31,8 +37,47 @@ const commonRules = {
   camelcase: 'off',
   'no-useless-return': 'off',
   'sort-requires/sort-requires': 'off',
-  'no-console': ['error', { allow: ['warn', 'error', 'info', 'table', 'debug', 'clear'] }],
   'no-unused-vars': 'off',
+
+  // Import rules
+  'import/order': [
+    'error',
+    {
+      groups: ['builtin', 'external', 'internal', 'parent', 'sibling', 'index'],
+      'newlines-between': 'always',
+      alphabetize: { order: 'asc', caseInsensitive: true },
+    },
+  ],
+  'import/no-cycle': 'error',
+  'import/no-unused-modules': ['error', { unusedExports: true }],
+
+  // Enabled rules
+  'no-console': ['error', { allow: ['warn', 'error', 'info', 'table', 'debug', 'clear'] }],
+  'optimize-regex/optimize-regex': 'warn',
+  'es-x/no-async-iteration': 'error',
+  'es-x/no-malformed-template-literals': 'error',
+
+  // JSX Accessibility rules
+  'jsx-a11y/no-static-element-interactions': [
+    'error',
+    {
+      handlers: ['onClick', 'onMouseDown', 'onMouseUp', 'onKeyPress', 'onKeyDown', 'onKeyUp'],
+    },
+  ],
+  'jsx-a11y/click-events-have-key-events': 'error',
+  'jsx-a11y/label-has-associated-control': 'error',
+
+  // Promise rules
+  'promise/no-return-wrap': 'error',
+  'promise/prefer-await-to-then': 'error',
+  'promise/no-nesting': 'warn',
+  'promise/always-return': 'error',
+  'promise/catch-or-return': 'error',
+  'promise/param-names': 'error',
+
+  // Security
+  'security/detect-object-injection': 'error',
+
   'no-restricted-globals': [
     'error',
     {
@@ -48,9 +93,6 @@ const commonRules = {
       message: 'Do not commit fdescribe. Use describe instead.',
     },
   ],
-  'optimize-regex/optimize-regex': 'warn',
-  'es-x/no-async-iteration': 'error',
-  'es-x/no-malformed-template-literals': 'error',
   'es-x/no-regexp-lookbehind-assertions': 'error',
   'es-x/no-regexp-named-capture-groups': 'error',
   'es-x/no-regexp-s-flag': 'error',
@@ -62,6 +104,7 @@ const jsConfig = {
   plugins: {
     'es-x': pluginESx,
     import: importPlugin,
+    'jsx-a11y': jsxA11y,
   },
   languageOptions: {
     ecmaVersion: 2024,
@@ -90,9 +133,11 @@ const tsConfig = {
   files: ['**/*.{ts,tsx,mts}'],
   plugins: {
     'es-x': pluginESx,
-    '@typescript-eslint': typescript,
+    '@typescript-eslint': typescriptPlugin,
     import: importPlugin,
     'react-signals-hooks': reactSignalsHooksPlugin,
+    'eslint-rule': eslintRulePlugin,
+    'jsx-a11y': jsxA11y,
   },
   languageOptions: {
     ecmaVersion: 2024,
@@ -121,9 +166,19 @@ const tsConfig = {
     'react-signals-hooks/no-mutation-in-render': 'error',
     'react-signals-hooks/prefer-signal-in-jsx': 'warn',
     'react-signals-hooks/prefer-show-over-ternary': 'warn',
+    'react-signals-hooks/warn-on-unnecessary-untracked': 'warn',
+    'react-signals-hooks/no-signal-creation-in-component': 'warn',
     'react-signals-hooks/prefer-for-over-map': 'warn',
     'react-signals-hooks/prefer-signal-effect': 'warn',
     'react-signals-hooks/prefer-computed': 'warn',
+
+    'eslint-rule/consistent-rule-structure': 'warn',
+
+    // TypeScript specific
+    '@typescript-eslint/await-thenable': 'error',
+    '@typescript-eslint/no-floating-promises': 'error',
+    '@typescript-eslint/consistent-type-imports': 'error',
+    '@typescript-eslint/no-explicit-any': 'warn',
 
     '@typescript-eslint/array-type': ['error', { default: 'generic' }],
     'no-shadow': 'off',
@@ -153,7 +208,7 @@ const tsConfig = {
 
 const jsonConfig = {
   files: ['**/*.json'],
-  plugins: { json },
+  ...json.configs['recommended'],
   processor: 'json/json',
   languageOptions: {
     ecmaVersion: 2024,
@@ -191,8 +246,17 @@ const jsonConfig = {
 //   },
 // };
 
-/** @type {import('eslint').Linter.FlatConfig[]} */
+/** @type {import('eslint').Linter.Config[]} */
 export default [
+  jsxA11y.flatConfigs.recommended,
+  securityPlugin.configs.recommended,
+  {
+    files: ['lib/rules/*.{js,ts}'],
+    ...eslintPlugin.configs['flat/recommended'],
+    rules: {
+      'n/no-missing-import': 'off',
+    },
+  },
   {
     files: ['**/eslint.config.js'],
     languageOptions: {
@@ -221,6 +285,14 @@ export default [
       '**/dist/**',
       '**/.wrangler/**',
       '**/test/**',
+
+      'test-packages/**',
+      'packages/package-json-bot/**',
+      'packages/eslint-config-validation-schemas/**',
+      'packages/eslint-plugin-zod/**',
+      'packages/eslint-plugin-valibot/**',
+      'packages/eslint-plugin-arktype/**',
+      'packages/eslint-plugin-joi/**',
     ],
   },
   {
@@ -231,6 +303,7 @@ export default [
       oxlint: oxlintPlugin,
     },
     languageOptions: {
+      ...jsxA11y.flatConfigs.recommended.languageOptions,
       ecmaVersion: 2024,
       parserOptions: {
         sourceType: 'module',
@@ -239,6 +312,7 @@ export default [
         },
       },
       globals: {
+        ...globals.serviceworker,
         ...globals.browser,
         ...globals.node,
       },
