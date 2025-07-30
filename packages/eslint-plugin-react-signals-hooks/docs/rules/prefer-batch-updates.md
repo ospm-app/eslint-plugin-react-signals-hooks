@@ -179,7 +179,70 @@ This rule accepts an options object with the following properties:
    }
    ```
 
-3. **Batching nested updates**
+3. **Array updates in loops**
+
+   When working with arrays in signals, especially in loops, it's important to avoid direct mutations and use immutable update patterns:
+
+   ```tsx
+   function processItems(items) {
+     // ✅ Single update for all items
+     batch(() => {
+       const updatedItems = itemListSignal.value.map((item, index) => ({
+         ...item,
+         processed: items.some(i => i.id === item.id)
+       }));
+       
+       itemListSignal.value = updatedItems;
+     });
+   }
+   ```
+
+   ```tsx
+   // ❌ Avoid: Direct array mutations in loops
+   function doubleValues() {
+     for (let i = 0; i < itemsSignal.value.length; i++) {
+       itemsSignal.value[i].value *= 2; // Direct mutation
+     }
+   }
+
+   // ✅ Prefer: Using map to create new arrays
+   function doubleValues() {
+     itemsSignal.value = itemsSignal.value.map(item => ({
+       ...item,
+       value: item.value * 2
+     }));
+   }
+
+   // ❌ Avoid: Array methods that mutate in place
+   function addItem() {
+     itemsSignal.value.push(newItem); // Direct mutation
+   }
+
+   // ✅ Prefer: Creating new arrays with spread or concat
+   function addItem() {
+     itemsSignal.value = [...itemsSignal.value, newItem];
+   }
+   ```
+
+4. **TypeScript noUncheckedIndexedAccess**
+
+   When using TypeScript with `noUncheckedIndexedAccess` enabled, be mindful of potential undefined array access:
+
+   ```tsx
+   // ❌ May have issues with noUncheckedIndexedAccess
+   itemsSignal.value[0].name = 'New Name';
+
+   // ✅ Safer with null check
+   const item = itemsSignal.value[0];
+   if (item) {
+     itemsSignal.value = [
+       { ...item, name: 'New Name' },
+       ...itemsSignal.value.slice(1)
+     ];
+   }
+   ```
+
+5. **Batching nested updates**
 
    ```tsx
    function updateNestedData() {
@@ -201,23 +264,7 @@ This rule accepts an options object with the following properties:
    }
    ```
 
-4. **Batching in loops**
-
-   ```tsx
-   function processItems(items) {
-     // ✅ Single update for all items
-     batch(() => {
-       const updatedItems = itemListSignal.value.map((item, index) => ({
-         ...item,
-         processed: items.some(i => i.id === item.id)
-       }));
-       
-       itemListSignal.value = updatedItems;
-     });
-   }
-   ```
-
-5. **Custom batching utilities**
+6. **Custom batching utilities**
 
    ```tsx
    // utils/signals.ts
@@ -245,7 +292,7 @@ This rule accepts an options object with the following properties:
    }
    ```
 
-6. **Event handlers with batching**
+7. **Event handlers with batching**
 
    ```tsx
    function FormComponent() {

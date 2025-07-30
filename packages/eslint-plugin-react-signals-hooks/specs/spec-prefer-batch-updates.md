@@ -26,6 +26,8 @@ The `prefer-batch-updates` rule detects multiple signal updates within the same 
 
 - Analyzes updates within nested blocks and functions
 - Only reports when multiple updates occur in the same immediate scope
+- ignores updates inside batch calls
+- updates inside loops, while loops, and other control flow statements should require wrapping whole flow statement, not just assignment itself
 
 ## Configuration Options
 

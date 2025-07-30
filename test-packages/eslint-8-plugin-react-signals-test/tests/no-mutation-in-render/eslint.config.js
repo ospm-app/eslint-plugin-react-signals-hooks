@@ -52,10 +52,6 @@ export default [
       'react-signals-hooks/prefer-batch-updates': 'warn',
       'react-signals-hooks/prefer-signal-methods': 'warn',
       'react-signals-hooks/prefer-show-over-ternary': 'warn',
-      'react-signals-hooks/prefer-batch-for-multi-mutations': [
-        'warn',
-        { minMutations: 2, maxMutations: 10 },
-      ],
       'react-signals-hooks/prefer-use-signal-over-use-state': 'warn',
 
       // Error prevention rules
