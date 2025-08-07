@@ -1,5 +1,6 @@
 /** biome-ignore-all assist/source/organizeImports: off */
-import { ESLintUtils } from "@typescript-eslint/utils";
+import type { Definition, Variable } from "@typescript-eslint/scope-manager";
+import { ESLintUtils, AST_NODE_TYPES } from "@typescript-eslint/utils";
 import type { TSESLint, TSESTree } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
@@ -83,11 +84,20 @@ function getSeverity(
 function processBlock(
 	statements: Array<TSESTree.Statement>,
 	context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
-	options: Option = {},
 	perfKey: string,
 	scopeDepth = 0,
-	inBatch = false,
+	inBatch: boolean = false,
 ): Array<SignalUpdate> {
+	// If we are already inside a batch, skip processing to avoid false positives
+	if (inBatch) {
+		recordMetric(perfKey, PerformanceOperations.skipProcessing, {
+			scopeDepth,
+			statementCount: statements.length,
+		});
+		// Return empty array - no signal updates should be collected in batch scope
+		return [];
+	}
+
 	const updatesInScope: Array<SignalUpdate> = [];
 
 	const allUpdates: Array<SignalUpdate> = [];
@@ -115,21 +125,17 @@ function processBlock(
 		},
 	);
 
-	// Track if we're inside a batch call
-	let currentInBatch = inBatch;
-
 	for (const stmt of statements) {
 		// Skip non-expression statements
-		if (stmt.type !== "ExpressionStatement") {
+		if (stmt.type !== AST_NODE_TYPES.ExpressionStatement) {
 			// Process block statements (if, for, while, etc.)
-			if (isBlockStatement(stmt)) {
+			if (stmt.type === AST_NODE_TYPES.BlockStatement) {
 				const nestedUpdates = processBlock(
 					stmt.body,
 					context,
-					options,
 					perfKey,
 					scopeDepth + 1,
-					currentInBatch,
+					inBatch,
 				);
 
 				allUpdates.push(...nestedUpdates);
@@ -140,23 +146,25 @@ function processBlock(
 
 		// Check if this is a batch call
 		if (isBatchCall(stmt.expression, context)) {
-			currentInBatch = true;
 			// Process the batch callback
 			if (
-				stmt.expression.type === "CallExpression" &&
+				stmt.expression.type === AST_NODE_TYPES.CallExpression &&
 				stmt.expression.arguments.length > 0 &&
-				stmt.expression.arguments[0]?.type === "ArrowFunctionExpression"
+				(stmt.expression.arguments[0]?.type ===
+					AST_NODE_TYPES.ArrowFunctionExpression ||
+					stmt.expression.arguments[0]?.type ===
+						AST_NODE_TYPES.FunctionExpression)
 			) {
-				const body = stmt.expression.arguments[0].body;
-				if (body.type === "BlockStatement") {
-					processBlock(
-						body.body,
-						context,
-						options,
-						perfKey,
-						scopeDepth + 1,
-						true,
-					);
+				const arg = stmt.expression.arguments[0];
+				const body =
+					arg.type === AST_NODE_TYPES.ArrowFunctionExpression
+						? arg.body
+						: arg.body;
+
+				if (body.type === AST_NODE_TYPES.BlockStatement) {
+					// For batch calls, we don't collect any signal updates inside them
+					// so just skip processing the body entirely
+					recordMetric(perfKey, "skipBatchBody", { scopeDepth });
 				}
 			}
 
@@ -164,7 +172,7 @@ function processBlock(
 		}
 
 		// Check for signal updates
-		if (isSignalUpdate(stmt.expression) && !currentInBatch) {
+		if (isSignalUpdate(stmt.expression)) {
 			const updateType = getUpdateType(stmt.expression);
 			const signalName = getSignalName(stmt.expression);
 
@@ -173,8 +181,10 @@ function processBlock(
 				location: scopeDepth === 0 ? "top-level" : `nested-${scopeDepth}`,
 				signalName,
 				hasBatchImport,
+				inBatchScope: inBatch,
 			});
 
+			// Only collect updates if not in a batch scope
 			updatesInScope.push({
 				node: stmt.expression,
 				isTopLevel: scopeDepth === 0,
@@ -188,16 +198,19 @@ function processBlock(
 	recordMetric(perfKey, "processBlockEnd", {
 		scopeDepth,
 		totalUpdates: updatesInScope.length,
-		uniqueSignals: new Set(updatesInScope.map((u) => u.signalName)).size,
+		uniqueSignals: new Set(
+			updatesInScope.map((u: SignalUpdate): string => {
+				return u.signalName;
+			}),
+		).size,
 		hasBatchImport,
-		minUpdatesRequired: options.minUpdates,
+		minUpdatesRequired: context.options[0]?.minUpdates,
 	});
 
-	// Add updates from this scope to all updates
 	allUpdates.push(...updatesInScope);
 
 	// Only suggest batching if we have enough updates (min 2 by default)
-	const minUpdates = options.minUpdates ?? 2;
+	const minUpdates = context.options[0]?.minUpdates ?? 2;
 
 	if (updatesInScope.length < minUpdates) {
 		recordMetric(perfKey, "batchUpdateNotNeeded", {
@@ -211,11 +224,13 @@ function processBlock(
 
 	const firstNode = updatesInScope[0]?.node;
 
-	const signalCount = updatesInScope.length;
-
 	recordMetric(perfKey, "batchUpdateSuggested", {
 		updateCount: updatesInScope.length,
-		uniqueSignals: new Set(updatesInScope.map((u) => u.signalName)).size,
+		uniqueSignals: new Set(
+			updatesInScope.map((u: SignalUpdate): string => {
+				return u.signalName;
+			}),
+		).size,
 	});
 
 	if (!firstNode) {
@@ -224,14 +239,19 @@ function processBlock(
 
 	const messageId = "useBatch";
 
-	const severity = getSeverity(messageId, options);
+	const severity = getSeverity(messageId, context.options[0]);
 
-	if (severity !== "off" && updatesInScope.length > 0) {
+	// Before reporting, ensure the first node is not inside a batch call
+	if (
+		severity !== "off" &&
+		updatesInScope.length > 0 &&
+		!isInsideBatchCall(firstNode, context)
+	) {
 		context.report({
 			node: firstNode,
 			messageId,
 			data: {
-				count: signalCount,
+				count: updatesInScope.length,
 				signals: Array.from(
 					new Set(
 						allUpdates.map((update: SignalUpdate): string => {
@@ -243,7 +263,7 @@ function processBlock(
 			suggest: [
 				{
 					messageId: "useBatchSuggestion",
-					data: { count: signalCount },
+					data: { count: updatesInScope.length },
 					*fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
 						const updatesText = allUpdates
 							.map(({ node }: SignalUpdate): string => {
@@ -298,7 +318,7 @@ function processBlock(
 				},
 				{
 					messageId: "useBatchSuggestion",
-					data: { count: signalCount },
+					data: { count: updatesInScope.length },
 					*fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
 						const updatesText = allUpdates
 							.map(({ node }: SignalUpdate): string => {
@@ -312,7 +332,7 @@ function processBlock(
 
 							const firstImport = context.sourceCode.ast.body.find(
 								(n): n is TSESTree.ImportDeclaration =>
-									n.type === "ImportDeclaration",
+									n.type === AST_NODE_TYPES.ImportDeclaration,
 							);
 
 							if (typeof firstImport === "undefined") {
@@ -360,7 +380,7 @@ function processBlock(
 							(
 								n: TSESTree.ProgramStatement,
 							): n is TSESTree.ImportDeclaration => {
-								return n.type === "ImportDeclaration";
+								return n.type === AST_NODE_TYPES.ImportDeclaration;
 							},
 						);
 
@@ -384,45 +404,127 @@ function processBlock(
 	return allUpdates;
 }
 
-/**
- * Checks if a node is a block statement (if, for, while, etc.)
- */
-function isBlockStatement(
-	node: TSESTree.Node,
-): node is TSESTree.BlockStatement {
-	return node.type === "BlockStatement";
+const batchScopeStack: Array<boolean> = [false];
+
+function pushBatchScope(inBatch: boolean): void {
+	batchScopeStack.push(inBatch);
+}
+
+function popBatchScope(): boolean {
+	const popped = batchScopeStack.pop();
+
+	if (batchScopeStack.length === 0) {
+		batchScopeStack.push(false);
+	}
+
+	console.info(
+		`🔽 Popped batch scope: ${popped}, stack size: ${batchScopeStack.length}`,
+	);
+	return popped ?? false;
 }
 
 /**
- * Checks if a node is a batch call (batch(() => {}))
+ * Checks if a node is inside a batch call by checking the batch scope stack
  */
+function isInsideBatchCall(
+	node: TSESTree.Node,
+	context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
+): boolean {
+	const nodeInfo = `${node.type} at line ${node.loc.start.line}`;
+	console.info(`🔄 Checking if node is inside batch call: ${nodeInfo}`);
+
+	// Check if we're in a batch scope
+	if (
+		batchScopeStack.length > 0 &&
+		batchScopeStack[batchScopeStack.length - 1] === true
+	) {
+		console.info(`✅ In batch scope (stack) - ${nodeInfo}`);
+
+		return true;
+	}
+
+	// Then check if we're inside a batch callback
+	const ancestors = context.sourceCode.getAncestors(node);
+
+	for (const ancestor of ancestors) {
+		// If we find a batch call
+		if (
+			ancestor.type === AST_NODE_TYPES.CallExpression &&
+			isBatchCall(ancestor, context)
+		) {
+			console.info("🔍 Found batch call ancestor");
+			// The first argument is the callback function
+			if (ancestor.arguments.length > 0) {
+				const callback = ancestor.arguments[0];
+
+				// If the node is inside the callback body, it's batched
+				if (
+					typeof callback !== "undefined" &&
+					"body" in callback &&
+					"range" in callback.body
+				) {
+					const bodyRange = callback.body.range;
+
+					const isInside =
+						node.range[0] >= bodyRange[0] && node.range[1] <= bodyRange[1];
+					if (isInside) {
+						console.info("✅ Inside batch callback body");
+					} else {
+						console.info("❌ Outside batch callback body ranges:", {
+							nodeStart: node.range[0],
+							bodyStart: bodyRange[0],
+							nodeEnd: node.range[1],
+							bodyEnd: bodyRange[1],
+						});
+					}
+					return isInside;
+				}
+			}
+		}
+	}
+
+	console.info("❌ Not in any batch context");
+	return false;
+}
+
 function isBatchCall(
 	node: TSESTree.Node,
 	context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
 ): boolean {
-	if (node.type !== "CallExpression") return false;
+	if (node.type !== AST_NODE_TYPES.CallExpression) {
+		return false;
+	}
 
-	const { callee } = node;
-	if (callee.type !== "Identifier") return false;
+	// Check for direct batch identifier
+	if (
+		node.callee.type === AST_NODE_TYPES.Identifier &&
+		node.callee.name === "batch"
+	) {
+		return true;
+	}
 
-	// Check if it's a direct call to 'batch'
-	if (callee.name === "batch") return true;
+	// Check for member expression like React.batch or imported batch with alias
+	if (node.callee.type === AST_NODE_TYPES.Identifier) {
+		// Check if it's an imported batch function with potential aliasing
+		const scope = context.sourceCode.getScope(node);
 
-	// Check if it's an imported batch function
-	const scope = context.sourceCode.getScope(node);
-	const variable = scope.variables.find((v) => v.name === callee.name);
-
-	if (variable) {
-		return variable.defs.some((def) => {
-			if (def.type === "ImportBinding") {
-				return (
-					"imported" in def.node &&
-					"name" in def.node.imported &&
-					def.node.imported.name === "batch"
-				);
-			}
-			return false;
+		const variable = scope.variables.find((v: Variable): boolean => {
+			return "name" in node.callee && v.name === node.callee.name;
 		});
+
+		if (typeof variable !== "undefined") {
+			return variable.defs.some((def: Definition): boolean => {
+				if (def.type === "ImportBinding") {
+					return (
+						"imported" in def.node &&
+						"name" in def.node.imported &&
+						def.node.imported.name === "batch"
+					);
+				}
+
+				return false;
+			});
+		}
 	}
 
 	return false;
@@ -434,12 +536,14 @@ function isBatchCall(
 function getUpdateType(
 	node: TSESTree.Node,
 ): "assignment" | "method" | "update" {
-	if (node.type === "AssignmentExpression") {
+	if (node.type === AST_NODE_TYPES.AssignmentExpression) {
 		return "assignment";
 	}
-	if (node.type === "CallExpression") {
+
+	if (node.type === AST_NODE_TYPES.CallExpression) {
 		return "method";
 	}
+
 	return "update";
 }
 
@@ -447,24 +551,24 @@ function getUpdateType(
  * Gets the name of the signal being updated
  */
 function getSignalName(node: TSESTree.Node): string {
-	if (node.type === "AssignmentExpression") {
+	if (node.type === AST_NODE_TYPES.AssignmentExpression) {
 		if (
-			node.left.type === "MemberExpression" &&
+			node.left.type === AST_NODE_TYPES.MemberExpression &&
 			!node.left.computed &&
-			node.left.property.type === "Identifier" &&
+			node.left.property.type === AST_NODE_TYPES.Identifier &&
 			node.left.property.name === "value" &&
-			node.left.object.type === "Identifier"
+			node.left.object.type === AST_NODE_TYPES.Identifier
 		) {
 			return node.left.object.name;
 		}
 	} else if (
-		node.type === "CallExpression" &&
-		node.callee.type === "MemberExpression" &&
+		node.type === AST_NODE_TYPES.CallExpression &&
+		node.callee.type === AST_NODE_TYPES.MemberExpression &&
 		!node.callee.computed &&
-		node.callee.property.type === "Identifier" &&
+		node.callee.property.type === AST_NODE_TYPES.Identifier &&
 		(node.callee.property.name === "set" ||
 			node.callee.property.name === "update") &&
-		node.callee.object.type === "Identifier"
+		node.callee.object.type === AST_NODE_TYPES.Identifier
 	) {
 		return node.callee.object.name;
 	}
@@ -480,11 +584,11 @@ function isSignalUpdate(
 	| TSESTree.UpdateExpression
 	| TSESTree.UnaryExpression {
 	// Handle direct assignments (signal.value = x)
-	if (node.type === "AssignmentExpression") {
+	if (node.type === AST_NODE_TYPES.AssignmentExpression) {
 		// Check for direct assignment to signal.value
 		if (
-			node.left.type === "MemberExpression" &&
-			node.left.property.type === "Identifier" &&
+			node.left.type === AST_NODE_TYPES.MemberExpression &&
+			node.left.property.type === AST_NODE_TYPES.Identifier &&
 			node.left.property.name === "value" &&
 			isSignalReference(node.left.object)
 		) {
@@ -494,8 +598,8 @@ function isSignalUpdate(
 		// Handle compound assignments (signal.value += x, etc.)
 		if (
 			node.operator !== "=" && // Skip simple assignments as they're handled above
-			node.left.type === "MemberExpression" &&
-			node.left.property.type === "Identifier" &&
+			node.left.type === AST_NODE_TYPES.MemberExpression &&
+			node.left.property.type === AST_NODE_TYPES.Identifier &&
 			node.left.property.name === "value" &&
 			isSignalReference(node.left.object)
 		) {
@@ -505,9 +609,9 @@ function isSignalUpdate(
 
 	// Handle method calls (signal.set(x) or signal.update())
 	if (
-		node.type === "CallExpression" &&
-		node.callee.type === "MemberExpression" &&
-		node.callee.property.type === "Identifier" &&
+		node.type === AST_NODE_TYPES.CallExpression &&
+		node.callee.type === AST_NODE_TYPES.MemberExpression &&
+		node.callee.property.type === AST_NODE_TYPES.Identifier &&
 		["set", "update"].includes(node.callee.property.name) &&
 		isSignalReference(node.callee.object)
 	) {
@@ -516,9 +620,9 @@ function isSignalUpdate(
 
 	// Handle increment/decrement (signal.value++, --signal.value)
 	if (
-		node.type === "UpdateExpression" &&
-		node.argument.type === "MemberExpression" &&
-		node.argument.property.type === "Identifier" &&
+		node.type === AST_NODE_TYPES.UpdateExpression &&
+		node.argument.type === AST_NODE_TYPES.MemberExpression &&
+		node.argument.property.type === AST_NODE_TYPES.Identifier &&
 		node.argument.property.name === "value" &&
 		isSignalReference(node.argument.object)
 	) {
@@ -532,7 +636,7 @@ function isSignalUpdate(
  * Checks if a node is a reference to a signal (either directly or through a property access)
  */
 function isSignalReference(node: TSESTree.Node): boolean {
-	if (node.type === "Identifier") {
+	if (node.type === AST_NODE_TYPES.Identifier) {
 		// Check if the identifier name suggests it's a signal
 		return (
 			node.name.endsWith("Signal") ||
@@ -544,8 +648,8 @@ function isSignalReference(node: TSESTree.Node): boolean {
 
 	// Handle nested member expressions (e.g., this.signal.value)
 	if (
-		node.type === "MemberExpression" &&
-		node.property.type === "Identifier" &&
+		node.type === AST_NODE_TYPES.MemberExpression &&
+		node.property.type === AST_NODE_TYPES.Identifier &&
 		node.property.name === "value"
 	) {
 		return isSignalReference(node.object);
@@ -554,123 +658,11 @@ function isSignalReference(node: TSESTree.Node): boolean {
 	return false;
 }
 
+// Track signal updates across the file
+let signalUpdates: Array<SignalUpdate> = [];
+
 // Default minimum number of updates before suggesting batching
 const DEFAULT_MIN_UPDATES = 2;
-
-// Helper to report batch violations with proper fixes and suggestions
-function reportBatchViolation(
-	context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
-	updates: Array<SignalUpdate>,
-): void {
-	if (updates.length < 2) return;
-
-	const sourceCode = context.sourceCode;
-	const firstUpdate: SignalUpdate | undefined = updates[0];
-
-	// Check if batch is already imported
-	const hasBatchImport = sourceCode.ast.body.some(
-		(node: TSESTree.ProgramStatement): boolean => {
-			return (
-				node.type === "ImportDeclaration" &&
-				node.source.value === "@preact/signals-react" &&
-				node.specifiers.some((s: TSESTree.ImportClause): boolean => {
-					return (
-						s.type === "ImportSpecifier" &&
-						s.imported.type === "Identifier" &&
-						s.imported.name === "batch"
-					);
-				})
-			);
-		},
-	);
-
-	// Get the severity level for this message
-	const severity = getSeverity("useBatch", context.options[0]);
-
-	if (severity === "off") return;
-
-	if (!firstUpdate) return;
-
-	// Report the issue with fix suggestions
-	context.report({
-		node: firstUpdate.node,
-		messageId: "useBatch",
-		data: { count: updates.length },
-		suggest: [
-			{
-				messageId: "useBatchSuggestion",
-				data: { count: updates.length },
-				fix: (fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> => {
-					const fixes: Array<TSESLint.RuleFix> = [];
-
-					// Add batch import if needed
-					if (!hasBatchImport) {
-						const importFix = (
-							fixer: TSESLint.RuleFixer,
-						): ReadonlyArray<TSESLint.RuleFix> => {
-							const batchImport =
-								"import { batch } from '@preact/signals-react';\n";
-
-							// Find the first import or the program start
-							const firstImport = context.sourceCode.ast.body.find(
-								(
-									n: TSESTree.ProgramStatement,
-								): n is TSESTree.ImportDeclaration => {
-									return n.type === "ImportDeclaration";
-								},
-							);
-
-							if (firstImport) {
-								return [fixer.insertTextBefore(firstImport, batchImport)];
-							} else if (context.sourceCode.ast.body[0]) {
-								// Insert at the beginning of the file if no imports exist
-								const firstToken = context.sourceCode.getFirstToken(
-									context.sourceCode.ast.body[0],
-								);
-
-								return firstToken
-									? [fixer.insertTextBefore(firstToken, batchImport)]
-									: [fixer.insertTextBeforeRange([0, 0], batchImport)];
-							} else {
-								// If the file is empty, just add the import
-								return [fixer.insertTextBeforeRange([0, 0], batchImport)];
-							}
-						};
-
-						fixes.push(...importFix(fixer));
-					}
-
-					// Sort updates by their position in the file
-					const sortedUpdates = [...updates].sort(
-						(a: SignalUpdate, b: SignalUpdate): number => {
-							return a.node.range[0] - b.node.range[0];
-						},
-					);
-
-					// Create a single batch wrapper for all updates
-					const updatesText = sortedUpdates
-						.map((update: SignalUpdate): string => {
-							return sourceCode.getText(update.node);
-						})
-						.join(";\n  ");
-
-					// Replace the original code with batched version
-					fixes.push(
-						fixer.replaceTextRange(
-							[
-								sortedUpdates[0]?.node.range[0] ?? 0,
-								sortedUpdates[sortedUpdates.length - 1]?.node.range[1] ?? 0,
-							],
-							`batch(() => {\n  ${updatesText}\n})`,
-						),
-					);
-
-					return fixes;
-				},
-			},
-		],
-	});
-}
 
 const ruleName = "prefer-batch-updates";
 
@@ -831,53 +823,20 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator(
 			startTracking(context, perfKey, option.performance, ruleName);
 		}
 
-		// Track signal updates across the file
-		const signalUpdates: Array<SignalUpdate> = [];
-
-		// Check if we should continue processing based on performance limits
+		// Check if we should continue processing or reached performance limits
 		let nodeCount = 0;
 
 		function shouldContinue(): boolean {
 			nodeCount++;
 
-			if (nodeCount > (option?.performance?.maxNodes ?? 2000)) {
+			if (
+				typeof option?.performance?.maxNodes === "number" &&
+				nodeCount > option.performance.maxNodes
+			) {
 				trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
-
 				return false;
 			}
-
 			return true;
-		}
-
-		// Process a block of code to find signal updates
-		function processStatements(statements: Array<TSESTree.Statement>): void {
-			if (!shouldContinue()) return;
-
-			try {
-				// Process the block and collect signal updates
-				const blockUpdates = processBlock(
-					statements,
-					context,
-					option,
-					perfKey,
-					0,
-					false,
-				);
-
-				if (blockUpdates.length > 0) {
-					signalUpdates.push(...blockUpdates);
-
-					// Check if we should report for this block
-					const minUpdates = option?.minUpdates ?? DEFAULT_MIN_UPDATES;
-
-					if (blockUpdates.length >= minUpdates) {
-						reportBatchViolation(context, blockUpdates);
-					}
-				}
-			} catch (error: unknown) {
-				// Log the error but don't crash the rule
-				console.error("Error in prefer-batch-updates rule:", error);
-			}
 		}
 
 		return {
@@ -886,52 +845,157 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator(
 				perf.trackNode(node);
 			},
 
-			// Process function bodies and blocks
-			BlockStatement: (node: TSESTree.BlockStatement): void => {
-				processStatements(node.body);
-			},
-
-			// Process arrow function expressions with block bodies
-			'ArrowFunctionExpression[body.type="BlockStatement"]': (
-				node: TSESTree.ArrowFunctionExpression,
-			): void => {
-				if ("body" in node.body && Array.isArray(node.body.body)) {
-					processStatements(node.body.body);
-				}
-			},
-			// Handle various node types that might contain signal updates
-			"CallExpression:exit"(node: TSESTree.CallExpression): void {
+			// Track batch call entry
+			[AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
 				if (!shouldContinue()) {
 					return;
 				}
-				startPhase(perfKey, "callExpression");
 
-				try {
-					if (isSignalUpdate(node)) {
-						signalUpdates.push({
-							node,
-							isTopLevel: true,
-							signalName: getSignalName(node),
-							updateType: getUpdateType(node),
-							scopeDepth: 0,
-						});
-					}
-
-					// Check if this is a batch call
-					if (isBatchCall(node, context)) {
-						recordMetric(perfKey, "batchCallFound", {
-							isTopLevel: true,
-							hasCallback: node.arguments.length > 0,
-						});
-					}
-				} catch (error: unknown) {
-					recordMetric(perfKey, "callExpressionError", {
-						error: String(error),
+				// If this is a batch call, mark its callback for batch scope
+				if (isBatchCall(node, context)) {
+					recordMetric(perfKey, "batchCallDetected", {
+						location: context.getSourceCode().getLocFromIndex(node.range[0]),
+						hasCallback:
+							node.arguments.length > 0 &&
+							(node.arguments[0]?.type ===
+								AST_NODE_TYPES.ArrowFunctionExpression ||
+								node.arguments[0]?.type === AST_NODE_TYPES.FunctionExpression),
 					});
-				} finally {
-					endPhase(perfKey, "callExpression");
+
+					// Push batch scope before processing the callback
+					if (
+						node.arguments.length > 0 &&
+						(node.arguments[0]?.type ===
+							AST_NODE_TYPES.ArrowFunctionExpression ||
+							node.arguments[0]?.type === AST_NODE_TYPES.FunctionExpression)
+					) {
+						// Mark all expressions inside this batch callback as batched
+						pushBatchScope(true);
+
+						// If the batch callback has a BlockStatement body, manually process it with inBatch=true
+						const callback = node.arguments[0];
+						if (
+							callback.type === AST_NODE_TYPES.ArrowFunctionExpression &&
+							callback.body.type === AST_NODE_TYPES.BlockStatement
+						) {
+							// Skip processing to avoid collecting any signal updates inside
+							recordMetric(perfKey, "skipArrowBatchBody", {
+								location: context
+									.getSourceCode()
+									.getLocFromIndex(callback.body.range[0]),
+							});
+						} else if (callback.type === AST_NODE_TYPES.FunctionExpression) {
+							// Skip processing to avoid collecting any signal updates inside
+							recordMetric(perfKey, "skipFunctionBatchBody", {
+								location: context
+									.getSourceCode()
+									.getLocFromIndex(callback.body.range[0]),
+							});
+						}
+					}
 				}
 			},
+
+			// Handle batch call exit and restore scope
+			[`${AST_NODE_TYPES.CallExpression}:exit`](
+				node: TSESTree.CallExpression,
+			): void {
+				if (!shouldContinue()) {
+					return;
+				}
+
+				// Pop batch scope when exiting a batch call
+				if (isBatchCall(node, context)) {
+					if (
+						node.arguments.length > 0 &&
+						(node.arguments[0]?.type ===
+							AST_NODE_TYPES.ArrowFunctionExpression ||
+							node.arguments[0]?.type === AST_NODE_TYPES.FunctionExpression)
+					) {
+						// Get the exact body of the batch callback
+						const callbackBodyRange = node.arguments[0].body.range;
+
+						// Filter out signal updates that are inside the batch callback body
+						signalUpdates = signalUpdates.filter(
+							(update: SignalUpdate): boolean => {
+								return !(
+									update.node.range[0] >= callbackBodyRange[0] &&
+									update.node.range[1] <= callbackBodyRange[1]
+								);
+							},
+						);
+
+						const removedCount = signalUpdates.length - signalUpdates.length;
+
+						if (removedCount > 0) {
+							recordMetric(perfKey, "batchUpdatesRemoved", {
+								removedCount,
+								location: context.sourceCode.getLocFromIndex(node.range[1]),
+							});
+						}
+
+						// Pop the batch scope after removing updates
+						popBatchScope();
+					}
+				}
+			},
+
+			// Process function bodies and blocks
+			[AST_NODE_TYPES.BlockStatement]: (
+				node: TSESTree.BlockStatement,
+			): void => {
+				pushBatchScope(batchScopeStack[batchScopeStack.length - 1] === true);
+
+				processBlock(node.body, context, perfKey);
+			},
+
+			// Process arrow function expressions with block bodies
+			[`${AST_NODE_TYPES.ArrowFunctionExpression}[body.type="${AST_NODE_TYPES.BlockStatement}"]`]:
+				(node: TSESTree.ArrowFunctionExpression): void => {
+					if (!shouldContinue()) {
+						return;
+					}
+
+					startPhase(perfKey, "callExpression");
+
+					try {
+						// Check if we're exiting a batch call - restore previous scope state
+						if (
+							isBatchCall(node, context) &&
+							"arguments" in node &&
+							Array.isArray(node.arguments) &&
+							node.arguments.length > 0 &&
+							typeof node.arguments[0] === "object" &&
+							node.arguments[0] !== null &&
+							"type" in node.arguments[0] &&
+							(node.arguments[0].type ===
+								AST_NODE_TYPES.ArrowFunctionExpression ||
+								node.arguments[0].type === AST_NODE_TYPES.FunctionExpression)
+						) {
+							popBatchScope();
+						}
+
+						// Only add signal updates if we're not inside a batch function
+						if (
+							isSignalUpdate(node) &&
+							batchScopeStack[batchScopeStack.length - 1] !== true
+						) {
+							signalUpdates.push({
+								node,
+								isTopLevel: true,
+								signalName: getSignalName(node),
+								updateType: getUpdateType(node),
+								scopeDepth: 0,
+							});
+						}
+					} catch (error: unknown) {
+						recordMetric(perfKey, "callExpressionError", {
+							error: String(error),
+						});
+					} finally {
+						endPhase(perfKey, "callExpression");
+					}
+				},
 
 			// Handle assignment expressions (e.g., signal.value = x)
 			"AssignmentExpression:exit"(node: TSESTree.AssignmentExpression): void {
@@ -942,7 +1006,11 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator(
 				startPhase(perfKey, "assignmentExpression");
 
 				try {
-					if (isSignalUpdate(node)) {
+					// Only add signal updates if not inside batch function
+					if (
+						isSignalUpdate(node) &&
+						batchScopeStack[batchScopeStack.length - 1] !== true
+					) {
 						signalUpdates.push({
 							node,
 							isTopLevel: false, // Will be set correctly in processBlock
@@ -961,14 +1029,21 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator(
 			},
 
 			// Handle update expressions (e.g., signal.value++)
-			"UpdateExpression:exit"(node: TSESTree.UpdateExpression): void {
+			[`${AST_NODE_TYPES.UpdateExpression}:exit`](
+				node: TSESTree.UpdateExpression,
+			): void {
 				if (!shouldContinue()) {
 					return;
 				}
+
 				startPhase(perfKey, "updateExpression");
 
 				try {
-					if (isSignalUpdate(node)) {
+					// Only add signal updates if not inside batch function
+					if (
+						isSignalUpdate(node) &&
+						batchScopeStack[batchScopeStack.length - 1] !== true
+					) {
 						signalUpdates.push({
 							node,
 							isTopLevel: false, // Will be set correctly in processBlock
@@ -986,32 +1061,37 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator(
 				}
 			},
 
-			// Process blocks of code (function bodies, if blocks, etc.)
-			"BlockStatement:exit"(node: TSESTree.BlockStatement): void {
+			[`${AST_NODE_TYPES.BlockStatement}:exit`](
+				node: TSESTree.BlockStatement,
+			): void {
+				// disabled to prevent double processing
 				if (!shouldContinue()) {
 					return;
 				}
+
 				startPhase(perfKey, "blockStatement");
 
 				try {
 					processBlock(
 						node.body,
 						context,
-						option,
 						perfKey,
 						1, // scopeDepth
-						false, // inBatch
+						batchScopeStack[batchScopeStack.length - 1] === true, // inBatch based on current scope
 					);
 				} catch (error: unknown) {
 					// Log the error but don't crash the rule
 					recordMetric(perfKey, "processBlockError", { error: String(error) });
-				}
+				} finally {
+					// Pop the current batch scope
+					popBatchScope();
 
-				endPhase(perfKey, "blockStatement");
+					endPhase(perfKey, "blockStatement");
+				}
 			},
 
 			// Process program top level
-			"Program:exit"(node: TSESTree.Program): void {
+			[`${AST_NODE_TYPES.Program}:exit`](node: TSESTree.Program): void {
 				startPhase(perfKey, "programExit");
 
 				processBlock(
@@ -1021,11 +1101,10 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator(
 						): n is
 							| TSESTree.ExpressionStatement
 							| TSESTree.VariableDeclaration =>
-							n.type === "ExpressionStatement" ||
-							n.type === "VariableDeclaration",
+							n.type === AST_NODE_TYPES.ExpressionStatement ||
+							n.type === AST_NODE_TYPES.VariableDeclaration,
 					),
 					context,
-					option,
 					perfKey,
 				);
 
@@ -1062,6 +1141,6 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator(
 
 				endPhase(perfKey, "programExit");
 			},
-		};
+		} satisfies ESLintUtils.RuleListener;
 	},
 });

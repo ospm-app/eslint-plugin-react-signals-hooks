@@ -67,6 +67,8 @@ Performance tuning options:
 
 - **Wrap with `batch`**: Automatically wraps the updates in a `batch()` call
 - **Add batch import**: Automatically adds the batch import from '@preact/signals-react' if missing
+- Should not wrap with batch if it is already inside a batch
+- Should offer to remove batch if there is only single signal update
 
 ## Best Practices
 
