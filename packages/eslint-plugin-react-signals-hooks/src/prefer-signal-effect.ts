@@ -1,403 +1,454 @@
 /** biome-ignore-all assist/source/organizeImports: off */
 import {
-  AST_NODE_TYPES,
-  ESLintUtils,
-  type TSESLint,
-  type TSESTree,
-} from '@typescript-eslint/utils';
-import type { RuleContext, SuggestionReportDescriptor } from '@typescript-eslint/utils/ts-eslint';
+	AST_NODE_TYPES,
+	ESLintUtils,
+	type TSESLint,
+	type TSESTree,
+} from "@typescript-eslint/utils";
+import type {
+	RuleContext,
+	SuggestionReportDescriptor,
+} from "@typescript-eslint/utils/ts-eslint";
 
-import { PerformanceOperations } from './utils/performance-constants.js';
+import { PerformanceOperations } from "./utils/performance-constants.js";
 import {
-  endPhase,
-  startPhase,
-  recordMetric,
-  stopTracking,
-  startTracking,
-  trackOperation,
-  createPerformanceTracker,
-  DEFAULT_PERFORMANCE_BUDGET,
-} from './utils/performance.js';
-import type { PerformanceBudget } from './utils/types.js';
-import { getRuleDocUrl } from './utils/urls.js';
+	endPhase,
+	startPhase,
+	recordMetric,
+	stopTracking,
+	startTracking,
+	trackOperation,
+	createPerformanceTracker,
+	DEFAULT_PERFORMANCE_BUDGET,
+} from "./utils/performance.js";
+import type { PerformanceBudget } from "./utils/types.js";
+import { getRuleDocUrl } from "./utils/urls.js";
 
 type Severity = {
-  preferSignalEffect?: 'error' | 'warn' | 'off';
-  suggestEffect?: 'error' | 'warn' | 'off';
-  addEffectImport?: 'error' | 'warn' | 'off';
+	preferSignalEffect?: "error" | "warn" | "off";
+	suggestEffect?: "error" | "warn" | "off";
+	addEffectImport?: "error" | "warn" | "off";
 };
 
 type Option = {
-  performance?: PerformanceBudget;
-  severity?: Severity;
+	performance?: PerformanceBudget;
+	severity?: Severity;
 };
 
 type Options = [Option?];
 
-type MessageIds = 'preferSignalEffect' | 'suggestEffect' | 'addEffectImport';
+type MessageIds = "preferSignalEffect" | "suggestEffect" | "addEffectImport";
 
-function isSignalDependency(dep: TSESTree.Expression | TSESTree.SpreadElement | null): boolean {
-  if (!dep || dep.type === 'SpreadElement') {
-    return false;
-  }
+function getSeverity(
+	messageId: MessageIds,
+	options: Option | undefined,
+): "error" | "warn" | "off" {
+	if (!options?.severity) {
+		return messageId === "addEffectImport" ? "warn" : "error";
+	}
 
-  if (
-    dep.type === AST_NODE_TYPES.MemberExpression &&
-    dep.property.type === AST_NODE_TYPES.Identifier &&
-    dep.property.name === 'value' &&
-    dep.object.type === AST_NODE_TYPES.Identifier &&
-    dep.object.name.endsWith('Signal')
-  ) {
-    return true;
-  }
+	switch (messageId) {
+		case "preferSignalEffect": {
+			return options.severity.preferSignalEffect ?? "error";
+		}
 
-  if (dep.type === AST_NODE_TYPES.Identifier && dep.name.endsWith('Signal')) {
-    return true;
-  }
+		case "suggestEffect": {
+			return options.severity.suggestEffect ?? "error";
+		}
 
-  return false;
+		case "addEffectImport": {
+			return options.severity.addEffectImport ?? "warn";
+		}
+
+		default: {
+			return "error";
+		}
+	}
 }
 
-const ruleName = 'prefer-signal-effect';
+function isSignalDependency(
+	dep: TSESTree.Expression | TSESTree.SpreadElement | null,
+): boolean {
+	if (!dep || dep.type === "SpreadElement") {
+		return false;
+	}
 
-function getSeverity(messageId: MessageIds, options: Option | undefined): 'error' | 'warn' | 'off' {
-  if (!options?.severity) {
-    return messageId === 'addEffectImport' ? 'warn' : 'error';
-  }
+	if (
+		dep.type === AST_NODE_TYPES.MemberExpression &&
+		dep.property.type === AST_NODE_TYPES.Identifier &&
+		dep.property.name === "value" &&
+		dep.object.type === AST_NODE_TYPES.Identifier &&
+		dep.object.name.endsWith("Signal")
+	) {
+		return true;
+	}
 
-  // eslint-disable-next-line security/detect-object-injection
-  const severity = options.severity[messageId];
+	if (dep.type === AST_NODE_TYPES.Identifier && dep.name.endsWith("Signal")) {
+		return true;
+	}
 
-  return severity ?? 'error';
+	return false;
 }
 
-export const preferSignalEffectRule = ESLintUtils.RuleCreator((name: string) => {
-  return getRuleDocUrl(name);
-})<Options, MessageIds>({
-  name: ruleName,
-  meta: {
-    type: 'problem', // Changed from 'suggestion' to 'problem' as this helps prevent critical issues like infinite loops
-    fixable: 'code',
-    hasSuggestions: true,
-    docs: {
-      description:
-        'Encourages using `effect()` from @preact/signals instead of `useEffect` when working with signals. This provides better performance through automatic dependency tracking and more predictable reactivity behavior.',
-      url: getRuleDocUrl(ruleName),
-    },
-    messages: {
-      preferSignalEffect:
-        'Prefer using `effect()` instead of `useEffect` for signal-only dependencies',
-      suggestEffect: 'Replace `useEffect` with `effect()`',
-      addEffectImport: 'Add `effect` import from @preact/signals',
-    },
-    schema: [
-      {
-        type: 'object',
-        properties: {
-          performance: {
-            type: 'object',
-            properties: {
-              maxTime: { type: 'number', minimum: 1 },
-              maxMemory: { type: 'number', minimum: 1 },
-              maxNodes: { type: 'number', minimum: 1 },
-              enableMetrics: { type: 'boolean' },
-              logMetrics: { type: 'boolean' },
-              maxOperations: {
-                type: 'object',
-                properties: Object.fromEntries(
-                  Object.entries(PerformanceOperations).map(([key]) => [
-                    key,
-                    { type: 'number', minimum: 1 },
-                  ])
-                ),
-              },
-            },
-            additionalProperties: false,
-          },
-          severity: {
-            type: 'object',
-            properties: {
-              preferSignalEffect: {
-                type: 'string',
-                enum: ['error', 'warn', 'off'],
-              },
-              suggestEffect: {
-                type: 'string',
-                enum: ['error', 'warn', 'off'],
-              },
-              addEffectImport: {
-                type: 'string',
-                enum: ['error', 'warn', 'off'],
-              },
-            },
-            additionalProperties: false,
-          },
-        },
-        additionalProperties: false,
-      },
-    ],
-  },
-  defaultOptions: [
-    {
-      performance: DEFAULT_PERFORMANCE_BUDGET,
-    },
-  ],
-  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
-    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
+const ruleName = "prefer-signal-effect";
 
-    startPhase(perfKey, 'ruleInit');
+export const preferSignalEffectRule = ESLintUtils.RuleCreator(
+	(name: string) => {
+		return getRuleDocUrl(name);
+	},
+)<Options, MessageIds>({
+	name: ruleName,
+	meta: {
+		type: "problem", // Changed from 'suggestion' to 'problem' as this helps prevent critical issues like infinite loops
+		fixable: "code",
+		hasSuggestions: true,
+		docs: {
+			description:
+				"Encourages using `effect()` from @preact/signals instead of `useEffect` when working with signals. This provides better performance through automatic dependency tracking and more predictable reactivity behavior.",
+			url: getRuleDocUrl(ruleName),
+		},
+		messages: {
+			preferSignalEffect:
+				"Prefer using `effect()` instead of `useEffect` for signal-only dependencies",
+			suggestEffect: "Replace `useEffect` with `effect()`",
+			addEffectImport: "Add `effect` import from @preact/signals",
+		},
+		schema: [
+			{
+				type: "object",
+				properties: {
+					performance: {
+						type: "object",
+						properties: {
+							maxTime: { type: "number", minimum: 1 },
+							maxMemory: { type: "number", minimum: 1 },
+							maxNodes: { type: "number", minimum: 1 },
+							enableMetrics: { type: "boolean" },
+							logMetrics: { type: "boolean" },
+							maxOperations: {
+								type: "object",
+								properties: Object.fromEntries(
+									Object.entries(PerformanceOperations).map(([key]) => [
+										key,
+										{ type: "number", minimum: 1 },
+									]),
+								),
+							},
+						},
+						additionalProperties: false,
+					},
+					severity: {
+						type: "object",
+						properties: {
+							preferSignalEffect: {
+								type: "string",
+								enum: ["error", "warn", "off"],
+							},
+							suggestEffect: {
+								type: "string",
+								enum: ["error", "warn", "off"],
+							},
+							addEffectImport: {
+								type: "string",
+								enum: ["error", "warn", "off"],
+							},
+						},
+						additionalProperties: false,
+					},
+				},
+				additionalProperties: false,
+			},
+		],
+	},
+	defaultOptions: [
+		{
+			performance: DEFAULT_PERFORMANCE_BUDGET,
+		},
+	],
+	create(
+		context: Readonly<RuleContext<MessageIds, Options>>,
+		[option],
+	): ESLintUtils.RuleListener {
+		const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
-    const perf = createPerformanceTracker<Options>(perfKey, option?.performance, context);
+		startPhase(perfKey, "ruleInit");
 
-    if (option?.performance?.enableMetrics === true) {
-      startTracking(context, perfKey, option.performance, ruleName);
-    }
+		const perf = createPerformanceTracker<Options>(
+			perfKey,
+			option?.performance,
+			context,
+		);
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    console.info(`${ruleName}: Rule configuration:`, option);
+		if (option?.performance?.enableMetrics === true) {
+			startTracking(context, perfKey, option.performance, ruleName);
+		}
 
-    recordMetric(perfKey, 'config', {
-      performance: {
-        enableMetrics: option?.performance?.enableMetrics,
-        logMetrics: option?.performance?.logMetrics,
-      },
-    });
+		console.info(
+			`${ruleName}: Initializing rule for file: ${context.filename}`,
+		);
+		console.info(`${ruleName}: Rule configuration:`, option);
 
-    trackOperation(perfKey, PerformanceOperations.ruleInit);
+		recordMetric(perfKey, "config", {
+			performance: {
+				enableMetrics: option?.performance?.enableMetrics,
+				logMetrics: option?.performance?.logMetrics,
+			},
+		});
 
-    endPhase(perfKey, 'ruleInit');
+		trackOperation(perfKey, PerformanceOperations.ruleInit);
 
-    let nodeCount = 0;
+		endPhase(perfKey, "ruleInit");
 
-    function shouldContinue(): boolean {
-      nodeCount++;
+		let nodeCount = 0;
 
-      if (nodeCount > (option?.performance?.maxNodes ?? 2_000)) {
-        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+		function shouldContinue(): boolean {
+			nodeCount++;
 
-        return false;
-      }
+			if (nodeCount > (option?.performance?.maxNodes ?? 2_000)) {
+				trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
-      return true;
-    }
+				return false;
+			}
 
-    startPhase(perfKey, 'ruleExecution');
+			return true;
+		}
 
-    return {
-      '*': (node: TSESTree.Node): void => {
-        if (!shouldContinue()) {
-          endPhase(perfKey, 'recordMetrics');
+		startPhase(perfKey, "ruleExecution");
 
-          stopTracking(perfKey);
+		return {
+			"*": (node: TSESTree.Node): void => {
+				if (!shouldContinue()) {
+					endPhase(perfKey, "recordMetrics");
 
-          return;
-        }
+					stopTracking(perfKey);
 
-        perf.trackNode(node);
+					return;
+				}
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
-      },
+				perf.trackNode(node);
 
-      CallExpression(node: TSESTree.CallExpression): void {
-        // Check if this is a useEffect call
-        if (
-          node.callee.type !== AST_NODE_TYPES.Identifier ||
-          node.callee.name !== 'useEffect' ||
-          node.arguments.length < 2 ||
-          node.arguments[1]?.type !== AST_NODE_TYPES.ArrayExpression
-        ) {
-          return;
-        }
+				trackOperation(
+					perfKey,
+					PerformanceOperations[`${node.type}Processing`],
+				);
+			},
 
-        if (
-          !(
-            node.arguments[1].elements.length > 0 &&
-            node.arguments[1].elements.every(isSignalDependency)
-          )
-        ) {
-          return;
-        }
+			CallExpression(node: TSESTree.CallExpression): void {
+				// Check if this is a useEffect call
+				if (
+					node.callee.type !== AST_NODE_TYPES.Identifier ||
+					node.callee.name !== "useEffect" ||
+					node.arguments.length < 2 ||
+					node.arguments[1]?.type !== AST_NODE_TYPES.ArrayExpression
+				) {
+					return;
+				}
 
-        const hasEffectImport = context.sourceCode.ast.body.some(
-          (node): node is TSESTree.ImportDeclaration => {
-            return (
-              node.type === AST_NODE_TYPES.ImportDeclaration &&
-              node.source.value === '@preact/signals' &&
-              node.specifiers.some((s: TSESTree.ImportClause): boolean => {
-                return (
-                  s.type === AST_NODE_TYPES.ImportSpecifier &&
-                  'name' in s.imported &&
-                  s.imported.name === 'effect'
-                );
-              })
-            );
-          }
-        );
+				if (
+					!(
+						node.arguments[1].elements.length > 0 &&
+						node.arguments[1].elements.every(isSignalDependency)
+					)
+				) {
+					return;
+				}
 
-        // Report the issue
-        const severity = getSeverity('preferSignalEffect', option);
+				const hasEffectImport = context.sourceCode.ast.body.some(
+					(node): node is TSESTree.ImportDeclaration => {
+						return (
+							node.type === AST_NODE_TYPES.ImportDeclaration &&
+							node.source.value === "@preact/signals" &&
+							node.specifiers.some((s: TSESTree.ImportClause): boolean => {
+								return (
+									s.type === AST_NODE_TYPES.ImportSpecifier &&
+									"name" in s.imported &&
+									s.imported.name === "effect"
+								);
+							})
+						);
+					},
+				);
 
-        if (severity === 'off') {
-          return;
-        }
+				// Report the issue
+				const severity = getSeverity("preferSignalEffect", option);
 
-        context.report({
-          node,
-          messageId: 'preferSignalEffect',
-          fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
-            const fixes = [];
+				if (severity === "off") {
+					return;
+				}
 
-            // Replace useEffect with effect()
-            const [callback] = node.arguments;
+				context.report({
+					node,
+					messageId: "preferSignalEffect",
+					fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+						const fixes = [];
 
-            fixes.push(
-              fixer.replaceText(
-                node,
-                `effect(() => ${context.sourceCode.getText(callback as TSESTree.Node)})`
-              )
-            );
+						// Replace useEffect with effect()
+						const [callback] = node.arguments;
 
-            // Add effect import if needed
-            if (!hasEffectImport) {
-              const effectImport = "import { effect } from '@preact/signals';\n";
+						fixes.push(
+							fixer.replaceText(
+								node,
+								`effect(() => ${context.sourceCode.getText(callback as TSESTree.Node)})`,
+							),
+						);
 
-              const firstImport = context.sourceCode.ast.body.find(
-                (n): n is TSESTree.ImportDeclaration => {
-                  return n.type === AST_NODE_TYPES.ImportDeclaration;
-                }
-              );
+						// Add effect import if needed
+						if (!hasEffectImport) {
+							const effectImport =
+								"import { effect } from '@preact/signals';\n";
 
-              if (firstImport) {
-                fixes.push(fixer.insertTextBefore(firstImport, effectImport));
-              } else {
-                const b = context.sourceCode.ast.body[0];
+							const firstImport = context.sourceCode.ast.body.find(
+								(n): n is TSESTree.ImportDeclaration => {
+									return n.type === AST_NODE_TYPES.ImportDeclaration;
+								},
+							);
 
-                if (!b) {
-                  return null;
-                }
+							if (firstImport) {
+								fixes.push(fixer.insertTextBefore(firstImport, effectImport));
+							} else {
+								const b = context.sourceCode.ast.body[0];
 
-                fixes.push(fixer.insertTextBefore(b, effectImport));
-              }
-            }
+								if (!b) {
+									return null;
+								}
 
-            return fixes;
-          },
-          suggest: [
-            {
-              messageId: 'suggestEffect',
-              fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
-                const fixes: Array<TSESLint.RuleFix> = [];
+								fixes.push(fixer.insertTextBefore(b, effectImport));
+							}
+						}
 
-                // Replace useEffect with effect()
-                const [callback] = node.arguments;
+						return fixes;
+					},
+					suggest: [
+						{
+							messageId: "suggestEffect",
+							fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+								const fixes: Array<TSESLint.RuleFix> = [];
 
-                fixes.push(
-                  fixer.replaceText(
-                    node,
-                    `effect(() => ${context.sourceCode.getText(callback as TSESTree.Node)})`
-                  )
-                );
+								// Replace useEffect with effect()
+								const [callback] = node.arguments;
 
-                // Add effect import if needed
-                if (!hasEffectImport) {
-                  const effectImport = "import { effect } from '@preact/signals';\n";
+								fixes.push(
+									fixer.replaceText(
+										node,
+										`effect(() => ${context.sourceCode.getText(callback as TSESTree.Node)})`,
+									),
+								);
 
-                  const firstImport = context.sourceCode.ast.body.find(
-                    (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
-                      return n.type === AST_NODE_TYPES.ImportDeclaration;
-                    }
-                  );
+								// Add effect import if needed
+								if (!hasEffectImport) {
+									const effectImport =
+										"import { effect } from '@preact/signals';\n";
 
-                  if (firstImport) {
-                    fixes.push(fixer.insertTextBefore(firstImport, effectImport));
-                  } else {
-                    const b = context.sourceCode.ast.body[0];
+									const firstImport = context.sourceCode.ast.body.find(
+										(
+											n: TSESTree.ProgramStatement,
+										): n is TSESTree.ImportDeclaration => {
+											return n.type === AST_NODE_TYPES.ImportDeclaration;
+										},
+									);
 
-                    if (!b) {
-                      return null;
-                    }
+									if (firstImport) {
+										fixes.push(
+											fixer.insertTextBefore(firstImport, effectImport),
+										);
+									} else {
+										const b = context.sourceCode.ast.body[0];
 
-                    fixes.push(fixer.insertTextBefore(b, effectImport));
-                  }
-                }
+										if (!b) {
+											return null;
+										}
 
-                return fixes;
-              },
-            },
-            ...(hasEffectImport
-              ? []
-              : ([
-                  {
-                    messageId: 'addEffectImport',
-                    fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
-                      const signalsImport = context.sourceCode.ast.body.find(
-                        (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
-                          return (
-                            n.type === AST_NODE_TYPES.ImportDeclaration &&
-                            n.source.value === '@preact/signals'
-                          );
-                        }
-                      );
+										fixes.push(fixer.insertTextBefore(b, effectImport));
+									}
+								}
 
-                      if (signalsImport) {
-                        const last = signalsImport.specifiers[signalsImport.specifiers.length - 1];
+								return fixes;
+							},
+						},
+						...(hasEffectImport
+							? []
+							: ([
+									{
+										messageId: "addEffectImport",
+										fix(
+											fixer: TSESLint.RuleFixer,
+										): Array<TSESLint.RuleFix> | null {
+											const signalsImport = context.sourceCode.ast.body.find(
+												(
+													n: TSESTree.ProgramStatement,
+												): n is TSESTree.ImportDeclaration => {
+													return (
+														n.type === AST_NODE_TYPES.ImportDeclaration &&
+														n.source.value === "@preact/signals"
+													);
+												},
+											);
 
-                        if (!last) {
-                          return null;
-                        }
+											if (signalsImport) {
+												const last =
+													signalsImport.specifiers[
+														signalsImport.specifiers.length - 1
+													];
 
-                        return [fixer.insertTextAfter(last, ', effect')];
-                      }
+												if (!last) {
+													return null;
+												}
 
-                      const b = context.sourceCode.ast.body[0];
+												return [fixer.insertTextAfter(last, ", effect")];
+											}
 
-                      if (!b) {
-                        return null;
-                      }
+											const b = context.sourceCode.ast.body[0];
 
-                      return [
-                        fixer.insertTextBefore(b, "import { effect } from '@preact/signals';\n"),
-                      ];
-                    },
-                  } satisfies SuggestionReportDescriptor<MessageIds>,
-                ] satisfies Array<SuggestionReportDescriptor<MessageIds>>)),
-          ],
-        });
-      },
+											if (!b) {
+												return null;
+											}
 
-      // Clean up
-      'Program:exit'(): void {
-        startPhase(perfKey, 'programExit');
+											return [
+												fixer.insertTextBefore(
+													b,
+													"import { effect } from '@preact/signals';\n",
+												),
+											];
+										},
+									} satisfies SuggestionReportDescriptor<MessageIds>,
+								] satisfies Array<SuggestionReportDescriptor<MessageIds>>)),
+					],
+				});
+			},
 
-        try {
-          startPhase(perfKey, 'recordMetrics');
+			// Clean up
+			"Program:exit"(): void {
+				startPhase(perfKey, "programExit");
 
-          const finalMetrics = stopTracking(perfKey);
+				try {
+					startPhase(perfKey, "recordMetrics");
 
-          if (finalMetrics) {
-            console.info(
-              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+					const finalMetrics = stopTracking(perfKey);
 
-            if (finalMetrics.exceededBudget === true) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
+					if (finalMetrics) {
+						console.info(
+							`\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? "EXCEEDED" : "OK"}):`,
+						);
+						console.info(`  File: ${context.filename}`);
+						console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
+						console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
 
-          stopTracking(perfKey);
-        }
+						if (finalMetrics.exceededBudget === true) {
+							console.warn("\n⚠️  Performance budget exceeded!");
+						}
+					}
+				} catch (error: unknown) {
+					console.error("Error recording metrics:", error);
+				} finally {
+					endPhase(perfKey, "recordMetrics");
 
-        perf['Program:exit']();
+					stopTracking(perfKey);
+				}
 
-        endPhase(perfKey, 'programExit');
-      },
-    };
-  },
+				perf["Program:exit"]();
+
+				endPhase(perfKey, "programExit");
+			},
+		};
+	},
 });

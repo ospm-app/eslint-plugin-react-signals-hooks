@@ -91,7 +91,7 @@ export function TestNestedSignalUpdates(): JSX.Element {
 		countSignal.value += 1;
 
 		userSignal.value = { ...userSignal.value, active: true };
-	}, []);
+	}, [userSignal.value]);
 
 	return (
 		<div>
