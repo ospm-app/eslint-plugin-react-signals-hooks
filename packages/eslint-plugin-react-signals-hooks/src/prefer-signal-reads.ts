@@ -3,6 +3,7 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
@@ -37,7 +38,10 @@ function isInJSXContext(node: TSESTree.Node): boolean {
 	let parent: TSESTree.Node | undefined = node.parent;
 
 	while (parent) {
-		if (parent.type === "JSXElement" || parent.type === "JSXFragment") {
+		if (
+			parent.type === AST_NODE_TYPES.JSXElement ||
+			parent.type === AST_NODE_TYPES.JSXFragment
+		) {
 			return true;
 		}
 
@@ -51,7 +55,7 @@ function isInJSXAttribute(node: TSESTree.Node): boolean {
 	let parent: TSESTree.Node | undefined = node.parent;
 
 	while (parent) {
-		if (parent.type === "JSXAttribute") {
+		if (parent.type === AST_NODE_TYPES.JSXAttribute) {
 			return true;
 		}
 
@@ -222,10 +226,10 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator(
 
 				// Skip if already using .value
 				if (
-					node.parent.type === "MemberExpression" &&
+					node.parent.type === AST_NODE_TYPES.MemberExpression &&
 					node.parent.object === node &&
 					"property" in node.parent &&
-					node.parent.property.type === "Identifier" &&
+					node.parent.property.type === AST_NODE_TYPES.Identifier &&
 					node.parent.property.name === "value"
 				) {
 					return;

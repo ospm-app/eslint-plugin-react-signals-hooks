@@ -14,10 +14,7 @@ module.exports = {
     es2021: true,
     node: true,
   },
-  plugins: [
-    '@typescript-eslint',
-    '@ospm/eslint-plugin-react-signals-hooks',
-  ],
+  plugins: ['@typescript-eslint', '@ospm/eslint-plugin-react-signals-hooks'],
   extends: [
     'eslint:recommended',
     'plugin:@typescript-eslint/recommended',
@@ -41,7 +38,6 @@ module.exports = {
     '@ospm/eslint-plugin-react-signals-hooks/prefer-signal-effect': 'error',
     '@ospm/eslint-plugin-react-signals-hooks/prefer-computed': 'error',
     '@ospm/eslint-plugin-react-signals-hooks/prefer-batch-updates': 'error',
-    '@ospm/eslint-plugin-react-signals-hooks/prefer-batch-for-multi-mutations': 'warn',
     '@ospm/eslint-plugin-react-signals-hooks/signal-variable-name': 'error',
     '@ospm/eslint-plugin-react-signals-hooks/no-signal-creation-in-component': 'error',
     '@ospm/eslint-plugin-react-signals-hooks/warn-on-unnecessary-untracked': 'warn',

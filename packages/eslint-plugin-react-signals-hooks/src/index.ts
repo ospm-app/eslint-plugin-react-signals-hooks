@@ -32,7 +32,6 @@ import { noNonSignalWithSignalSuffixRule } from './no-non-signal-with-signal-suf
 import { noSignalAssignmentInEffectRule } from './no-signal-assignment-in-effect.js';
 import { noSignalCreationInComponentRule } from './no-signal-creation-in-component.js';
 // Performance optimization rules
-import { preferBatchForMultiMutationsRule } from './prefer-batch-for-multi-mutations.js';
 import { preferBatchUpdatesRule } from './prefer-batch-updates.js';
 import { preferComputedRule } from './prefer-computed.js';
 import { preferForOverMapRule } from './prefer-for-over-map.js';
@@ -60,7 +59,6 @@ const rules = {
 
   // Performance optimization rules
   'prefer-batch-updates': preferBatchUpdatesRule,
-  'prefer-batch-for-multi-mutations': preferBatchForMultiMutationsRule,
   'prefer-computed': preferComputedRule,
   'prefer-for-over-map': preferForOverMapRule,
   'prefer-signal-effect': preferSignalEffectRule,
@@ -88,7 +86,6 @@ const configRules = {
 
   // Performance optimization rules
   'prefer-batch-updates': 'error',
-  'prefer-batch-for-multi-mutations': 'error',
   'prefer-computed': 'error',
   'prefer-for-over-map': 'error',
   'prefer-signal-effect': 'error',

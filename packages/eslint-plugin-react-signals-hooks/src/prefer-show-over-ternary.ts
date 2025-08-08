@@ -131,9 +131,27 @@ function getSeverity(
 		return "error";
 	}
 
-	// eslint-disable-next-line security/detect-object-injection
-	const severity = options.severity[messageId];
-	return severity ?? "error";
+	switch (messageId) {
+		case "preferShowOverTernary": {
+			return options.severity.preferShowOverTernary ?? "error";
+		}
+
+		case "suggestShowComponent": {
+			return options.severity.suggestShowComponent ?? "error";
+		}
+
+		case "addShowImport": {
+			return options.severity.addShowImport ?? "error";
+		}
+
+		case "performanceLimitExceeded": {
+			return options.severity.performanceLimitExceeded ?? "error";
+		}
+
+		default: {
+			return "error";
+		}
+	}
 }
 
 export const preferShowOverTernaryRule = ESLintUtils.RuleCreator(
@@ -494,7 +512,7 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator(
 										n: TSESTree.ProgramStatement,
 									): n is TSESTree.ImportDeclaration => {
 										return (
-											n.type === "ImportDeclaration" &&
+											n.type === AST_NODE_TYPES.ImportDeclaration &&
 											n.source.value === "@preact/signals-react"
 										);
 									},
@@ -542,7 +560,7 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator(
 
 					if (finalMetrics) {
 						console.info(
-							`\n[prefer-batch-updates] Performance Metrics (${finalMetrics.exceededBudget === true ? "EXCEEDED" : "OK"}):`,
+							`\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? "EXCEEDED" : "OK"}):`,
 						);
 						console.info(`  File: ${context.filename}`);
 						console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);

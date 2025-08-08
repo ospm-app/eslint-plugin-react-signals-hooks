@@ -3,6 +3,7 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type {
 	RuleContext,
@@ -38,32 +39,6 @@ type Options = [Option?];
 
 type MessageIds = "preferSignalEffect" | "suggestEffect" | "addEffectImport";
 
-function isSignalDependency(
-	dep: TSESTree.Expression | TSESTree.SpreadElement | null,
-): boolean {
-	if (!dep || dep.type === "SpreadElement") {
-		return false;
-	}
-
-	if (
-		dep.type === "MemberExpression" &&
-		dep.property.type === "Identifier" &&
-		dep.property.name === "value" &&
-		dep.object.type === "Identifier" &&
-		dep.object.name.endsWith("Signal")
-	) {
-		return true;
-	}
-
-	if (dep.type === "Identifier" && dep.name.endsWith("Signal")) {
-		return true;
-	}
-
-	return false;
-}
-
-const ruleName = "prefer-signal-effect";
-
 function getSeverity(
 	messageId: MessageIds,
 	options: Option | undefined,
@@ -72,11 +47,50 @@ function getSeverity(
 		return messageId === "addEffectImport" ? "warn" : "error";
 	}
 
-	// eslint-disable-next-line security/detect-object-injection
-	const severity = options.severity[messageId];
+	switch (messageId) {
+		case "preferSignalEffect": {
+			return options.severity.preferSignalEffect ?? "error";
+		}
 
-	return severity ?? "error";
+		case "suggestEffect": {
+			return options.severity.suggestEffect ?? "error";
+		}
+
+		case "addEffectImport": {
+			return options.severity.addEffectImport ?? "warn";
+		}
+
+		default: {
+			return "error";
+		}
+	}
 }
+
+function isSignalDependency(
+	dep: TSESTree.Expression | TSESTree.SpreadElement | null,
+): boolean {
+	if (!dep || dep.type === "SpreadElement") {
+		return false;
+	}
+
+	if (
+		dep.type === AST_NODE_TYPES.MemberExpression &&
+		dep.property.type === AST_NODE_TYPES.Identifier &&
+		dep.property.name === "value" &&
+		dep.object.type === AST_NODE_TYPES.Identifier &&
+		dep.object.name.endsWith("Signal")
+	) {
+		return true;
+	}
+
+	if (dep.type === AST_NODE_TYPES.Identifier && dep.name.endsWith("Signal")) {
+		return true;
+	}
+
+	return false;
+}
+
+const ruleName = "prefer-signal-effect";
 
 export const preferSignalEffectRule = ESLintUtils.RuleCreator(
 	(name: string) => {
@@ -222,10 +236,10 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator(
 			CallExpression(node: TSESTree.CallExpression): void {
 				// Check if this is a useEffect call
 				if (
-					node.callee.type !== "Identifier" ||
+					node.callee.type !== AST_NODE_TYPES.Identifier ||
 					node.callee.name !== "useEffect" ||
 					node.arguments.length < 2 ||
-					node.arguments[1]?.type !== "ArrayExpression"
+					node.arguments[1]?.type !== AST_NODE_TYPES.ArrayExpression
 				) {
 					return;
 				}
@@ -242,11 +256,11 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator(
 				const hasEffectImport = context.sourceCode.ast.body.some(
 					(node): node is TSESTree.ImportDeclaration => {
 						return (
-							node.type === "ImportDeclaration" &&
+							node.type === AST_NODE_TYPES.ImportDeclaration &&
 							node.source.value === "@preact/signals" &&
 							node.specifiers.some((s: TSESTree.ImportClause): boolean => {
 								return (
-									s.type === "ImportSpecifier" &&
+									s.type === AST_NODE_TYPES.ImportSpecifier &&
 									"name" in s.imported &&
 									s.imported.name === "effect"
 								);
@@ -285,7 +299,7 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator(
 
 							const firstImport = context.sourceCode.ast.body.find(
 								(n): n is TSESTree.ImportDeclaration => {
-									return n.type === "ImportDeclaration";
+									return n.type === AST_NODE_TYPES.ImportDeclaration;
 								},
 							);
 
@@ -329,7 +343,7 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator(
 										(
 											n: TSESTree.ProgramStatement,
 										): n is TSESTree.ImportDeclaration => {
-											return n.type === "ImportDeclaration";
+											return n.type === AST_NODE_TYPES.ImportDeclaration;
 										},
 									);
 
@@ -364,7 +378,7 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator(
 													n: TSESTree.ProgramStatement,
 												): n is TSESTree.ImportDeclaration => {
 													return (
-														n.type === "ImportDeclaration" &&
+														n.type === AST_NODE_TYPES.ImportDeclaration &&
 														n.source.value === "@preact/signals"
 													);
 												},

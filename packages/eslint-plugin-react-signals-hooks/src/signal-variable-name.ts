@@ -3,6 +3,7 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
@@ -39,14 +40,22 @@ function getSeverity(
 	options: Option | undefined,
 ): "error" | "warn" | "off" {
 	if (!options?.severity) {
-		return "error"; // Default to 'error' if no severity is specified
+		return "error";
 	}
 
-	// eslint-disable-next-line security/detect-object-injection
-	const severity = options.severity[messageId];
+	switch (messageId) {
+		case "invalidSignalName": {
+			return options.severity.invalidSignalName ?? "error";
+		}
 
-	// Default to 'error' if no severity is specified for this messageId
-	return severity ?? "error";
+		case "invalidComputedName": {
+			return options.severity.invalidComputedName ?? "error";
+		}
+
+		default: {
+			return "error";
+		}
+	}
 }
 
 function isValidSignalName(name: string): boolean {
@@ -58,8 +67,6 @@ function isValidSignalName(name: string): boolean {
 		return false;
 	}
 
-	// Only forbid 'use' prefix when followed by a capital letter
-	// (e.g., 'useSignal' is invalid, but 'userSignal' is valid)
 	if (
 		name.startsWith("use") &&
 		name.length > 2 &&
@@ -75,7 +82,7 @@ function isValidSignalName(name: string): boolean {
 function getFixedName(originalName: string): string {
 	let fixedName = originalName;
 
-	if (fixedName.startsWith("use")) {
+	if (fixedName.startsWith("use") && fixedName.length > 3) {
 		fixedName = fixedName.slice(3);
 	}
 
@@ -218,48 +225,93 @@ export const signalVariableNameRule = ESLintUtils.RuleCreator(
 				);
 			},
 
-			VariableDeclarator(node: TSESTree.VariableDeclarator): void {
+			[AST_NODE_TYPES.VariableDeclarator](
+				node: TSESTree.VariableDeclarator,
+			): void {
 				if (
-					node.id.type === "Identifier" &&
+					node.id.type === AST_NODE_TYPES.Identifier &&
 					node.init &&
-					node.init.type === "CallExpression" &&
-					node.init.callee.type === "Identifier" &&
+					node.init.type === AST_NODE_TYPES.CallExpression &&
+					node.init.callee.type === AST_NODE_TYPES.Identifier &&
 					(node.init.callee.name === "signal" ||
-						node.init.callee.name === "computed")
+						node.init.callee.name === "computed") &&
+					!isValidSignalName(node.id.name) &&
+					getSeverity(
+						node.init.callee.name === "signal"
+							? "invalidSignalName"
+							: "invalidComputedName",
+						option,
+					) !== "off"
 				) {
-					const variableName = node.id.name;
-
-					if (!isValidSignalName(variableName)) {
-						const severity = getSeverity(
-							"invalidSignalName" in node.init.callee &&
-								node.init.callee.name === "signal"
+					context.report({
+						node: node.id,
+						messageId:
+							node.init.callee.name === "signal"
 								? "invalidSignalName"
 								: "invalidComputedName",
-							option,
-						);
+						data: {
+							name: node.id.name,
+						},
+						fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> {
+							const fixes: Array<TSESLint.RuleFix> = [];
 
-						if (severity !== "off") {
-							context.report({
-								node: node.id,
-								messageId:
-									"name" in node.init.callee &&
-									node.init.callee.name === "signal"
-										? "invalidSignalName"
-										: "invalidComputedName",
-								data: {
-									name: variableName,
-								},
-								fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-									return fixer.replaceText(node.id, getFixedName(variableName));
-								},
-							});
-						}
-					}
+							try {
+								if (!("name" in node.id)) {
+									return [];
+								}
+
+								const variableName = node.id.name;
+								const fixedName = getFixedName(variableName);
+
+								if (fixedName === variableName) {
+									return [];
+								}
+
+								// Fix the declaration
+								fixes.push(fixer.replaceText(node.id, fixedName));
+
+								// Get all references to fix
+								const sourceCode = context.sourceCode;
+								const scope = sourceCode.getScope(node);
+								const variable = scope.set.get(variableName);
+
+								if (variable) {
+									for (const reference of variable.references) {
+										const ref = reference.identifier;
+
+										// Skip the declaration itself
+										if (
+											ref.range[0] === node.id.range[0] &&
+											ref.range[1] === node.id.range[1]
+										) {
+											continue;
+										}
+
+										// Skip property accesses (e.g., obj.prop)
+										if (
+											// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+											ref.parent?.type === AST_NODE_TYPES.MemberExpression &&
+											ref.parent.property === ref &&
+											!ref.parent.computed
+										) {
+											continue;
+										}
+
+										fixes.push(fixer.replaceText(ref, fixedName));
+									}
+								}
+
+								return fixes;
+							} catch (error: unknown) {
+								console.error("Error in fixer:", error);
+								return [];
+							}
+						},
+					});
 				}
 			},
 
-			// Clean up
-			"Program:exit"(): void {
+			[`${AST_NODE_TYPES.Program}:exit`](): void {
 				startPhase(perfKey, "programExit");
 
 				try {

@@ -3,6 +3,7 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
@@ -39,29 +40,35 @@ function getSeverity(
 	options: Option | undefined,
 ): "error" | "warn" | "off" {
 	if (!options?.severity) {
-		return "error"; // Default to 'error' if no severity is specified
+		return "error";
 	}
 
-	// eslint-disable-next-line security/detect-object-injection
-	const severity = options.severity[messageId];
+	switch (messageId) {
+		// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+		case "missingUseSignals": {
+			return options.severity.missingUseSignals ?? "error";
+		}
 
-	// Default to 'error' if no severity is specified for this messageId
-	return severity ?? "error";
+		default: {
+			return "error";
+		}
+	}
 }
 
 function isSignalUsage(node: TSESTree.Node): boolean {
-	if (node.type === "MemberExpression") {
+	if (node.type === AST_NODE_TYPES.MemberExpression) {
 		return (
-			node.property.type === "Identifier" &&
+			node.property.type === AST_NODE_TYPES.Identifier &&
 			node.property.name === "value" &&
-			node.object.type === "Identifier" &&
+			node.object.type === AST_NODE_TYPES.Identifier &&
 			node.object.name.endsWith("Signal")
 		);
 	}
 
-	if (node.type === "Identifier") {
+	if (node.type === AST_NODE_TYPES.Identifier) {
 		return (
-			node.name.endsWith("Signal") && node.parent.type !== "MemberExpression"
+			node.name.endsWith("Signal") &&
+			node.parent.type !== AST_NODE_TYPES.MemberExpression
 		);
 	}
 
@@ -233,8 +240,8 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator(
 
 			ArrowFunctionExpression(node: TSESTree.ArrowFunctionExpression): void {
 				if (
-					node.parent.type === "VariableDeclarator" &&
-					node.parent.id.type === "Identifier" &&
+					node.parent.type === AST_NODE_TYPES.VariableDeclarator &&
+					node.parent.id.type === AST_NODE_TYPES.Identifier &&
 					/^[A-Z]/.test(node.parent.id.name)
 				) {
 					componentName = node.parent.id.name;
@@ -249,7 +256,7 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator(
 
 			CallExpression(node: TSESTree.CallExpression): void {
 				if (
-					node.callee.type === "Identifier" &&
+					node.callee.type === AST_NODE_TYPES.Identifier &&
 					node.callee.name === "useSignals"
 				) {
 					hasUseSignals = true;
@@ -310,9 +317,11 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator(
 									}
 
 									const insertionPoint =
-										(componentNode.type === "FunctionDeclaration" ||
-											componentNode.type === "ArrowFunctionExpression") &&
-										componentNode.body.type === "BlockStatement" &&
+										(componentNode.type ===
+											AST_NODE_TYPES.FunctionDeclaration ||
+											componentNode.type ===
+												AST_NODE_TYPES.ArrowFunctionExpression) &&
+										componentNode.body.type === AST_NODE_TYPES.BlockStatement &&
 										componentNode.body.body.length > 0
 											? componentNode.body.body[0]
 											: null;
@@ -335,7 +344,7 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator(
 												(
 													node: TSESTree.ProgramStatement,
 												): node is TSESTree.ImportDeclaration => {
-													return node.type === "ImportDeclaration";
+													return node.type === AST_NODE_TYPES.ImportDeclaration;
 												},
 											)
 											.some((node: TSESTree.ImportDeclaration): boolean => {
@@ -344,8 +353,8 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator(
 													node.specifiers.some(
 														(s: TSESTree.ImportClause): boolean => {
 															return (
-																s.type === "ImportSpecifier" &&
-																s.imported.type === "Identifier" &&
+																s.type === AST_NODE_TYPES.ImportSpecifier &&
+																s.imported.type === AST_NODE_TYPES.Identifier &&
 																s.imported.name === "useSignals"
 															);
 														},

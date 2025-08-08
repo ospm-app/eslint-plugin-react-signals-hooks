@@ -3,6 +3,7 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type {
 	SourceCode,
@@ -50,14 +51,34 @@ function getSeverity(
 	options: Option | undefined,
 ): "error" | "warn" | "off" {
 	if (!options?.severity) {
-		return "error"; // Default to 'error' if no severity is specified
+		return "error";
 	}
 
-	// eslint-disable-next-line security/detect-object-injection
-	const severity = options.severity[messageId];
+	switch (messageId) {
+		case "avoidSignalInComponent": {
+			return options.severity.avoidSignalInComponent ?? "error";
+		}
 
-	// Default to 'error' if no severity is specified for this messageId
-	return severity ?? "error";
+		case "suggestMoveToModuleLevel": {
+			return options.severity.suggestMoveToModuleLevel ?? "error";
+		}
+
+		case "suggestMoveToCustomHook": {
+			return options.severity.suggestMoveToCustomHook ?? "error";
+		}
+
+		case "moveToModuleLevel": {
+			return options.severity.moveToModuleLevel ?? "error";
+		}
+
+		case "createCustomHook": {
+			return options.severity.createCustomHook ?? "error";
+		}
+
+		default: {
+			return "error";
+		}
+	}
 }
 
 function getSignalInfo(
@@ -163,16 +184,15 @@ function isReactComponent(
 function isHookFunction(node: TSESTree.Node): boolean {
 	if (
 		![
-			"FunctionDeclaration",
-			"ArrowFunctionExpression",
-			"FunctionExpression",
+			AST_NODE_TYPES.FunctionDeclaration,
+			AST_NODE_TYPES.ArrowFunctionExpression,
+			AST_NODE_TYPES.FunctionExpression,
 		].includes(node.type)
 	) {
 		return false;
 	}
 
-	// For function declarations, check the name directly first
-	if (node.type === "FunctionDeclaration" && node.id) {
+	if (node.type === AST_NODE_TYPES.FunctionDeclaration && node.id) {
 		return (
 			node.id.name.startsWith("use") &&
 			node.id.name.length > 3 &&
@@ -181,8 +201,8 @@ function isHookFunction(node: TSESTree.Node): boolean {
 	}
 
 	if (
-		node.parent?.type === "VariableDeclarator" &&
-		node.parent.id.type === "Identifier"
+		node.parent?.type === AST_NODE_TYPES.VariableDeclarator &&
+		node.parent.id.type === AST_NODE_TYPES.Identifier
 	) {
 		return (
 			node.parent.id.name.startsWith("use") &&
@@ -393,7 +413,7 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator(
 				}
 			},
 
-			CallExpression(node: TSESTree.CallExpression): void {
+			[AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
 				const wasInEffect = inEffect;
 
 				if (
@@ -453,16 +473,13 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator(
 											return;
 										}
 
-										// Add the signal to the top of the file
 										yield fixer.insertTextBefore(
 											firstNode,
 											`const ${varName} = ${signalName}(${signalValue});${newLine}${newLine}`,
 										);
 
-										// Replace the original signal creation with the variable name
 										yield fixer.replaceText(node, varName);
 
-										// Handle comments if any
 										const comments = getLeadingCommentsText(node, sourceCode);
 
 										if (comments !== null) {
@@ -535,7 +552,6 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator(
 									*fix(
 										fixer: TSESLint.RuleFixer,
 									): Generator<TSESLint.RuleFix, void, unknown> {
-										// Find the last import or the start of the file
 										const lastImport = sourceCode.ast.body
 											.slice()
 											.reverse()
@@ -560,16 +576,13 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator(
 											? "\r\n"
 											: "\n";
 
-										// Add the new custom hook after the last import
 										yield fixer.insertTextAfterRange(
 											[insertPosition, insertPosition],
 											`${newLine}function ${hookName}() {${newLine}  return ${signalName}(${signalValue});${newLine}}${newLine}${newLine}`,
 										);
 
-										// Replace the signal creation with a call to the hook
 										yield fixer.replaceText(node, `${hookName}()`);
 
-										// Handle comments if any
 										const comments = getLeadingCommentsText(node, sourceCode);
 
 										if (comments !== null) {
@@ -588,7 +601,7 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator(
 				}
 
 				if (
-					node.callee.type === "Identifier"
+					node.callee.type === AST_NODE_TYPES.Identifier
 						? [
 								"useEffect",
 								"useCallback",
@@ -621,7 +634,7 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator(
 				}
 			},
 
-			"Program:exit"(_node: TSESTree.Program): void {
+			[`${AST_NODE_TYPES.Program}:exit`](_node: TSESTree.Program): void {
 				startPhase(perfKey, "programExit");
 
 				try {
@@ -631,7 +644,7 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator(
 
 					if (finalMetrics) {
 						console.info(
-							`\n[prefer-batch-updates] Performance Metrics (${finalMetrics.exceededBudget === true ? "EXCEEDED" : "OK"}):`,
+							`\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? "EXCEEDED" : "OK"}):`,
 						);
 						console.info(`  File: ${context.filename}`);
 						console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);

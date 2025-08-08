@@ -3,6 +3,7 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type {
 	RuleContext,
@@ -57,15 +58,35 @@ function getSeverity(
 		return messageId === "performanceLimitExceeded" ? "warn" : "error";
 	}
 
-	// eslint-disable-next-line security/detect-object-injection
-	const severity = options.severity[messageId];
+	switch (messageId) {
+		case "preferComputedWithSignal": {
+			return options.severity.preferComputedWithSignal ?? "error";
+		}
 
-	// Default to 'error' for all message types except performanceLimitExceeded
-	if (typeof severity === "undefined") {
-		return messageId === "performanceLimitExceeded" ? "warn" : "error";
+		case "preferComputedWithSignals": {
+			return options.severity.preferComputedWithSignals ?? "error";
+		}
+
+		case "suggestComputed": {
+			return options.severity.suggestComputed ?? "error";
+		}
+
+		case "addComputedImport": {
+			return options.severity.addComputedImport ?? "error";
+		}
+
+		case "suggestAddComputedImport": {
+			return options.severity.suggestAddComputedImport ?? "error";
+		}
+
+		case "performanceLimitExceeded": {
+			return options.severity.performanceLimitExceeded ?? "warn";
+		}
+
+		default: {
+			return "error";
+		}
 	}
-
-	return severity;
 }
 
 type SignalDependencyInfo = {
@@ -84,7 +105,7 @@ function getOrCreateComputedImport(
 
 	return program.body.find((n): n is TSESTree.ImportDeclaration => {
 		return (
-			n.type === "ImportDeclaration" &&
+			n.type === AST_NODE_TYPES.ImportDeclaration &&
 			n.source.value === "@preact/signals-react"
 		);
 	});
@@ -97,12 +118,11 @@ function getSignalDependencyInfo(
 		return null;
 	}
 
-	// Check for signal.value
 	if (
-		dep.type === "MemberExpression" &&
-		dep.property.type === "Identifier" &&
+		dep.type === AST_NODE_TYPES.MemberExpression &&
+		dep.property.type === AST_NODE_TYPES.Identifier &&
 		dep.property.name === "value" &&
-		dep.object.type === "Identifier" &&
+		dep.object.type === AST_NODE_TYPES.Identifier &&
 		(dep.object.name.endsWith("Signal") || dep.object.name.endsWith("signal"))
 	) {
 		return {
@@ -112,9 +132,8 @@ function getSignalDependencyInfo(
 		};
 	}
 
-	// Check for direct signal usage
 	if (
-		dep.type === "Identifier" &&
+		dep.type === AST_NODE_TYPES.Identifier &&
 		(dep.name.endsWith("Signal") || dep.name.endsWith("signal"))
 	) {
 		return {
@@ -140,7 +159,7 @@ export const preferComputedRule = ESLintUtils.RuleCreator(
 )<Options, MessageIds>({
 	name: ruleName,
 	meta: {
-		type: "suggestion", // Kept as 'suggestion' as this is a performance optimization, not a critical issue
+		type: "suggestion",
 		docs: {
 			description:
 				"Encourages using `computed()` from @preact/signals-react instead of `useMemo` when working with signals. This provides better performance through automatic dependency tracking and more predictable reactivity behavior in React components.",
@@ -294,7 +313,7 @@ export const preferComputedRule = ESLintUtils.RuleCreator(
 				);
 			},
 
-			Program(node: TSESTree.Program): void {
+			[AST_NODE_TYPES.Program](node: TSESTree.Program): void {
 				startPhase(perfKey, "program-analysis");
 
 				try {
@@ -335,40 +354,37 @@ export const preferComputedRule = ESLintUtils.RuleCreator(
 							});
 						}
 					} else {
-						throw error; // Re-throw unexpected errors
+						throw error;
 					}
 				}
 			},
 
-			CallExpression(node: TSESTree.CallExpression): void {
+			[AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
 				if (performanceBudgetExceeded) {
 					return;
 				}
 
-				// Track the number of useMemo calls analyzed
 				recordMetric(perfKey, "useMemoCallsAnalyzed", 1);
 
 				trackOperation(perfKey, PerformanceOperations.callExpressionCheck);
 
-				// Track the depth of nested call expressions
 				let depth = 0;
 
 				let parent: TSESTree.Node | undefined = node.parent;
 
 				while (parent) {
-					if (parent.type === "CallExpression") depth++;
+					if (parent.type === AST_NODE_TYPES.CallExpression) depth++;
 
 					parent = parent.parent;
 				}
 
-				// Track the maximum nested call depth
 				recordMetric(perfKey, "currentCallDepth", depth);
 
 				if (
 					node.callee.type !== "Identifier" ||
 					node.callee.name !== "useMemo" ||
 					node.arguments.length < 2 ||
-					node.arguments[1]?.type !== "ArrayExpression"
+					node.arguments[1]?.type !== AST_NODE_TYPES.ArrayExpression
 				) {
 					return;
 				}
@@ -412,6 +428,7 @@ export const preferComputedRule = ESLintUtils.RuleCreator(
 						"uniqueSignalsPerUseMemo",
 						uniqueSignalNames.length,
 					);
+
 					if (hasMultipleSignals) {
 						recordMetric(perfKey, "useMemoWithMultipleSignals", 1);
 					}
@@ -419,6 +436,7 @@ export const preferComputedRule = ESLintUtils.RuleCreator(
 					const suggestionType = hasMultipleSignals
 						? "multipleSignals"
 						: "singleSignal";
+
 					recordMetric(perfKey, `suggestions.${suggestionType}`, 1);
 
 					trackOperation(perfKey, PerformanceOperations.reportGeneration);
@@ -427,7 +445,9 @@ export const preferComputedRule = ESLintUtils.RuleCreator(
 						signalDeps.length === 1
 							? "preferComputedWithSignal"
 							: "preferComputedWithSignals";
+
 					const severity = getSeverity(messageId, option);
+
 					if (severity !== "off") {
 						context.report({
 							node,
@@ -439,7 +459,7 @@ export const preferComputedRule = ESLintUtils.RuleCreator(
 							suggest: [
 								{
 									messageId: "suggestComputed",
-									fix: function* (
+									*fix(
 										fixer: TSESLint.RuleFixer,
 									): Generator<TSESLint.RuleFix> | null {
 										const callback = node.arguments[0];
@@ -448,18 +468,15 @@ export const preferComputedRule = ESLintUtils.RuleCreator(
 											return;
 										}
 
-										// Replace useMemo with computed
 										yield fixer.replaceText(
 											node,
 											`computed(${context.sourceCode.getText(callback)})`,
 										);
 
-										// Don't add import if it already exists
 										if (hasComputedImport) {
 											return;
 										}
 
-										// Add suggestion to add import if not already present
 										const severity = getSeverity(
 											"suggestAddComputedImport",
 											option,
@@ -478,7 +495,6 @@ export const preferComputedRule = ESLintUtils.RuleCreator(
 													);
 													const hasComputedImport = !!computedImport;
 
-													// Track computed import status
 													recordMetric(
 														perfKey,
 														"computedImportStatus",
@@ -486,11 +502,10 @@ export const preferComputedRule = ESLintUtils.RuleCreator(
 													);
 
 													if (computedImport) {
-														// Check if 'computed' is already imported
 														const hasComputed = computedImport.specifiers.some(
 															(s: TSESTree.ImportClause): boolean => {
 																return (
-																	s.type === "ImportSpecifier" &&
+																	s.type === AST_NODE_TYPES.ImportSpecifier &&
 																	"name" in s.imported &&
 																	s.imported.name === "computed"
 																);
@@ -512,7 +527,7 @@ export const preferComputedRule = ESLintUtils.RuleCreator(
 													if (typeof program?.body[0] === "undefined") {
 														return null;
 													}
-													// No existing import, add a new one at the top
+
 													return [
 														fixer.insertTextBefore(
 															program.body[0],
@@ -543,13 +558,12 @@ export const preferComputedRule = ESLintUtils.RuleCreator(
 							});
 						}
 					} else {
-						throw error; // Re-throw unexpected errors
+						throw error;
 					}
 				}
 			},
 
-			// Clean up
-			"Program:exit"(): void {
+			[`${AST_NODE_TYPES.Program}:exit`]: (): void => {
 				startPhase(perfKey, "programExit");
 
 				try {

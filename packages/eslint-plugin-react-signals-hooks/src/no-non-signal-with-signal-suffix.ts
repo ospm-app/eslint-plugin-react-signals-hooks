@@ -3,6 +3,7 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 import type {
@@ -26,9 +27,12 @@ import type { PerformanceBudget } from "./utils/types.js";
 import { getRuleDocUrl } from "./utils/urls.js";
 
 type Severity = {
-	variableWithSignalSuffixNotSignal: "error" | "warn" | "off";
-	parameterWithSignalSuffixNotSignal: "error" | "warn" | "off";
-	propertyWithSignalSuffixNotSignal: "error" | "warn" | "off";
+	variableWithSignalSuffixNotSignal?: "error" | "warn" | "off";
+	parameterWithSignalSuffixNotSignal?: "error" | "warn" | "off";
+	propertyWithSignalSuffixNotSignal?: "error" | "warn" | "off";
+	suggestRenameWithoutSuffix?: "error" | "warn" | "off";
+	suggestConvertToSignal?: "error" | "warn" | "off";
+	performanceLimitExceeded?: "error" | "warn" | "off";
 };
 
 type Option = {
@@ -53,6 +57,44 @@ type MessageIds =
 	| "suggestConvertToSignal"
 	| "performanceLimitExceeded";
 
+function getSeverity(
+	messageId: MessageIds,
+	option: Option | undefined,
+): "error" | "warn" | "off" {
+	if (!option?.severity) {
+		return "error";
+	}
+
+	switch (messageId) {
+		case "variableWithSignalSuffixNotSignal": {
+			return option.severity.variableWithSignalSuffixNotSignal ?? "error";
+		}
+
+		case "parameterWithSignalSuffixNotSignal": {
+			return option.severity.parameterWithSignalSuffixNotSignal ?? "error";
+		}
+
+		case "propertyWithSignalSuffixNotSignal": {
+			return option.severity.propertyWithSignalSuffixNotSignal ?? "error";
+		}
+
+		case "suggestRenameWithoutSuffix": {
+			return option.severity.suggestRenameWithoutSuffix ?? "error";
+		}
+
+		case "suggestConvertToSignal": {
+			return option.severity.suggestConvertToSignal ?? "error";
+		}
+
+		case "performanceLimitExceeded": {
+			return option.severity.performanceLimitExceeded ?? "error";
+		}
+
+		default:
+			return "error";
+	}
+}
+
 const signalImports = new Set<string>();
 
 function isSignalCreation(
@@ -68,7 +110,10 @@ function isSignalCreation(
 ): boolean {
 	trackOperation(perfKey, PerformanceOperations.isSignalCreation);
 
-	if (node.type !== "CallExpression" || node.callee.type !== "Identifier") {
+	if (
+		node.type !== AST_NODE_TYPES.CallExpression ||
+		node.callee.type !== AST_NODE_TYPES.Identifier
+	) {
 		return false;
 	}
 
@@ -131,22 +176,22 @@ function isSignalExpression(
 	}
 
 	if (
-		node.type === "MemberExpression" &&
-		node.property.type === "Identifier" &&
+		node.type === AST_NODE_TYPES.MemberExpression &&
+		node.property.type === AST_NODE_TYPES.Identifier &&
 		node.property.name.endsWith("Signal")
 	) {
 		return true;
 	}
 
 	if (
-		node.type === "MemberExpression" &&
-		node.property.type === "Identifier" &&
+		node.type === AST_NODE_TYPES.MemberExpression &&
+		node.property.type === AST_NODE_TYPES.Identifier &&
 		node.property.name.endsWith("Signal")
 	) {
 		return true;
 	}
 
-	if (node.type === "Identifier") {
+	if (node.type === AST_NODE_TYPES.Identifier) {
 		const variable = context.sourceCode
 			.getScope(node)
 			.variables.find((v): boolean => {
@@ -183,13 +228,13 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator(
 )<Options, MessageIds>({
 	name: ruleName,
 	meta: {
-		type: "problem", // Changed from 'suggestion' to 'problem' as it enforces critical type safety
+		type: "problem",
 		fixable: "code",
 		hasSuggestions: true,
 		docs: {
 			description:
 				"Enforce that variables with Signal suffix are actual signal instances",
-			url: "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/docs/rules/no-non-signal-with-signal-suffix",
+			url: getRuleDocUrl(ruleName),
 		},
 		schema: [
 			{
@@ -272,7 +317,7 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator(
 	defaultOptions: [
 		{
 			ignorePattern: "",
-			// signalNames: undefined,
+			signalNames: ["signal", "useSignal", "createSignal"],
 			severity: {
 				variableWithSignalSuffixNotSignal: "error",
 				parameterWithSignalSuffixNotSignal: "error",
@@ -366,7 +411,7 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator(
 								| ImportNamespaceSpecifier,
 						): void => {
 							if (
-								specifier.type === "ImportSpecifier" &&
+								specifier.type === AST_NODE_TYPES.ImportSpecifier &&
 								"name" in specifier.imported
 							) {
 								type ImportSpecifierNames = "signal" | "useSignal";
@@ -440,38 +485,43 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator(
 					}
 
 					const newName = varName.replace(/Signal$/, "");
+
+					const messageId = "variableWithSignalSuffixNotSignal";
+
 					trackOperation(perfKey, PerformanceOperations.reportingIssue);
 
-					context.report({
-						node: node.id,
-						messageId: "variableWithSignalSuffixNotSignal",
-						data: { name: varName },
-						suggest: [
-							{
-								messageId: "suggestRenameWithoutSuffix",
-								data: {
-									name: varName,
-									newName: newName,
+					if (getSeverity(messageId, option) !== "off") {
+						context.report({
+							node: node.id,
+							messageId,
+							data: { name: varName },
+							suggest: [
+								{
+									messageId: "suggestRenameWithoutSuffix",
+									data: {
+										name: varName,
+										newName: newName,
+									},
+									fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+										return fixer.replaceText(node.id, newName);
+									},
 								},
-								fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-									return fixer.replaceText(node.id, newName);
+								{
+									messageId: "suggestConvertToSignal",
+									data: { name: varName },
+									fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+										const initText = node.init
+											? context.sourceCode.getText(node.init)
+											: "null";
+										return fixer.replaceText(
+											node,
+											`const ${varName} = signal(${initText})`,
+										);
+									},
 								},
-							},
-							{
-								messageId: "suggestConvertToSignal",
-								data: { name: varName },
-								fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-									const initText = node.init
-										? context.sourceCode.getText(node.init)
-										: "null";
-									return fixer.replaceText(
-										node,
-										`const ${varName} = signal(${initText})`,
-									);
-								},
-							},
-						],
-					});
+							],
+						});
+					}
 				} finally {
 					endPhase(perfKey, "variable-declarator");
 				}
@@ -541,25 +591,29 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator(
 								}
 							}
 
+							const messageId = "parameterWithSignalSuffixNotSignal";
+
 							const newName = param.name.replace(/Signal$/, "");
 
-							context.report({
-								node: param as TSESTree.Node,
-								messageId: "parameterWithSignalSuffixNotSignal",
-								data: { name: param.name },
-								suggest: [
-									{
-										messageId: "suggestRenameWithoutSuffix",
-										data: {
-											name: param.name,
-											newName,
+							if (getSeverity(messageId, option) !== "off") {
+								context.report({
+									node: param,
+									messageId,
+									data: { name: param.name },
+									suggest: [
+										{
+											messageId: "suggestRenameWithoutSuffix",
+											data: {
+												name: param.name,
+												newName,
+											},
+											fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+												return fixer.replaceText(param, newName);
+											},
 										},
-										fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-											return fixer.replaceText(param, newName);
-										},
-									},
-								],
-							});
+									],
+								});
+							}
 						},
 					);
 				} finally {
@@ -610,27 +664,31 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator(
 							return;
 						}
 
+						const messageId = "propertyWithSignalSuffixNotSignal";
+
 						const newName = node.key.name.replace(/Signal$/, "");
 
 						trackOperation(perfKey, PerformanceOperations.reportingIssue);
 
-						context.report({
-							node: node.key,
-							messageId: "propertyWithSignalSuffixNotSignal",
-							data: { name: node.key.name },
-							suggest: [
-								{
-									messageId: "suggestRenameWithoutSuffix",
-									data: {
-										name: node.key.name,
-										newName,
+						if (getSeverity(messageId, option) !== "off") {
+							context.report({
+								node: node.key,
+								messageId,
+								data: { name: node.key.name },
+								suggest: [
+									{
+										messageId: "suggestRenameWithoutSuffix",
+										data: {
+											name: node.key.name,
+											newName,
+										},
+										fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+											return fixer.replaceText(node.key, newName);
+										},
 									},
-									fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-										return fixer.replaceText(node.key, newName);
-									},
-								},
-							],
-						});
+								],
+							});
+						}
 					}
 				} finally {
 					endPhase(perfKey, "property");

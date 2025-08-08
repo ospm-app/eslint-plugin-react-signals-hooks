@@ -17,7 +17,7 @@ Begin by organizing your plan into clear, logical sections. A good structure inc
 For each rule, clearly state its goal. For example:
 
 ```markdown
-### 1.1 `prefer-batch-for-multi-mutations`
+### 1.1 `prefer-batch-updates`
 
 **Goal**: Detect multiple signal mutations in the same scope and suggest wrapping them in `batch()`.
 ```

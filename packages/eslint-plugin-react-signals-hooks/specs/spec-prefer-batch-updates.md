@@ -26,6 +26,8 @@ The `prefer-batch-updates` rule detects multiple signal updates within the same 
 
 - Analyzes updates within nested blocks and functions
 - Only reports when multiple updates occur in the same immediate scope
+- ignores updates inside batch calls
+- updates inside loops, while loops, and other control flow statements should require wrapping whole flow statement, not just assignment itself
 
 ## Configuration Options
 
@@ -65,6 +67,8 @@ Performance tuning options:
 
 - **Wrap with `batch`**: Automatically wraps the updates in a `batch()` call
 - **Add batch import**: Automatically adds the batch import from '@preact/signals-react' if missing
+- Should not wrap with batch if it is already inside a batch
+- Should offer to remove batch if there is only single signal update
 
 ## Best Practices
 

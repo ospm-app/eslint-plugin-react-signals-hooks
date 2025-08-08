@@ -19,7 +19,7 @@ A comprehensive ESLint plugin for React applications using `@preact/signals-reac
 
 ## Rules Overview
 
-This plugin provides 19 specialized ESLint rules for React signals:
+This plugin provides 18 specialized ESLint rules for React signals:
 
 | Rule | Purpose | Autofix | Severity |
 |------|---------|---------|----------|
@@ -29,7 +29,6 @@ This plugin provides 19 specialized ESLint rules for React signals:
 | `no-signal-creation-in-component` | Prevents signal creation in render | ✅ | Error |
 | `no-signal-assignment-in-effect` | Prevents signal assignments in effects without deps | ✅ | Error |
 | `no-non-signal-with-signal-suffix` | Ensures variables with 'Signal' suffix are signals | ✅ | Warning |
-| `prefer-batch-for-multi-mutations` | Suggests batching multiple signal mutations | ✅ | Warning |
 | `prefer-batch-updates` | Prefers batched updates for multiple signal changes | ✅ | Warning |
 | `prefer-computed` | Suggests `computed()` over `useMemo` | ✅ | Warning |
 | `prefer-for-over-map` | Suggests For component over `.map()` | ✅ | Warning |
@@ -262,29 +261,7 @@ const dataSignal = { value: 42 }; // Not a real signal
 const dataSignal = signal(42);
 ```
 
-### 7. `prefer-batch-for-multi-mutations` - Batch Updates
-
-Suggests batching multiple signal mutations for better performance.
-
-```tsx
-// ❌ Multiple unbatched updates
-function update() {
-  aSignal.value++;
-  bSignal.value++;
-  cSignal.value++;
-}
-
-// ✅ Batched updates (autofixed)
-function update() {
-  batch(() => {
-    aSignal.value++;
-    bSignal.value++;
-    cSignal.value++;
-  });
-}
-```
-
-### 8. `prefer-batch-updates` - Batch Signal Updates
+### 7. `prefer-batch-updates` - Batch Signal Updates
 
 Encourages batching multiple signal updates.
 
@@ -304,7 +281,7 @@ function handleClick() {
 }
 ```
 
-### 9. `prefer-computed` - Computed Values
+### 8. `prefer-computed` - Computed Values
 
 Prefers `computed()` over `useMemo` for signal-derived values.
 
@@ -316,7 +293,7 @@ const doubled = useMemo(() => countSignal.value * 2, [countSignal.value]);
 const doubled = computed(() => countSignal.value * 2);
 ```
 
-### 10. `prefer-for-over-map` - For Component
+### 9. `prefer-for-over-map` - For Component
 
 Suggests using For component over `.map()` for better performance with signal arrays.
 
@@ -330,7 +307,7 @@ Suggests using For component over `.map()` for better performance with signal ar
 </For>
 ```
 
-### 11. `prefer-show-over-ternary` - Show Component
+### 10. `prefer-show-over-ternary` - Show Component
 
 Suggests using Show component for conditional rendering with signals.
 
@@ -346,7 +323,7 @@ Suggests using Show component for conditional rendering with signals.
 </Show>
 ```
 
-### 12. `prefer-signal-effect` - Signal Effects
+### 11. `prefer-signal-effect` - Signal Effects
 
 Prefers `effect()` over `useEffect` when dependencies are only signals.
 
@@ -362,7 +339,7 @@ effect(() => {
 });
 ```
 
-### 13. `prefer-signal-in-jsx` - Direct Signal Usage
+### 12. `prefer-signal-in-jsx` - Direct Signal Usage
 
 Prefers direct signal usage over `.value` in JSX.
 
@@ -374,7 +351,7 @@ Prefers direct signal usage over `.value` in JSX.
 <div>{messageSignal}</div>
 ```
 
-### 14. `prefer-signal-methods` - Signal Methods
+### 13. `prefer-signal-methods` - Signal Methods
 
 Encourages using signal methods over direct property access.
 
@@ -388,7 +365,7 @@ const value = signal(0);
 value.set(1);
 ```
 
-### 15. `prefer-signal-reads` - Optimized Signal Reading
+### 14. `prefer-signal-reads` - Optimized Signal Reading
 
 Optimizes signal access patterns for better performance.
 
@@ -405,7 +382,7 @@ function double() {
 }
 ```
 
-### 16. `prefer-use-signal-over-use-state` - Signal State
+### 15. `prefer-use-signal-over-use-state` - Signal State
 
 Suggests `useSignal` over `useState` for primitive values.
 
@@ -417,7 +394,7 @@ const [count, setCount] = useState(0);
 const countSignal = useSignal(0);
 ```
 
-### 17. `restrict-signal-locations` - Signal Scope Control
+### 16. `restrict-signal-locations` - Signal Scope Control
 
 Controls where signals can be created in the codebase.
 
@@ -434,7 +411,7 @@ function Component() {
 }
 ```
 
-### 18. `signal-variable-name` - Naming Conventions
+### 17. `signal-variable-name` - Naming Conventions
 
 Enforces consistent naming for signal variables.
 
@@ -454,7 +431,7 @@ const counterSignal = signal(0);
 const dataSignal = signal('');
 ```
 
-### 19. `warn-on-unnecessary-untracked` - Optimize Untracked Usage
+### 18. `warn-on-unnecessary-untracked` - Optimize Untracked Usage
 
 Warns about unnecessary `untracked()` usage.
 

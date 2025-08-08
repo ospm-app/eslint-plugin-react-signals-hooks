@@ -4,6 +4,7 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
@@ -26,6 +27,9 @@ type Severity = {
 	signalPropertyAssignment: "error" | "warn" | "off";
 	signalArrayIndexAssignment: "error" | "warn" | "off";
 	signalNestedPropertyAssignment: "error" | "warn" | "off";
+	signalValueUpdate: "error" | "warn" | "off";
+	suggestUseEffect: "error" | "warn" | "off";
+	suggestEventHandler: "error" | "warn" | "off";
 };
 
 type Option = {
@@ -57,7 +61,7 @@ function getAssignmentType(
 	| "memberAssignment"
 	| "identifierAssignment"
 	| "otherAssignment" {
-	if (node.left.type === "MemberExpression") {
+	if (node.left.type === AST_NODE_TYPES.MemberExpression) {
 		if (node.left.computed) {
 			return "computedMemberAssignment";
 		}
@@ -65,7 +69,7 @@ function getAssignmentType(
 		return "memberAssignment";
 	}
 
-	if (node.left.type === "Identifier") {
+	if (node.left.type === AST_NODE_TYPES.Identifier) {
 		return "identifierAssignment";
 	}
 
@@ -82,7 +86,6 @@ function trackIdentifier(
 	resolvedIdentifiers.set(name, count + 1);
 
 	if (count === 0) {
-		// Only count unique identifier resolutions
 		trackOperation(perfKey, PerformanceOperations.identifierResolution);
 	}
 }
@@ -100,8 +103,20 @@ function getSeverity(
 			return option.severity.signalValueAssignment;
 		}
 
+		case "signalValueUpdate": {
+			return option.severity.signalValueUpdate;
+		}
+
 		case "signalPropertyAssignment": {
 			return option.severity.signalPropertyAssignment;
+		}
+
+		case "suggestUseEffect": {
+			return option.severity.suggestUseEffect;
+		}
+
+		case "suggestEventHandler": {
+			return option.severity.suggestEventHandler;
 		}
 
 		case "signalArrayIndexAssignment": {
@@ -231,6 +246,9 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 			signalNames: ["signal", "useSignal", "createSignal"],
 			allowedPatterns: [],
 			severity: {
+				suggestUseEffect: "error",
+				signalValueUpdate: "error",
+				suggestEventHandler: "error",
 				signalValueAssignment: "error",
 				signalPropertyAssignment: "error",
 				signalArrayIndexAssignment: "error",
@@ -359,8 +377,8 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 				);
 
 				if (
-					node.parent.type === "VariableDeclarator" &&
-					node.parent.id.type === "Identifier" &&
+					node.parent.type === AST_NODE_TYPES.VariableDeclarator &&
+					node.parent.id.type === AST_NODE_TYPES.Identifier &&
 					/^[A-Z]/.test(node.parent.id.name)
 				) {
 					// This is a React component
@@ -397,8 +415,8 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 
 				// Check if this is a React component
 				if (
-					node.parent.type === "VariableDeclarator" &&
-					node.parent.id.type === "Identifier" &&
+					node.parent.type === AST_NODE_TYPES.VariableDeclarator &&
+					node.parent.id.type === AST_NODE_TYPES.Identifier &&
 					/^[A-Z]/.test(node.parent.id.name)
 				) {
 					trackOperation(
@@ -431,7 +449,7 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 					| "computed";
 
 				if (
-					node.callee.type === "Identifier" &&
+					node.callee.type === AST_NODE_TYPES.Identifier &&
 					[
 						"useEffect",
 						"useLayoutEffect",
@@ -462,7 +480,7 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 				}
 
 				if (
-					node.callee.type === "Identifier" &&
+					node.callee.type === AST_NODE_TYPES.Identifier &&
 					option?.signalNames?.includes(node.callee.name) === true
 				) {
 					trackOperation(
@@ -500,10 +518,10 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 
 				// Check for direct signal value assignment (signal.value = x)
 				if (
-					node.left.type === "MemberExpression" &&
-					node.left.property.type === "Identifier" &&
+					node.left.type === AST_NODE_TYPES.MemberExpression &&
+					node.left.property.type === AST_NODE_TYPES.Identifier &&
 					node.left.property.name === "value" &&
-					node.left.object.type === "Identifier" &&
+					node.left.object.type === AST_NODE_TYPES.Identifier &&
 					option?.signalNames?.some((name: string): boolean => {
 						return (
 							("object" in node.left &&
@@ -515,9 +533,7 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 						);
 					}) === true
 				) {
-					const severity = getSeverity("signalValueAssignment", option);
-
-					if (severity === "off") {
+					if (getSeverity("signalValueAssignment", option) === "off") {
 						return;
 					}
 
@@ -550,12 +566,12 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 				}
 
 				if (
-					node.left.type === "MemberExpression" &&
+					node.left.type === AST_NODE_TYPES.MemberExpression &&
 					node.left.computed &&
-					node.left.object.type === "MemberExpression" &&
-					node.left.object.property.type === "Identifier" &&
+					node.left.object.type === AST_NODE_TYPES.MemberExpression &&
+					node.left.object.property.type === AST_NODE_TYPES.Identifier &&
 					node.left.object.property.name === "value" &&
-					node.left.object.object.type === "Identifier" &&
+					node.left.object.object.type === AST_NODE_TYPES.Identifier &&
 					option?.signalNames?.some((name: string): boolean => {
 						return (
 							("object" in node.left &&
@@ -571,9 +587,7 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 						);
 					}) === true
 				) {
-					const severity = getSeverity("signalArrayIndexAssignment", option);
-
-					if (severity !== "off") {
+					if (getSeverity("signalArrayIndexAssignment", option) !== "off") {
 						context.report({
 							node,
 							messageId: "signalArrayIndexAssignment",
@@ -600,12 +614,12 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 				}
 
 				if (
-					node.left.type === "MemberExpression" &&
+					node.left.type === AST_NODE_TYPES.MemberExpression &&
 					!node.left.computed &&
-					node.left.object.type === "MemberExpression" &&
-					node.left.object.property.type === "Identifier" &&
+					node.left.object.type === AST_NODE_TYPES.MemberExpression &&
+					node.left.object.property.type === AST_NODE_TYPES.Identifier &&
 					node.left.object.property.name === "value" &&
-					node.left.object.object.type === "Identifier" &&
+					node.left.object.object.type === AST_NODE_TYPES.Identifier &&
 					option?.signalNames?.some((name: string): boolean => {
 						return (
 							("object" in node.left &&
@@ -619,25 +633,24 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 								"name" in node.left.object.object &&
 								node.left.object.object.name === name)
 						);
-					}) === true
+					}) === true &&
+					getSeverity("signalNestedPropertyAssignment", option) !== "off"
 				) {
-					if (getSeverity("signalNestedPropertyAssignment", option) !== "off") {
-						context.report({
-							node,
-							messageId: "signalNestedPropertyAssignment",
-							suggest: [
-								{
-									messageId: "suggestUseEffect",
-									fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-										return fixer.replaceText(
-											node,
-											`useEffect(() => { ${context.sourceCode.getText(node)} }, [])`,
-										);
-									},
+					context.report({
+						node,
+						messageId: "signalNestedPropertyAssignment",
+						suggest: [
+							{
+								messageId: "suggestUseEffect",
+								fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+									return fixer.replaceText(
+										node,
+										`useEffect(() => { ${context.sourceCode.getText(node)} }, [])`,
+									);
 								},
-							],
-						});
-					}
+							},
+						],
+					});
 				}
 			},
 
@@ -653,10 +666,10 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 
 				// Check for signal.value++ or ++signal.value
 				if (
-					node.argument.type === "MemberExpression" &&
-					node.argument.property.type === "Identifier" &&
+					node.argument.type === AST_NODE_TYPES.MemberExpression &&
+					node.argument.property.type === AST_NODE_TYPES.Identifier &&
 					node.argument.property.name === "value" &&
-					node.argument.object.type === "Identifier" &&
+					node.argument.object.type === AST_NODE_TYPES.Identifier &&
 					option?.signalNames?.some((name: string): boolean => {
 						return (
 							("object" in node.argument &&
@@ -673,9 +686,7 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 						);
 					}) === true
 				) {
-					const severity = getSeverity("signalValueAssignment", option);
-
-					if (severity === "off") {
+					if (getSeverity("signalValueAssignment", option) === "off") {
 						return;
 					}
 
@@ -734,8 +745,8 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 			): void {
 				// Check if this is the main component arrow function
 				if (
-					node.parent.type === "VariableDeclarator" &&
-					node.parent.id.type === "Identifier" &&
+					node.parent.type === AST_NODE_TYPES.VariableDeclarator &&
+					node.parent.id.type === AST_NODE_TYPES.Identifier &&
 					/^[A-Z]/.test(node.parent.id.name)
 				) {
 					// This is a main component - exit render context
@@ -765,7 +776,7 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 			},
 			"CallExpression:exit"(node: TSESTree.CallExpression): void {
 				if (
-					node.callee.type === "Identifier" &&
+					node.callee.type === AST_NODE_TYPES.Identifier &&
 					[
 						"useEffect",
 						"useLayoutEffect",

@@ -3,6 +3,7 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
@@ -37,11 +38,14 @@ function isInJSXAttribute(node: TSESTree.Node): boolean {
 	let current: TSESTree.Node | undefined = node.parent;
 
 	while (current) {
-		if (current.type === "JSXAttribute") {
+		if (current.type === AST_NODE_TYPES.JSXAttribute) {
 			return true;
 		}
 
-		if (current.type === "JSXElement" || current.type === "JSXFragment") {
+		if (
+			current.type === AST_NODE_TYPES.JSXElement ||
+			current.type === AST_NODE_TYPES.JSXFragment
+		) {
 			return false;
 		}
 
@@ -56,23 +60,22 @@ function isInFunctionProp(node: TSESTree.Node): boolean {
 
 	while (current) {
 		if (
-			current.type === "ArrowFunctionExpression" ||
-			current.type === "FunctionExpression"
+			current.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+			current.type === AST_NODE_TYPES.FunctionExpression
 		) {
-			// Check if the function is a direct child of a JSX attribute
 			if (
-				current.parent.type === "JSXExpressionContainer" &&
-				current.parent.parent.type === "JSXAttribute"
+				current.parent.type === AST_NODE_TYPES.JSXExpressionContainer &&
+				current.parent.parent.type === AST_NODE_TYPES.JSXAttribute
 			) {
 				return true;
 			}
 
-			// Check if the function is a prop value
 			if (
-				current.parent.type === "Property" &&
-				current.parent.parent.type === "ObjectExpression" &&
-				current.parent.parent.parent.type === "JSXExpressionContainer" &&
-				current.parent.parent.parent.parent.type === "JSXAttribute"
+				current.parent.type === AST_NODE_TYPES.Property &&
+				current.parent.parent.type === AST_NODE_TYPES.ObjectExpression &&
+				current.parent.parent.parent.type ===
+					AST_NODE_TYPES.JSXExpressionContainer &&
+				current.parent.parent.parent.parent.type === AST_NODE_TYPES.JSXAttribute
 			) {
 				return true;
 			}
@@ -80,7 +83,38 @@ function isInFunctionProp(node: TSESTree.Node): boolean {
 			return false;
 		}
 
-		if (current.type === "JSXElement" || current.type === "JSXFragment") {
+		if (
+			current.type === AST_NODE_TYPES.JSXElement ||
+			current.type === AST_NODE_TYPES.JSXFragment
+		) {
+			return false;
+		}
+
+		current = current.parent;
+	}
+
+	return false;
+}
+
+function isInJSONStringify(node: TSESTree.Node): boolean {
+	let current: TSESTree.Node | undefined = node.parent;
+
+	while (current) {
+		if (
+			current.type === AST_NODE_TYPES.CallExpression &&
+			current.callee.type === AST_NODE_TYPES.MemberExpression &&
+			current.callee.object.type === AST_NODE_TYPES.Identifier &&
+			current.callee.object.name === "JSON" &&
+			current.callee.property.type === AST_NODE_TYPES.Identifier &&
+			current.callee.property.name === "stringify"
+		) {
+			return true;
+		}
+
+		if (
+			current.type === AST_NODE_TYPES.JSXElement ||
+			current.type === AST_NODE_TYPES.JSXFragment
+		) {
 			return false;
 		}
 
@@ -115,7 +149,7 @@ export const preferSignalInJsxRule = ESLintUtils.RuleCreator(
 )<Options, MessageIds>({
 	name: ruleName,
 	meta: {
-		type: "suggestion", // Kept as 'suggestion' as this is a best practice for cleaner JSX, not a critical issue
+		type: "suggestion",
 		docs: {
 			description:
 				"Enforces direct signal usage in JSX by preferring the signal itself over explicit `.value` access. In JSX, signals are automatically unwrapped, so there's no need to access the `.value` property. This rule helps maintain cleaner JSX code by removing unnecessary property access.",
@@ -182,6 +216,7 @@ export const preferSignalInJsxRule = ESLintUtils.RuleCreator(
 		console.info(
 			`${ruleName}: Initializing rule for file: ${context.filename}`,
 		);
+
 		console.info(`${ruleName}: Rule configuration:`, option);
 
 		recordMetric(perfKey, "config", {
@@ -232,7 +267,6 @@ export const preferSignalInJsxRule = ESLintUtils.RuleCreator(
 				);
 			},
 
-			// Track JSX depth to determine if we're inside JSX
 			JSXElement(): void {
 				jsxDepth++;
 			},
@@ -252,42 +286,64 @@ export const preferSignalInJsxRule = ESLintUtils.RuleCreator(
 				}
 
 				if (
-					!(
-						node.property.type === "Identifier" &&
-						node.property.name === "value" &&
-						node.object.type === "Identifier" &&
-						node.object.name.endsWith("Signal")
-					)
+					node.property.type !== AST_NODE_TYPES.Identifier ||
+					node.property.name !== "value"
 				) {
+					return;
+				}
+
+				if (node.object.type !== AST_NODE_TYPES.Identifier) {
+					if (node.object.type === AST_NODE_TYPES.MemberExpression) {
+						return;
+					}
+
+					if (node.parent.type === AST_NODE_TYPES.CallExpression) {
+						return;
+					}
+
 					return;
 				}
 
 				if (
 					(
 						[
-							"MemberExpression",
-							"ChainExpression",
-							"OptionalMemberExpression",
-							"BinaryExpression",
-							"UnaryExpression",
-							"LogicalExpression",
+							AST_NODE_TYPES.MemberExpression,
+							AST_NODE_TYPES.ChainExpression,
+							AST_NODE_TYPES.BinaryExpression,
+							AST_NODE_TYPES.UnaryExpression,
+							AST_NODE_TYPES.LogicalExpression,
 						] as const
-					).some((type): boolean => {
-						return (
-							typeof node.parent !== "undefined" && node.parent.type === type
-						);
-					})
+					).some(
+						(
+							type:
+								| AST_NODE_TYPES.BinaryExpression
+								| AST_NODE_TYPES.ChainExpression
+								| AST_NODE_TYPES.LogicalExpression
+								| AST_NODE_TYPES.MemberExpression
+								| AST_NODE_TYPES.UnaryExpression,
+						): boolean => {
+							return (
+								typeof node.parent !== "undefined" && node.parent.type === type
+							);
+						},
+					)
 				) {
 					return;
 				}
 
-				if (isInJSXAttribute(node) || isInFunctionProp(node)) {
+				if (
+					isInJSXAttribute(node) ||
+					isInFunctionProp(node) ||
+					isInJSONStringify(node)
+				) {
 					return;
 				}
 
 				const severity = getSeverity("preferDirectSignalUsage", option);
 
-				if (severity === "off") return;
+				if (severity === "off") {
+					return;
+				}
 
 				context.report({
 					node,
@@ -302,7 +358,6 @@ export const preferSignalInJsxRule = ESLintUtils.RuleCreator(
 				});
 			},
 
-			// Clean up
 			"Program:exit"(): void {
 				startPhase(perfKey, "programExit");
 

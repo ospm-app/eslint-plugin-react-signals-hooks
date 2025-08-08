@@ -3,6 +3,7 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
@@ -44,10 +45,16 @@ function getSeverity(
 		return "error";
 	}
 
-	// eslint-disable-next-line security/detect-object-injection
-	const severity = options.severity[messageId];
+	switch (messageId) {
+		// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+		case "preferUseSignal": {
+			return options.severity.preferUseSignal ?? "error";
+		}
 
-	return severity ?? "error";
+		default: {
+			return "error";
+		}
+	}
 }
 
 export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator(
@@ -178,10 +185,10 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator(
 
 			VariableDeclarator(node: TSESTree.VariableDeclarator) {
 				if (
-					node.init?.type === "CallExpression" &&
-					node.init.callee.type === "Identifier" &&
+					node.init?.type === AST_NODE_TYPES.CallExpression &&
+					node.init.callee.type === AST_NODE_TYPES.Identifier &&
 					node.init.callee.name === "useState" &&
-					node.id.type === "ArrayPattern" &&
+					node.id.type === AST_NODE_TYPES.ArrayPattern &&
 					node.id.elements.length === 2
 				) {
 					if (
@@ -205,8 +212,8 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator(
 						node.init.arguments[0];
 
 					if (
-						stateVar?.type === "Identifier" &&
-						setterVar?.type === "Identifier" &&
+						stateVar?.type === AST_NODE_TYPES.Identifier &&
+						setterVar?.type === AST_NODE_TYPES.Identifier &&
 						setterVar.name.startsWith("set")
 					) {
 						const severity = getSeverity("preferUseSignal", option);
@@ -231,7 +238,7 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator(
 
 								const importDeclarations = context.sourceCode.ast.body.filter(
 									(node): node is TSESTree.ImportDeclaration =>
-										node.type === "ImportDeclaration",
+										node.type === AST_NODE_TYPES.ImportDeclaration,
 								);
 
 								const hasSignalImport = importDeclarations.some((node) => {

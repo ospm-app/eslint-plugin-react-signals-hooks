@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
+/** biome-ignore-all assist/source/organizeImports: off */
+/** biome-ignore-all lint/correctness/noUnusedVariables: off */
 import { ESLintUtils, type TSESTree } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
@@ -30,21 +32,24 @@ type Options = [Option?];
 
 type MessageIds = "exampleMessageId";
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-// biome-ignore lint/correctness/noUnusedVariables: todo
 function getSeverity(
 	messageId: MessageIds,
 	options: Option | undefined,
 ): "error" | "warn" | "off" {
 	if (!options?.severity) {
-		return "error"; // Default to 'error' if no severity is specified
+		return "error";
 	}
 
-	// eslint-disable-next-line security/detect-object-injection
-	const severity = options.severity[messageId];
+	switch (messageId) {
+		// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+		case "exampleMessageId": {
+			return options.severity.exampleMessageId ?? "error";
+		}
 
-	// Default to 'error' if no severity is specified for this messageId
-	return severity ?? "error";
+		default: {
+			return "error";
+		}
+	}
 }
 const ruleName = "rule-name";
 

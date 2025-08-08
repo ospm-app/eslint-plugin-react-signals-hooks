@@ -1,5 +1,6 @@
 /** biome-ignore-all assist/source/organizeImports: off */
-import { ESLintUtils } from "@typescript-eslint/utils";
+import type { Definition, Variable } from "@typescript-eslint/scope-manager";
+import { ESLintUtils, AST_NODE_TYPES } from "@typescript-eslint/utils";
 import type { TSESLint, TSESTree } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
@@ -18,10 +19,11 @@ import type { PerformanceBudget } from "./utils/types.js";
 import { getRuleDocUrl } from "./utils/urls.js";
 
 type SignalUpdate = {
-	node: TSESTree.AssignmentExpression | TSESTree.CallExpression;
+	node: TSESTree.Node;
 	isTopLevel: boolean;
 	signalName: string;
-	updateType: "assignment" | "method";
+	updateType: "assignment" | "method" | "update";
+	scopeDepth: number;
 };
 
 type Severity = {
@@ -53,42 +55,72 @@ function getSeverity(
 	messageId: MessageIds,
 	options: Option | undefined,
 ): "error" | "warn" | "off" {
-	if (!options?.severity) {
-		return "error"; // Default to 'error' if no severity is specified
+	if (typeof options?.severity === "undefined") {
+		return "error";
 	}
 
-	// Handle performance limit exceeded as a special case
 	if (messageId === "performanceLimitExceeded") {
-		return options.severity.performanceLimitExceeded || "warn"; // Default to 'warn' for performance issues
+		return options.severity.performanceLimitExceeded || "warn";
 	}
 
-	// Handle specific message IDs with their corresponding severity settings
 	switch (messageId) {
-		case "useBatch":
+		case "useBatch": {
 			return options.severity.useBatch ?? "error";
-		case "suggestUseBatch":
+		}
+
+		case "suggestUseBatch": {
 			return options.severity.suggestUseBatch ?? "warn";
-		case "addBatchImport":
+		}
+
+		case "addBatchImport": {
 			return options.severity.addBatchImport ?? "error";
-		case "wrapWithBatch":
+		}
+
+		case "wrapWithBatch": {
 			return options.severity.wrapWithBatch ?? "error";
-		case "useBatchSuggestion":
+		}
+
+		case "useBatchSuggestion": {
 			return options.severity.useBatchSuggestion ?? "warn";
-		default:
-			return "error"; // Default to 'error' for any other message IDs
+		}
+
+		default: {
+			return "error";
+		}
 	}
 }
 
-function processBlock(
-	statements: Array<
-		TSESTree.ExpressionStatement | TSESTree.VariableDeclaration
-	>,
-	context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
-	option?: Option | undefined,
-): void {
-	const key = context.getFilename();
+let isProcessedByHandlers = false;
 
-	recordMetric(key, "processBlockStart", { statementCount: statements.length });
+function processBlock(
+	statements: Array<TSESTree.Statement>,
+	context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
+	perfKey: string,
+	scopeDepth = 0,
+	inBatch: boolean = false,
+): Array<SignalUpdate> {
+	if (isProcessedByHandlers) {
+		return [];
+	}
+
+	if (inBatch) {
+		recordMetric(perfKey, PerformanceOperations.skipProcessing, {
+			scopeDepth,
+			statementCount: statements.length,
+		});
+
+		return [];
+	}
+
+	const updatesInScope: Array<SignalUpdate> = [];
+
+	const allUpdates: Array<SignalUpdate> = [];
+
+	recordMetric(perfKey, "processBlockStart", {
+		scopeDepth,
+		inBatch,
+		statementCount: statements.length,
+	});
 
 	const hasBatchImport = context.sourceCode.ast.body.some(
 		(node: TSESTree.ProgramStatement): boolean => {
@@ -106,93 +138,118 @@ function processBlock(
 		},
 	);
 
-	const updatesInBlock: Array<SignalUpdate> = [];
-
-	let signalUpdateCount = 0;
-
 	for (const stmt of statements) {
-		// Skip non-expression statements and variable declarations
-		if (stmt.type !== "ExpressionStatement") {
+		if (stmt.type !== AST_NODE_TYPES.ExpressionStatement) {
+			if (stmt.type === AST_NODE_TYPES.BlockStatement) {
+				const nestedUpdates = processBlock(
+					stmt.body,
+					context,
+					perfKey,
+					scopeDepth + 1,
+					inBatch,
+				);
+
+				allUpdates.push(...nestedUpdates);
+			}
+
 			continue;
 		}
 
-		// Handle expression statements (direct assignments or function calls)
+		if (isBatchCall(stmt.expression, context)) {
+			if (
+				stmt.expression.type === AST_NODE_TYPES.CallExpression &&
+				stmt.expression.arguments.length > 0 &&
+				(stmt.expression.arguments[0]?.type ===
+					AST_NODE_TYPES.ArrowFunctionExpression ||
+					stmt.expression.arguments[0]?.type ===
+						AST_NODE_TYPES.FunctionExpression) &&
+				stmt.expression.arguments[0].body.type === AST_NODE_TYPES.BlockStatement
+			) {
+				recordMetric(perfKey, "skipBatchBody", { scopeDepth });
+			}
+
+			continue;
+		}
 
 		if (isSignalUpdate(stmt.expression)) {
-			const updateType =
-				stmt.expression.type === "AssignmentExpression"
-					? "assignment"
-					: "method";
+			const updateType = getUpdateType(stmt.expression);
 
-			recordMetric(key, "signalUpdateFound", {
+			const signalName = getSignalName(stmt.expression);
+
+			recordMetric(perfKey, "signalUpdateFound", {
 				type: updateType,
-				location: "expression",
+				location: scopeDepth === 0 ? "top-level" : `nested-${scopeDepth}`,
+				signalName,
+				hasBatchImport,
+				inBatchScope: inBatch,
 			});
 
-			updatesInBlock.push({
+			updatesInScope.push({
 				node: stmt.expression,
-				isTopLevel: true,
-				signalName:
-					stmt.expression.type === "AssignmentExpression"
-						? "object" in stmt.expression.left &&
-							stmt.expression.left.object.type === "Identifier"
-							? stmt.expression.left.object.name
-							: "signal"
-						: "object" in stmt.expression.callee &&
-								stmt.expression.callee.object.type === "Identifier"
-							? stmt.expression.callee.object.name
-							: "signal",
+				isTopLevel: scopeDepth === 0,
+				signalName,
 				updateType,
+				scopeDepth,
 			});
-
-			signalUpdateCount++;
 		}
 	}
 
-	recordMetric(key, "processBlockEnd", {
-		totalUpdates: updatesInBlock.length,
-		uniqueSignals: new Set(updatesInBlock.map((u) => u.signalName)).size,
+	recordMetric(perfKey, "processBlockEnd", {
+		scopeDepth,
+		totalUpdates: updatesInScope.length,
+		uniqueSignals: new Set(
+			updatesInScope.map((u: SignalUpdate): string => {
+				return u.signalName;
+			}),
+		).size,
 		hasBatchImport,
-		minUpdatesRequired: option?.minUpdates,
+		minUpdatesRequired: context.options[0]?.minUpdates,
 	});
 
-	// Only suggest batching if we have enough updates ( min 2 )
-	if (
-		typeof option?.minUpdates !== "undefined" &&
-		updatesInBlock.length < (option.minUpdates || 2)
-	) {
-		recordMetric(key, "batchUpdateNotNeeded", {
-			updateCount: updatesInBlock.length,
+	allUpdates.push(...updatesInScope);
+
+	const minUpdates = context.options[0]?.minUpdates;
+
+	if (typeof minUpdates === "number" && updatesInScope.length < minUpdates) {
+		recordMetric(perfKey, "batchUpdateNotNeeded", {
+			scopeDepth,
+			updateCount: updatesInScope.length,
+			minUpdates,
 		});
 
-		return;
+		return allUpdates;
 	}
 
-	const firstNode = updatesInBlock[0]?.node;
+	const firstNode = updatesInScope[0]?.node;
 
-	const signalCount = updatesInBlock.length;
-
-	recordMetric(key, "batchUpdateSuggested", {
-		updateCount: updatesInBlock.length,
-		uniqueSignals: new Set(updatesInBlock.map((u) => u.signalName)).size,
+	recordMetric(perfKey, "batchUpdateSuggested", {
+		updateCount: updatesInScope.length,
+		uniqueSignals: new Set(
+			updatesInScope.map((u: SignalUpdate): string => {
+				return u.signalName;
+			}),
+		).size,
 	});
 
 	if (!firstNode) {
-		return;
+		return allUpdates;
 	}
 
-	const messageId = "useBatch" as const;
-	const severity = getSeverity(messageId, option);
+	const messageId = "useBatch";
 
-	if (severity !== "off") {
+	if (
+		getSeverity(messageId, context.options[0]) !== "off" &&
+		updatesInScope.length > 0 &&
+		!isInsideBatchCall(firstNode, context)
+	) {
 		context.report({
 			node: firstNode,
 			messageId,
 			data: {
-				count: signalCount,
+				count: updatesInScope.length,
 				signals: Array.from(
 					new Set(
-						updatesInBlock.map((update: SignalUpdate): string => {
+						allUpdates.map((update: SignalUpdate): string => {
 							return update.signalName;
 						}),
 					),
@@ -201,30 +258,26 @@ function processBlock(
 			suggest: [
 				{
 					messageId: "useBatchSuggestion",
-					data: { count: signalCount },
+					data: { count: updatesInScope.length },
 					*fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
-						const updatesText = updatesInBlock
+						const updatesText = allUpdates
 							.map(({ node }: SignalUpdate): string => {
 								return context.sourceCode.getText(node);
 							})
 							.join("; ");
 
-						const firstUpdate = updatesInBlock[0]?.node;
-						const lastUpdate = updatesInBlock[updatesInBlock.length - 1]?.node;
+						const firstUpdate = updatesInScope[0]?.node;
+
+						const lastUpdate = updatesInScope[updatesInScope.length - 1]?.node;
 
 						if (!firstUpdate || !lastUpdate) {
 							return null;
 						}
 
-						// Get the range of the entire block of updates
 						const range: TSESTree.Range = [
 							firstUpdate.range[0],
 							lastUpdate.range[1],
 						];
-
-						// Create the batch wrapper
-						const batchPrefix = `batch(() => {\n  `;
-						const batchSuffix = `\n});`;
 
 						const b = context.sourceCode.ast.body[0];
 
@@ -232,7 +285,6 @@ function processBlock(
 							return null;
 						}
 
-						// If we need to add the import, do it first
 						if (!hasBatchImport) {
 							yield fixer.insertTextBefore(
 								b,
@@ -240,35 +292,31 @@ function processBlock(
 							);
 						}
 
-						// Replace the updates with the batched version
 						yield fixer.replaceTextRange(
 							range,
-							batchPrefix + updatesText + batchSuffix,
+							`batch(() => {\n  ${updatesText}\n});`,
 						);
 
-						recordMetric(key, "batchFixApplied", {
-							updateCount: updatesInBlock.length,
+						recordMetric(perfKey, "batchFixApplied", {
+							updateCount: updatesInScope.length,
 						});
+
 						return null;
 					},
 				},
 				{
 					messageId: "useBatchSuggestion",
-					data: { count: signalCount },
+					data: { count: updatesInScope.length },
 					*fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
-						const updatesText = updatesInBlock
-							.map(({ node }: SignalUpdate): string => {
-								return context.sourceCode.getText(node);
-							})
-							.join("; ");
-
 						if (!hasBatchImport) {
 							const batchImport =
 								"import { batch } from '@preact/signals-react';\n";
 
 							const firstImport = context.sourceCode.ast.body.find(
-								(n): n is TSESTree.ImportDeclaration =>
-									n.type === "ImportDeclaration",
+								(
+									n: TSESTree.ProgramStatement,
+								): n is TSESTree.ImportDeclaration =>
+									n.type === AST_NODE_TYPES.ImportDeclaration,
 							);
 
 							if (typeof firstImport === "undefined") {
@@ -287,13 +335,17 @@ function processBlock(
 						yield fixer.replaceTextRange(
 							[
 								firstNode.range[0],
-								updatesInBlock[updatesInBlock.length - 1]?.node.range[1] ?? 0,
+								allUpdates[allUpdates.length - 1]?.node.range[1] ?? 0,
 							],
-							`batch(() => { ${updatesText} })`,
+							`batch(() => { ${allUpdates
+								.map(({ node }: SignalUpdate): string => {
+									return context.sourceCode.getText(node);
+								})
+								.join("; ")} })`,
 						);
 
-						recordMetric(key, "batchFixApplied", {
-							updateCount: updatesInBlock.length,
+						recordMetric(perfKey, "batchFixApplied", {
+							updateCount: allUpdates.length,
 						});
 
 						return null;
@@ -302,7 +354,7 @@ function processBlock(
 				{
 					messageId: "addBatchImport",
 					data: {
-						count: signalUpdateCount,
+						count: updatesInScope.length,
 					},
 					*fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
 						if (hasBatchImport) {
@@ -316,7 +368,7 @@ function processBlock(
 							(
 								n: TSESTree.ProgramStatement,
 							): n is TSESTree.ImportDeclaration => {
-								return n.type === "ImportDeclaration";
+								return n.type === AST_NODE_TYPES.ImportDeclaration;
 							},
 						);
 
@@ -336,33 +388,180 @@ function processBlock(
 			],
 		});
 	}
+
+	return allUpdates;
 }
 
-function isSignalUpdate(
+const batchScopeStack: Array<boolean> = [false];
+
+function pushBatchScope(inBatch: boolean): void {
+	batchScopeStack.push(inBatch);
+}
+
+function popBatchScope(): boolean {
+	const popped = batchScopeStack.pop();
+
+	if (batchScopeStack.length === 0) {
+		batchScopeStack.push(false);
+	}
+
+	return popped ?? false;
+}
+
+function isInsideBatchCall(
 	node: TSESTree.Node,
-): node is TSESTree.AssignmentExpression | TSESTree.CallExpression {
-	// Handle direct assignments (signal.value = x)
+	context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
+): boolean {
 	if (
-		node.type === "AssignmentExpression" &&
-		node.left.type === "MemberExpression" &&
-		node.left.property.type === "Identifier" &&
-		node.left.property.name === "value" &&
-		node.left.object.type === "Identifier" &&
-		(node.left.object.name.endsWith("Signal") ||
-			node.left.object.name.endsWith("signal"))
+		batchScopeStack.length > 0 &&
+		batchScopeStack[batchScopeStack.length - 1] === true
 	) {
 		return true;
 	}
 
-	// Handle method calls (signal.set(x) or signal.update())
+	for (const ancestor of context.sourceCode.getAncestors(node)) {
+		if (
+			ancestor.type === AST_NODE_TYPES.CallExpression &&
+			isBatchCall(ancestor, context) &&
+			ancestor.arguments.length > 0 &&
+			typeof ancestor.arguments[0] !== "undefined" &&
+			"body" in ancestor.arguments[0] &&
+			"range" in ancestor.arguments[0].body
+		) {
+			return (
+				node.range[0] >= ancestor.arguments[0].body.range[0] &&
+				node.range[1] <= ancestor.arguments[0].body.range[1]
+			);
+		}
+	}
+
+	return false;
+}
+
+function isBatchCall(
+	node: TSESTree.Node,
+	context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
+): boolean {
+	if (node.type !== AST_NODE_TYPES.CallExpression) {
+		return false;
+	}
+
 	if (
-		node.type === "CallExpression" &&
-		node.callee.type === "MemberExpression" &&
-		node.callee.property.type === "Identifier" &&
+		node.callee.type === AST_NODE_TYPES.Identifier &&
+		node.callee.name === "batch"
+	) {
+		return true;
+	}
+
+	if (node.callee.type === AST_NODE_TYPES.Identifier) {
+		const variable = context.sourceCode
+			.getScope(node)
+			.variables.find((v: Variable): boolean => {
+				return "name" in node.callee && v.name === node.callee.name;
+			});
+
+		if (typeof variable !== "undefined") {
+			return variable.defs.some((def: Definition): boolean => {
+				if (def.type === "ImportBinding") {
+					return (
+						"imported" in def.node &&
+						"name" in def.node.imported &&
+						def.node.imported.name === "batch"
+					);
+				}
+
+				return false;
+			});
+		}
+	}
+
+	return false;
+}
+
+function getUpdateType(
+	node: TSESTree.Node,
+): "assignment" | "method" | "update" {
+	if (node.type === AST_NODE_TYPES.AssignmentExpression) {
+		return "assignment";
+	}
+
+	if (node.type === AST_NODE_TYPES.CallExpression) {
+		return "method";
+	}
+
+	return "update";
+}
+
+function getSignalName(node: TSESTree.Node): string {
+	if (node.type === AST_NODE_TYPES.AssignmentExpression) {
+		if (
+			node.left.type === AST_NODE_TYPES.MemberExpression &&
+			!node.left.computed &&
+			node.left.property.type === AST_NODE_TYPES.Identifier &&
+			node.left.property.name === "value" &&
+			node.left.object.type === AST_NODE_TYPES.Identifier
+		) {
+			return node.left.object.name;
+		}
+	} else if (
+		node.type === AST_NODE_TYPES.CallExpression &&
+		node.callee.type === AST_NODE_TYPES.MemberExpression &&
+		!node.callee.computed &&
+		node.callee.property.type === AST_NODE_TYPES.Identifier &&
+		(node.callee.property.name === "set" ||
+			node.callee.property.name === "update") &&
+		node.callee.object.type === AST_NODE_TYPES.Identifier
+	) {
+		return node.callee.object.name;
+	}
+
+	return "signal";
+}
+
+function isSignalUpdate(
+	node: TSESTree.Node,
+): node is
+	| TSESTree.AssignmentExpression
+	| TSESTree.CallExpression
+	| TSESTree.UpdateExpression
+	| TSESTree.UnaryExpression {
+	if (node.type === AST_NODE_TYPES.AssignmentExpression) {
+		if (
+			node.left.type === AST_NODE_TYPES.MemberExpression &&
+			node.left.property.type === AST_NODE_TYPES.Identifier &&
+			node.left.property.name === "value" &&
+			isSignalReference(node.left.object)
+		) {
+			return true;
+		}
+
+		if (
+			node.operator !== "=" &&
+			node.left.type === AST_NODE_TYPES.MemberExpression &&
+			node.left.property.type === AST_NODE_TYPES.Identifier &&
+			node.left.property.name === "value" &&
+			isSignalReference(node.left.object)
+		) {
+			return true;
+		}
+	}
+
+	if (
+		node.type === AST_NODE_TYPES.CallExpression &&
+		node.callee.type === AST_NODE_TYPES.MemberExpression &&
+		node.callee.property.type === AST_NODE_TYPES.Identifier &&
 		["set", "update"].includes(node.callee.property.name) &&
-		node.callee.object.type === "Identifier" &&
-		(node.callee.object.name.endsWith("Signal") ||
-			node.callee.object.name.endsWith("signal"))
+		isSignalReference(node.callee.object)
+	) {
+		return true;
+	}
+
+	if (
+		node.type === AST_NODE_TYPES.UpdateExpression &&
+		node.argument.type === AST_NODE_TYPES.MemberExpression &&
+		node.argument.property.type === AST_NODE_TYPES.Identifier &&
+		node.argument.property.name === "value" &&
+		isSignalReference(node.argument.object)
 	) {
 		return true;
 	}
@@ -370,7 +569,30 @@ function isSignalUpdate(
 	return false;
 }
 
-const signalUpdates: Array<SignalUpdate> = [];
+function isSignalReference(node: TSESTree.Node): boolean {
+	if (node.type === AST_NODE_TYPES.Identifier) {
+		return (
+			node.name.endsWith("Signal") ||
+			node.name.endsWith("signal") ||
+			node.name.endsWith("Sig") ||
+			node.name.endsWith("sig")
+		);
+	}
+
+	if (
+		node.type === AST_NODE_TYPES.MemberExpression &&
+		node.property.type === AST_NODE_TYPES.Identifier &&
+		node.property.name === "value"
+	) {
+		return isSignalReference(node.object);
+	}
+
+	return false;
+}
+
+let signalUpdates: Array<SignalUpdate> = [];
+
+const DEFAULT_MIN_UPDATES = 2;
 
 const ruleName = "prefer-batch-updates";
 
@@ -405,25 +627,93 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator(
 					minUpdates: {
 						type: "number",
 						minimum: 2,
-						default: 2,
+						default: DEFAULT_MIN_UPDATES,
 						description: "Minimum number of signal updates to trigger the rule",
 					},
 					performance: {
 						type: "object",
 						properties: {
-							maxTime: { type: "number", minimum: 1 },
-							maxMemory: { type: "number", minimum: 1 },
-							maxNodes: { type: "number", minimum: 1 },
-							enableMetrics: { type: "boolean" },
-							logMetrics: { type: "boolean" },
+							maxTime: {
+								type: "number",
+								minimum: 1,
+								description:
+									"Maximum time in milliseconds to spend analyzing a file",
+							},
+							maxMemory: {
+								type: "number",
+								minimum: 1,
+								description: "Maximum memory in MB to use for analysis",
+							},
+							maxNodes: {
+								type: "number",
+								minimum: 1,
+								description: "Maximum number of AST nodes to process",
+							},
+							enableMetrics: {
+								type: "boolean",
+								description: "Whether to enable performance metrics collection",
+							},
+							logMetrics: {
+								type: "boolean",
+								description: "Whether to log performance metrics",
+							},
+							maxUpdates: {
+								type: "number",
+								minimum: 1,
+								description: "Maximum number of signal updates to process",
+							},
+							maxDepth: {
+								type: "number",
+								minimum: 1,
+								description: "Maximum depth of nested scopes to analyze",
+							},
 							maxOperations: {
 								type: "object",
+								description: "Limits for specific operations",
 								properties: Object.fromEntries(
 									Object.entries(PerformanceOperations).map(([key]) => [
 										key,
-										{ type: "number", minimum: 1 },
+										{
+											type: "number",
+											minimum: 1,
+											description: `Maximum number of ${key} operations`,
+										},
 									]),
 								),
+							},
+						},
+						additionalProperties: false,
+					},
+					severity: {
+						type: "object",
+						properties: {
+							arrayUpdateInLoop: {
+								type: "string",
+								enum: ["error", "warn", "off"],
+								description: "Severity for array updates in loops",
+							},
+							suggestBatchArrayUpdate: {
+								type: "string",
+								description: "Severity for suggesting batch for array updates",
+							},
+							// Add other severity options from the spec
+							useBatch: { type: "string", enum: ["error", "warn", "off"] },
+							suggestUseBatch: {
+								type: "string",
+								enum: ["error", "warn", "off"],
+							},
+							addBatchImport: {
+								type: "string",
+								enum: ["error", "warn", "off"],
+							},
+							wrapWithBatch: { type: "string", enum: ["error", "warn", "off"] },
+							useBatchSuggestion: {
+								type: "string",
+								enum: ["error", "warn", "off"],
+							},
+							performanceLimitExceeded: {
+								type: "string",
+								enum: ["error", "warn", "off"],
 							},
 						},
 						additionalProperties: false,
@@ -437,19 +727,25 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator(
 		{
 			minUpdates: 2,
 			performance: DEFAULT_PERFORMANCE_BUDGET,
+			severity: {
+				useBatch: "error",
+				suggestUseBatch: "error",
+				addBatchImport: "error",
+				wrapWithBatch: "error",
+				useBatchSuggestion: "error",
+				performanceLimitExceeded: "error",
+			},
 		},
 	],
 	create(
 		context: Readonly<RuleContext<MessageIds, Options>>,
-		[option],
+		[option]: readonly [Option?],
 	): ESLintUtils.RuleListener {
 		const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
-		startPhase(perfKey, "ruleInit");
-
-		const perf = createPerformanceTracker<Options>(
+		const perf = createPerformanceTracker(
 			perfKey,
-			option?.performance,
+			DEFAULT_PERFORMANCE_BUDGET,
 			context,
 		);
 
@@ -457,120 +753,257 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator(
 			startTracking(context, perfKey, option.performance, ruleName);
 		}
 
-		console.info(
-			`${ruleName}: Initializing rule for file: ${context.filename}`,
-		);
-		console.info(`${ruleName}: Rule configuration:`, option);
-
-		recordMetric(perfKey, "config", {
-			performance: {
-				enableMetrics: option?.performance?.enableMetrics,
-				logMetrics: option?.performance?.logMetrics,
-			},
-		});
-
-		trackOperation(perfKey, PerformanceOperations.ruleInit);
-
-		endPhase(perfKey, "ruleInit");
-
 		let nodeCount = 0;
 
 		function shouldContinue(): boolean {
 			nodeCount++;
 
-			if (nodeCount > (option?.performance?.maxNodes ?? 2000)) {
+			if (
+				typeof option?.performance?.maxNodes === "number" &&
+				nodeCount > option.performance.maxNodes
+			) {
 				trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
-
 				return false;
 			}
-
 			return true;
 		}
 
-		startPhase(perfKey, "ruleExecution");
-
 		return {
 			"*": (node: TSESTree.Node): void => {
+				perf.trackNode(node);
+			},
+
+			[AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
 				if (!shouldContinue()) {
-					endPhase(perfKey, "recordMetrics");
-
-					stopTracking(perfKey);
-
 					return;
 				}
 
-				perf.trackNode(node);
+				if (isBatchCall(node, context)) {
+					recordMetric(perfKey, "batchCallDetected", {
+						location: context.getSourceCode().getLocFromIndex(node.range[0]),
+						hasCallback:
+							node.arguments.length > 0 &&
+							(node.arguments[0]?.type ===
+								AST_NODE_TYPES.ArrowFunctionExpression ||
+								node.arguments[0]?.type === AST_NODE_TYPES.FunctionExpression),
+					});
 
-				trackOperation(perfKey, PerformanceOperations.nodeProcessingExpression);
+					if (
+						node.arguments.length > 0 &&
+						(node.arguments[0]?.type ===
+							AST_NODE_TYPES.ArrowFunctionExpression ||
+							node.arguments[0]?.type === AST_NODE_TYPES.FunctionExpression)
+					) {
+						pushBatchScope(true);
+
+						const callback = node.arguments[0];
+
+						if (
+							callback.type === AST_NODE_TYPES.ArrowFunctionExpression &&
+							callback.body.type === AST_NODE_TYPES.BlockStatement
+						) {
+							recordMetric(perfKey, "skipArrowBatchBody", {
+								location: context.sourceCode.getLocFromIndex(
+									callback.body.range[0],
+								),
+							});
+						} else if (callback.type === AST_NODE_TYPES.FunctionExpression) {
+							recordMetric(perfKey, "skipFunctionBatchBody", {
+								location: context.sourceCode.getLocFromIndex(
+									callback.body.range[0],
+								),
+							});
+						}
+					}
+				}
 			},
 
-			// Track signal updates in the current scope
-			AssignmentExpression(node: TSESTree.AssignmentExpression): void {
-				startPhase(perfKey, "assignmentExpression");
-
-				if (isSignalUpdate(node)) {
-					signalUpdates.push({
-						node,
-						isTopLevel: true,
-						signalName:
-							"left" in node && node.left.type === "MemberExpression"
-								? node.left.object.type === "Identifier"
-									? node.left.object.name
-									: "signal"
-								: node.left.type,
-						updateType: "assignment",
-					});
+			[`${AST_NODE_TYPES.CallExpression}:exit`](
+				node: TSESTree.CallExpression,
+			): void {
+				if (!shouldContinue()) {
+					return;
 				}
 
-				endPhase(perfKey, "assignmentExpression");
-			},
-
-			CallExpression(node: TSESTree.CallExpression): void {
-				startPhase(perfKey, "callExpression");
-
-				if (isSignalUpdate(node)) {
-					signalUpdates.push({
-						node,
-						isTopLevel: true,
-						signalName:
-							"callee" in node && node.callee.type === "MemberExpression"
-								? node.callee.object.type === "Identifier"
-									? node.callee.object.name
-									: "signal"
-								: node.callee.type,
-						updateType: "method",
-					});
+				if (
+					!(
+						isBatchCall(node, context) &&
+						node.arguments.length > 0 &&
+						(node.arguments[0]?.type ===
+							AST_NODE_TYPES.ArrowFunctionExpression ||
+							node.arguments[0]?.type === AST_NODE_TYPES.FunctionExpression)
+					)
+				) {
+					return;
 				}
 
-				endPhase(perfKey, "callExpression");
-			},
+				const callbackBodyRange = node.arguments[0].body.range;
 
-			// Process blocks of code (function bodies, if blocks, etc.)
-			"BlockStatement:exit"(node: TSESTree.BlockStatement): void {
-				startPhase(perfKey, "blockStatement");
-
-				processBlock(
-					node.body.filter(
-						(
-							n,
-						): n is
-							| TSESTree.ExpressionStatement
-							| TSESTree.VariableDeclaration => {
-							return (
-								n.type === "ExpressionStatement" ||
-								n.type === "VariableDeclaration"
-							);
-						},
-					),
-					context,
-					option,
+				signalUpdates = signalUpdates.filter(
+					(update: SignalUpdate): boolean => {
+						return !(
+							update.node.range[0] >= callbackBodyRange[0] &&
+							update.node.range[1] <= callbackBodyRange[1]
+						);
+					},
 				);
 
-				endPhase(perfKey, "blockStatement");
+				const removedCount = signalUpdates.length - signalUpdates.length;
+
+				if (removedCount > 0) {
+					recordMetric(perfKey, "batchUpdatesRemoved", {
+						removedCount,
+						location: context.sourceCode.getLocFromIndex(node.range[1]),
+					});
+				}
+
+				popBatchScope();
 			},
 
-			// Process program top level
-			"Program:exit"(node: TSESTree.Program): void {
+			[AST_NODE_TYPES.BlockStatement]: (
+				node: TSESTree.BlockStatement,
+			): void => {
+				pushBatchScope(batchScopeStack[batchScopeStack.length - 1] === true);
+
+				processBlock(node.body, context, perfKey);
+			},
+
+			[`${AST_NODE_TYPES.ArrowFunctionExpression}[body.type="${AST_NODE_TYPES.BlockStatement}"]`]:
+				(node: TSESTree.ArrowFunctionExpression): void => {
+					if (!shouldContinue()) {
+						return;
+					}
+
+					startPhase(perfKey, "callExpression");
+
+					try {
+						if (
+							isBatchCall(node, context) &&
+							"arguments" in node &&
+							Array.isArray(node.arguments) &&
+							node.arguments.length > 0 &&
+							typeof node.arguments[0] === "object" &&
+							node.arguments[0] !== null &&
+							"type" in node.arguments[0] &&
+							(node.arguments[0].type ===
+								AST_NODE_TYPES.ArrowFunctionExpression ||
+								node.arguments[0].type === AST_NODE_TYPES.FunctionExpression)
+						) {
+							popBatchScope();
+						}
+
+						if (
+							isSignalUpdate(node) &&
+							batchScopeStack[batchScopeStack.length - 1] !== true
+						) {
+							signalUpdates.push({
+								node,
+								isTopLevel: true,
+								signalName: getSignalName(node),
+								updateType: getUpdateType(node),
+								scopeDepth: 0,
+							});
+						}
+					} catch (error: unknown) {
+						recordMetric(perfKey, "callExpressionError", {
+							error: String(error),
+						});
+					} finally {
+						endPhase(perfKey, "callExpression");
+					}
+				},
+
+			"AssignmentExpression:exit"(node: TSESTree.AssignmentExpression): void {
+				if (!shouldContinue()) {
+					return;
+				}
+
+				startPhase(perfKey, "assignmentExpression");
+
+				try {
+					if (
+						isSignalUpdate(node) &&
+						batchScopeStack[batchScopeStack.length - 1] !== true
+					) {
+						signalUpdates.push({
+							node,
+							isTopLevel: false,
+							signalName: getSignalName(node),
+							updateType: "assignment",
+							scopeDepth: 0,
+						});
+					}
+				} catch (error: unknown) {
+					recordMetric(perfKey, "assignmentExpressionError", {
+						error: String(error),
+					});
+				} finally {
+					endPhase(perfKey, "assignmentExpression");
+				}
+			},
+
+			[`${AST_NODE_TYPES.UpdateExpression}:exit`](
+				node: TSESTree.UpdateExpression,
+			): void {
+				if (!shouldContinue()) {
+					return;
+				}
+
+				startPhase(perfKey, "updateExpression");
+
+				try {
+					if (
+						isSignalUpdate(node) &&
+						batchScopeStack[batchScopeStack.length - 1] !== true
+					) {
+						signalUpdates.push({
+							node,
+							isTopLevel: false,
+							signalName: getSignalName(node),
+							updateType: "update",
+							scopeDepth: 0,
+						});
+					}
+				} catch (error: unknown) {
+					recordMetric(perfKey, "updateExpressionError", {
+						error: JSON.stringify(error),
+					});
+				} finally {
+					endPhase(perfKey, "updateExpression");
+				}
+			},
+
+			[`${AST_NODE_TYPES.BlockStatement}:exit`](
+				node: TSESTree.BlockStatement,
+			): void {
+				if (isProcessedByHandlers || !shouldContinue()) {
+					return;
+				}
+
+				startPhase(perfKey, "blockStatement");
+
+				try {
+					isProcessedByHandlers = true;
+
+					processBlock(
+						node.body,
+						context,
+						perfKey,
+						1,
+						batchScopeStack[batchScopeStack.length - 1] === true,
+					);
+				} catch (error: unknown) {
+					recordMetric(perfKey, "processBlockError", { error: String(error) });
+				} finally {
+					isProcessedByHandlers = false;
+
+					popBatchScope();
+
+					endPhase(perfKey, "blockStatement");
+				}
+			},
+
+			[`${AST_NODE_TYPES.Program}:exit`](node: TSESTree.Program): void {
 				startPhase(perfKey, "programExit");
 
 				processBlock(
@@ -580,11 +1013,11 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator(
 						): n is
 							| TSESTree.ExpressionStatement
 							| TSESTree.VariableDeclaration =>
-							n.type === "ExpressionStatement" ||
-							n.type === "VariableDeclaration",
+							n.type === AST_NODE_TYPES.ExpressionStatement ||
+							n.type === AST_NODE_TYPES.VariableDeclaration,
 					),
 					context,
-					option,
+					perfKey,
 				);
 
 				try {
@@ -620,6 +1053,6 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator(
 
 				endPhase(perfKey, "programExit");
 			},
-		};
+		} satisfies ESLintUtils.RuleListener;
 	},
 });

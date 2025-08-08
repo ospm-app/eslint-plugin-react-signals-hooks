@@ -3,6 +3,7 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
@@ -51,32 +52,45 @@ function getSeverity(
 		return "error"; // Default to 'error' if no severity is specified
 	}
 
-	// eslint-disable-next-line security/detect-object-injection
-	const severity = options.severity[messageId];
+	switch (messageId) {
+		case "unnecessaryUntracked": {
+			return options.severity.unnecessaryUntracked ?? "error";
+		}
 
-	// Default to 'error' if no severity is specified for this messageId
-	return severity ?? "error";
+		case "unnecessaryPeek": {
+			return options.severity.unnecessaryPeek ?? "error";
+		}
+
+		case "suggestRemoveUntracked": {
+			return options.severity.suggestRemoveUntracked ?? "error";
+		}
+
+		case "suggestRemovePeek": {
+			return options.severity.suggestRemovePeek ?? "error";
+		}
+
+		default: {
+			return "error";
+		}
+	}
 }
 
 function containsSignalAccess(node: TSESTree.Node): boolean {
 	if (
 		[
-			"FunctionDeclaration",
-			"FunctionExpression",
-			"ArrowFunctionExpression",
-			"ClassMethod",
-			"ClassPrivateMethod",
-			"ObjectMethod",
+			AST_NODE_TYPES.FunctionDeclaration,
+			AST_NODE_TYPES.FunctionExpression,
+			AST_NODE_TYPES.ArrowFunctionExpression,
 		].includes(node.type)
 	) {
 		return false;
 	}
 
 	if (
-		node.type === "MemberExpression" &&
-		node.property.type === "Identifier" &&
+		node.type === AST_NODE_TYPES.MemberExpression &&
+		node.property.type === AST_NODE_TYPES.Identifier &&
 		node.property.name === "value" &&
-		node.object.type === "Identifier" &&
+		node.object.type === AST_NODE_TYPES.Identifier &&
 		(node.object.name.endsWith("Signal") || node.object.name.endsWith("signal"))
 	) {
 		return true;
@@ -161,20 +175,20 @@ function containsSignalAccess(node: TSESTree.Node): boolean {
 
 function isSignalNode(node: TSESTree.Node): boolean {
 	return (
-		node.type === "Identifier" &&
+		node.type === AST_NODE_TYPES.Identifier &&
 		(node.name.endsWith("Signal") || node.name.endsWith("signal"))
 	);
 }
 
 function isPeekAccess(node: TSESTree.Node): boolean {
 	return (
-		node.type === "CallExpression" &&
-		node.callee.type === "MemberExpression" &&
-		node.callee.property.type === "Identifier" &&
+		node.type === AST_NODE_TYPES.CallExpression &&
+		node.callee.type === AST_NODE_TYPES.MemberExpression &&
+		node.callee.property.type === AST_NODE_TYPES.Identifier &&
 		node.callee.property.name === "peek" &&
 		node.arguments.length === 0 &&
-		node.callee.object.type === "MemberExpression" &&
-		node.callee.object.property.type === "Identifier" &&
+		node.callee.object.type === AST_NODE_TYPES.MemberExpression &&
+		node.callee.object.property.type === AST_NODE_TYPES.Identifier &&
 		node.callee.object.property.name === "value" &&
 		isSignalNode(node.callee.object.object)
 	);
@@ -182,10 +196,10 @@ function isPeekAccess(node: TSESTree.Node): boolean {
 
 function isUnnecessaryUntrackedCall(node: TSESTree.CallExpression): boolean {
 	return (
-		node.callee.type === "Identifier" &&
+		node.callee.type === AST_NODE_TYPES.Identifier &&
 		node.callee.name === "untracked" &&
 		node.arguments.length === 1 &&
-		node.arguments[0]?.type === "ArrowFunctionExpression" &&
+		node.arguments[0]?.type === AST_NODE_TYPES.ArrowFunctionExpression &&
 		node.arguments[0].params.length === 0 &&
 		containsSignalAccess(node.arguments[0].body)
 	);
@@ -205,8 +219,8 @@ function isInReactiveContext(
 		let parent = node.parent;
 		while (parent) {
 			if (
-				parent.type === "CallExpression" &&
-				parent.callee.type === "Identifier" &&
+				parent.type === AST_NODE_TYPES.CallExpression &&
+				parent.callee.type === AST_NODE_TYPES.Identifier &&
 				parent.callee.name === "useSignalEffect"
 			) {
 				return false;
@@ -220,8 +234,8 @@ function isInReactiveContext(
 		let parent = node.parent;
 		while (parent) {
 			if (
-				parent.type === "JSXAttribute" &&
-				parent.name.type === "JSXIdentifier" &&
+				parent.type === AST_NODE_TYPES.JSXAttribute &&
+				parent.name.type === AST_NODE_TYPES.JSXIdentifier &&
 				parent.name.name.startsWith("on") &&
 				parent.name.name[2] === parent.name.name[2]?.toUpperCase()
 			) {
@@ -490,7 +504,7 @@ export const warnOnUnnecessaryUntrackedRule = ESLintUtils.RuleCreator(
 			CallExpression(node: TSESTree.CallExpression): void {
 				// Check for unnecessary untracked()
 				if (
-					node.callee.type === "Identifier" &&
+					node.callee.type === AST_NODE_TYPES.Identifier &&
 					node.callee.name === "untracked" &&
 					isUnnecessaryUntrackedCall(node) &&
 					isInReactiveContext(node, context)
@@ -570,10 +584,9 @@ export const warnOnUnnecessaryUntrackedRule = ESLintUtils.RuleCreator(
 					const finalMetrics = stopTracking(perfKey);
 
 					if (finalMetrics) {
-						const status =
-							finalMetrics.exceededBudget === true ? "EXCEEDED" : "OK";
-
-						console.info(`\n[${ruleName}] Performance Metrics (${status}):`);
+						console.info(
+							`\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? "EXCEEDED" : "OK"}):`,
+						);
 						console.info(`  File: ${context.filename}`);
 						console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
 						console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);

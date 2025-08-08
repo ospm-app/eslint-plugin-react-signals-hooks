@@ -3,6 +3,7 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type {
 	SourceCode,
@@ -22,26 +23,6 @@ import {
 } from "./utils/performance.js";
 import type { PerformanceBudget } from "./utils/types.js";
 import { getRuleDocUrl } from "./utils/urls.js";
-
-function getSeverity(
-	messageId: MessageIds,
-	options: Option | undefined,
-): "error" | "warn" | "off" {
-	if (!options?.severity) {
-		// Default to 'error' for all message types except performanceLimitExceeded
-		return "error";
-	}
-
-	// eslint-disable-next-line security/detect-object-injection
-	const severity = options.severity[messageId];
-
-	// Default to 'error' for all message types except performanceLimitExceeded
-	if (typeof severity === "undefined") {
-		return "error";
-	}
-
-	return severity;
-}
 
 type Serenity = {
 	preferForOverMap?: "error" | "warn" | "off";
@@ -71,6 +52,34 @@ const REACT_HOOKS = new Set([
 	"useContext",
 ]);
 
+function getSeverity(
+	messageId: MessageIds,
+	options: Option | undefined,
+): "error" | "warn" | "off" {
+	if (!options?.severity) {
+		// Default to 'error' for all message types except performanceLimitExceeded
+		return "error";
+	}
+
+	switch (messageId) {
+		case "preferForOverMap": {
+			return options.severity.preferForOverMap ?? "error";
+		}
+
+		case "suggestForComponent": {
+			return options.severity.suggestForComponent ?? "error";
+		}
+
+		case "addForImport": {
+			return options.severity.addForImport ?? "error";
+		}
+
+		default: {
+			return "error";
+		}
+	}
+}
+
 const signalMapCache = new WeakMap<
 	TSESTree.CallExpression,
 	{ signalName: string; hasValueAccess: boolean } | null
@@ -89,13 +98,13 @@ function isSignalArrayMap(node: TSESTree.CallExpression): {
 	const result: { signalName: string; hasValueAccess: boolean } | null = null;
 	// Check for signalName.value.map(...)
 	if (
-		node.callee.type === "MemberExpression" &&
-		node.callee.property.type === "Identifier" &&
+		node.callee.type === AST_NODE_TYPES.MemberExpression &&
+		node.callee.property.type === AST_NODE_TYPES.Identifier &&
 		node.callee.property.name === "map" &&
-		node.callee.object.type === "MemberExpression" &&
-		node.callee.object.property.type === "Identifier" &&
+		node.callee.object.type === AST_NODE_TYPES.MemberExpression &&
+		node.callee.object.property.type === AST_NODE_TYPES.Identifier &&
 		node.callee.object.property.name === "value" &&
-		node.callee.object.object.type === "Identifier" &&
+		node.callee.object.object.type === AST_NODE_TYPES.Identifier &&
 		node.callee.object.object.name.endsWith("Signal")
 	) {
 		return {
@@ -106,10 +115,10 @@ function isSignalArrayMap(node: TSESTree.CallExpression): {
 
 	// Check for direct signal.map() (without .value)
 	if (
-		node.callee.type === "MemberExpression" &&
-		node.callee.property.type === "Identifier" &&
+		node.callee.type === AST_NODE_TYPES.MemberExpression &&
+		node.callee.property.type === AST_NODE_TYPES.Identifier &&
 		node.callee.property.name === "map" &&
-		node.callee.object.type === "Identifier" &&
+		node.callee.object.type === AST_NODE_TYPES.Identifier &&
 		node.callee.object.name.endsWith("Signal")
 	) {
 		return {
@@ -139,23 +148,23 @@ function getForComponentReplacement(
 
 	// Handle different callback types
 	if (
-		mapCallback.type === "ArrowFunctionExpression" ||
-		mapCallback.type === "FunctionExpression"
+		mapCallback.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+		mapCallback.type === AST_NODE_TYPES.FunctionExpression
 	) {
 		const params = "params" in mapCallback ? mapCallback.params : [];
 
 		const itemParam =
-			params[0]?.type === "Identifier" ? params[0].name : "item";
+			params[0]?.type === AST_NODE_TYPES.Identifier ? params[0].name : "item";
 
 		// Get the body of the callback
 		let bodyText = "";
 		let needsParens = false;
 
 		if ("body" in mapCallback) {
-			if (mapCallback.body.type === "BlockStatement") {
+			if (mapCallback.body.type === AST_NODE_TYPES.BlockStatement) {
 				// For block statements, we need to handle the return statement
 				const returnStmt = mapCallback.body.body.find(
-					(stmt) => stmt.type === "ReturnStatement",
+					(stmt) => stmt.type === AST_NODE_TYPES.ReturnStatement,
 				) as TSESTree.ReturnStatement | undefined;
 
 				if (returnStmt?.argument) {
@@ -167,15 +176,15 @@ function getForComponentReplacement(
 				// For concise arrow functions, just get the expression
 				bodyText = sourceCode.getText(mapCallback.body);
 				needsParens =
-					mapCallback.body.type !== "JSXElement" &&
-					mapCallback.body.type !== "JSXFragment";
+					mapCallback.body.type !== AST_NODE_TYPES.JSXElement &&
+					mapCallback.body.type !== AST_NODE_TYPES.JSXFragment;
 			}
 		}
 
 		// Determine if we need to include the index parameter
 		const hasIndexParam = params.length > 1;
 		const paramList = hasIndexParam
-			? `(${itemParam}, ${params[1]?.type === "Identifier" ? params[1].name : "index"})`
+			? `(${itemParam}, ${params[1]?.type === AST_NODE_TYPES.Identifier ? params[1].name : "index"})`
 			: `(${itemParam})`;
 
 		// Format the replacement
@@ -187,7 +196,7 @@ function getForComponentReplacement(
 	}
 
 	// For identifier callbacks, just use the identifier directly
-	if (mapCallback.type === "Identifier") {
+	if (mapCallback.type === AST_NODE_TYPES.Identifier) {
 		const callbackName = sourceCode.getText(mapCallback);
 
 		return {
@@ -211,11 +220,11 @@ function checkForImport(context: RuleContext<MessageIds, Options>): boolean {
 		importCheckCache = context.sourceCode.ast.body.some(
 			(node: TSESTree.ProgramStatement): boolean => {
 				return (
-					node.type === "ImportDeclaration" &&
+					node.type === AST_NODE_TYPES.ImportDeclaration &&
 					node.source.value === "@preact/signals-react" &&
 					node.specifiers.some((s): boolean => {
 						return (
-							s.type === "ImportSpecifier" &&
+							s.type === AST_NODE_TYPES.ImportSpecifier &&
 							"name" in s.imported &&
 							s.imported.name === "For"
 						);
@@ -404,7 +413,7 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 			CallExpression(node: TSESTree.CallExpression): void {
 				// Track hook usage
 				if (
-					node.callee.type === "Identifier" &&
+					node.callee.type === AST_NODE_TYPES.Identifier &&
 					REACT_HOOKS.has(node.callee.name)
 				) {
 					hookDepth++;
@@ -473,7 +482,7 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 								(
 									n: TSESTree.ProgramStatement,
 								): n is TSESTree.ImportDeclaration => {
-									return n.type === "ImportDeclaration";
+									return n.type === AST_NODE_TYPES.ImportDeclaration;
 								},
 							);
 
@@ -527,7 +536,7 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 													(
 														n: TSESTree.ProgramStatement,
 													): n is TSESTree.ImportDeclaration => {
-														return n.type === "ImportDeclaration";
+														return n.type === AST_NODE_TYPES.ImportDeclaration;
 													},
 												);
 
@@ -554,7 +563,7 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 			},
 			"CallExpression:exit"(node: TSESTree.CallExpression) {
 				if (
-					node.callee.type === "Identifier" &&
+					node.callee.type === AST_NODE_TYPES.Identifier &&
 					REACT_HOOKS.has(node.callee.name)
 				) {
 					hookDepth = Math.max(0, hookDepth - 1);

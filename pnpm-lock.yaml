@@ -170,6 +170,128 @@ importers:
         specifier: ^5.8.3
         version: 5.8.3
 
+  packages/eslint-plugin-eslint-rule:
+    dependencies:
+      '@preact/signals-core':
+        specifier: ^1.11.0
+        version: 1.11.0
+      react:
+        specifier: ^18.2.0 || ^19.0.0
+        version: 19.1.0
+      react-dom:
+        specifier: ^18.2.0 || ^19.0.0
+        version: 19.1.0(react@19.1.0)
+      valibot:
+        specifier: ^1.1.0
+        version: 1.1.0(typescript@5.8.3)
+    devDependencies:
+      '@babel/eslint-parser':
+        specifier: ^7.28.0
+        version: 7.28.0(@babel/core@7.28.0)(eslint@9.31.0(jiti@2.4.2))
+      '@babel/plugin-syntax-import-assertions':
+        specifier: ^7.27.1
+        version: 7.27.1(@babel/core@7.28.0)
+      '@babel/preset-env':
+        specifier: 7.28.0
+        version: 7.28.0(@babel/core@7.28.0)
+      '@biomejs/biome':
+        specifier: 2.1.2
+        version: 2.1.2
+      '@total-typescript/ts-reset':
+        specifier: 0.6.1
+        version: 0.6.1
+      '@types/eslint':
+        specifier: ^9.6.1
+        version: 9.6.1
+      '@types/estree':
+        specifier: ^1.0.8
+        version: 1.0.8
+      '@types/node':
+        specifier: ^24.1.0
+        version: 24.1.0
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.1.8
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.1.6(@types/react@19.1.8)
+      '@types/react-native':
+        specifier: ^0.73.0
+        version: 0.73.0(@babel/core@7.28.0)(@types/react@19.1.8)(bufferutil@4.0.9)(react@19.1.0)(utf-8-validate@5.0.10)
+      '@typescript-eslint/eslint-plugin':
+        specifier: ^8.38.0
+        version: 8.38.0(@typescript-eslint/parser@8.38.0(eslint@9.31.0(jiti@2.4.2))(typescript@5.8.3))(eslint@9.31.0(jiti@2.4.2))(typescript@5.8.3)
+      '@typescript-eslint/parser':
+        specifier: ^8.38.0
+        version: 8.38.0(eslint@9.31.0(jiti@2.4.2))(typescript@5.8.3)
+      '@typescript-eslint/scope-manager':
+        specifier: ^8.38.0
+        version: 8.38.0
+      '@typescript-eslint/types':
+        specifier: ^8.38.0
+        version: 8.38.0
+      '@typescript-eslint/utils':
+        specifier: ^8.38.0
+        version: 8.38.0(eslint@9.31.0(jiti@2.4.2))(typescript@5.8.3)
+      eslint:
+        specifier: ^9.31.0
+        version: 9.31.0(jiti@2.4.2)
+      eslint-config-typescript:
+        specifier: ^3.0.0
+        version: 3.0.0(@typescript-eslint/eslint-plugin@8.38.0(@typescript-eslint/parser@8.38.0(eslint@9.31.0(jiti@2.4.2))(typescript@5.8.3))(eslint@9.31.0(jiti@2.4.2))(typescript@5.8.3))(@typescript-eslint/parser@8.38.0(eslint@9.31.0(jiti@2.4.2))(typescript@5.8.3))(eslint@9.31.0(jiti@2.4.2))(typescript@5.8.3)
+      eslint-plugin-es:
+        specifier: ^4.1.0
+        version: 4.1.0(eslint@9.31.0(jiti@2.4.2))
+      eslint-plugin-es-x:
+        specifier: ^9.0.0
+        version: 9.0.0(eslint@9.31.0(jiti@2.4.2))
+      eslint-plugin-eslint-plugin:
+        specifier: ^6.5.0
+        version: 6.5.0(eslint@9.31.0(jiti@2.4.2))
+      eslint-plugin-import:
+        specifier: ^2.32.0
+        version: 2.32.0(@typescript-eslint/parser@8.38.0(eslint@9.31.0(jiti@2.4.2))(typescript@5.8.3))(eslint@9.31.0(jiti@2.4.2))
+      eslint-plugin-json:
+        specifier: ^4.0.1
+        version: 4.0.1
+      eslint-plugin-jsx-a11y:
+        specifier: ^6.10.2
+        version: 6.10.2(eslint@9.31.0(jiti@2.4.2))
+      eslint-plugin-n:
+        specifier: ^17.21.0
+        version: 17.21.0(eslint@9.31.0(jiti@2.4.2))(typescript@5.8.3)
+      eslint-plugin-optimize-regex:
+        specifier: ^1.2.1
+        version: 1.2.1
+      eslint-plugin-oxlint:
+        specifier: ^1.8.0
+        version: 1.8.0
+      eslint-plugin-promise:
+        specifier: ^7.2.1
+        version: 7.2.1(eslint@9.31.0(jiti@2.4.2))
+      eslint-plugin-security:
+        specifier: ^3.0.1
+        version: 3.0.1
+      globals:
+        specifier: ^16.3.0
+        version: 16.3.0
+      knip:
+        specifier: ^5.62.0
+        version: 5.62.0(@types/node@24.1.0)(typescript@5.8.3)
+      oxlint:
+        specifier: 1.8.0
+        version: 1.8.0
+      typescript:
+        specifier: ^5.8.3
+        version: 5.8.3
+    optionalDependencies:
+      '@preact/signals-react':
+        specifier: ^3.2.1
+        version: 3.2.1(react@19.1.0)
+      react-native:
+        specifier: ^0.79.5
+        version: 0.79.5(@babel/core@7.28.0)(@types/react@19.1.8)(bufferutil@4.0.9)(react@19.1.0)(utf-8-validate@5.0.10)
+
   packages/eslint-plugin-joi:
     devDependencies:
       '@biomejs/biome':

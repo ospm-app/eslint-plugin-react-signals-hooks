@@ -1,4 +1,5 @@
-import { ESLintUtils } from "@typescript-eslint/utils";
+/** biome-ignore-all assist/source/organizeImports: off */
+import { AST_NODE_TYPES, ESLintUtils } from "@typescript-eslint/utils";
 import type { TSESTree } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
@@ -48,14 +49,26 @@ function getSeverity(
 	options: Option | undefined,
 ): "error" | "warn" | "off" {
 	if (!options?.severity) {
-		return "error"; // Default to 'error' if no severity is specified
+		return "error";
 	}
 
-	// eslint-disable-next-line security/detect-object-injection
-	const severity = options.severity[messageId];
+	switch (messageId) {
+		case "signalInComponent": {
+			return options.severity.signalInComponent ?? "error";
+		}
 
-	// Default to 'error' if no severity is specified for this messageId
-	return severity ?? "error";
+		case "computedInComponent": {
+			return options.severity.computedInComponent ?? "error";
+		}
+
+		case "exportedSignal": {
+			return options.severity.exportedSignal ?? "error";
+		}
+
+		default: {
+			return "error";
+		}
+	}
 }
 
 const componentStack: Array<ComponentStackItem> = [];
@@ -223,7 +236,7 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 					isComponent:
 						"id" in node &&
 						node.id !== null &&
-						node.id.type === "Identifier" &&
+						node.id.type === AST_NODE_TYPES.Identifier &&
 						/^[A-Z]/.test(node.id.name),
 					isHook:
 						typeof option?.customHookPattern === "string" &&
@@ -252,7 +265,7 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 					isComponent:
 						"id" in node &&
 						node.id !== null &&
-						node.id.type === "Identifier" &&
+						node.id.type === AST_NODE_TYPES.Identifier &&
 						/^[A-Z]/.test(node.id.name),
 					isHook:
 						typeof option?.customHookPattern === "string" &&
@@ -281,7 +294,7 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 					isComponent:
 						"id" in node &&
 						node.id !== null &&
-						node.id.type === "Identifier" &&
+						node.id.type === AST_NODE_TYPES.Identifier &&
 						/^[A-Z]/.test(node.id.name),
 					isHook:
 						typeof option?.customHookPattern === "string" &&
@@ -314,7 +327,7 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 							typeof node.id === "object" &&
 							node.id !== null &&
 							"type" in node.id &&
-							node.id.type === "Identifier" &&
+							node.id.type === AST_NODE_TYPES.Identifier &&
 							"name" in node.id &&
 							typeof node.id.name === "string" &&
 							/^[A-Z]/.test(node.id.name),
@@ -351,7 +364,7 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 			// Check signal creation
 			CallExpression(node: TSESTree.CallExpression): void {
 				if (
-					node.callee.type === "Identifier"
+					node.callee.type === AST_NODE_TYPES.Identifier
 						? node.callee.name === "signal" || node.callee.name === "computed"
 						: false
 				) {
@@ -386,7 +399,7 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 						// Check for signal creation in components
 						if (isComponent) {
 							const isComputed =
-								node.callee.type === "Identifier" &&
+								node.callee.type === AST_NODE_TYPES.Identifier &&
 								node.callee.name === "computed";
 
 							if (isComputed && option?.allowComputedInComponents === true) {
@@ -425,11 +438,11 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 					return;
 				}
 
-				if (node.declaration?.type === "VariableDeclaration") {
+				if (node.declaration?.type === AST_NODE_TYPES.VariableDeclaration) {
 					for (const decl of node.declaration.declarations) {
 						if (
-							decl.init?.type === "CallExpression" &&
-							decl.init.callee.type === "Identifier"
+							decl.init?.type === AST_NODE_TYPES.CallExpression &&
+							decl.init.callee.type === AST_NODE_TYPES.Identifier
 								? decl.init.callee.name === "signal" ||
 									decl.init.callee.name === "computed"
 								: false

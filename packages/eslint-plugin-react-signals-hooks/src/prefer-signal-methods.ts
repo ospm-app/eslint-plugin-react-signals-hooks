@@ -3,6 +3,7 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
@@ -46,9 +47,9 @@ function isInDependencyArray(node: TSESTree.Node): boolean {
 	while (current.parent) {
 		current = current.parent;
 		if (
-			current.type === "ArrayExpression" &&
-			current.parent.type === "CallExpression" &&
-			current.parent.callee.type === "Identifier" &&
+			current.type === AST_NODE_TYPES.ArrayExpression &&
+			current.parent.type === AST_NODE_TYPES.CallExpression &&
+			current.parent.callee.type === AST_NODE_TYPES.Identifier &&
 			current.parent.callee.name === "useEffect"
 		) {
 			return true;
@@ -62,7 +63,10 @@ function isInJSXContext(node: TSESTree.Node): boolean {
 	let parent: TSESTree.Node | undefined = node.parent;
 
 	while (parent) {
-		if (parent.type === "JSXElement" || parent.type === "JSXFragment") {
+		if (
+			parent.type === AST_NODE_TYPES.JSXElement ||
+			parent.type === AST_NODE_TYPES.JSXFragment
+		) {
 			return true;
 		}
 
@@ -85,10 +89,27 @@ function getSeverity(
 		return "error";
 	}
 
-	// eslint-disable-next-line security/detect-object-injection
-	const severity = options.severity[messageId];
+	switch (messageId) {
+		case "usePeekInEffect": {
+			return options.severity.usePeekInEffect ?? "error";
+		}
 
-	return severity ?? "error";
+		case "useValueInJSX": {
+			return options.severity.useValueInJSX ?? "error";
+		}
+
+		case "preferDirectSignalUsage": {
+			return options.severity.preferDirectSignalUsage ?? "error";
+		}
+
+		case "preferPeekInNonReactiveContext": {
+			return options.severity.preferPeekInNonReactiveContext ?? "error";
+		}
+
+		default: {
+			return "error";
+		}
+	}
 }
 
 export const preferSignalMethodsRule = ESLintUtils.RuleCreator(
@@ -246,7 +267,7 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator(
 			): void {
 				if (
 					!(
-						node.type === "Identifier" &&
+						node.type === AST_NODE_TYPES.Identifier &&
 						(node.name.endsWith("Signal") || node.name.endsWith("signal"))
 					)
 				) {
@@ -255,7 +276,7 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator(
 
 				// Handle direct signal usage (not a member expression)
 				if (
-					node.parent.type !== "MemberExpression" ||
+					node.parent.type !== AST_NODE_TYPES.MemberExpression ||
 					node.parent.object !== node
 				) {
 					if (isInEffect && !isInDependencyArray(node)) {
@@ -343,7 +364,9 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator(
 						"preferPeekInNonReactiveContext",
 						option,
 					);
-					if (severity === "off") return;
+					if (severity === "off") {
+						return;
+					}
 
 					context.report({
 						node: node.parent.property,
