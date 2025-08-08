@@ -2775,9 +2775,7 @@ function visitFunctionWithDependencies(
           debugLog(
             '[react-signals-hooks/exhaustive-deps][debug] gatherDeps:promoteIdentifierToMember',
             {
-              // dependencyNode is still the original Identifier here
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-              base: (dependencyNode as TSESTree.Identifier).name,
+              base: dependencyNode.name,
               promoted: analyzePropertyChain(outermost, optionalChains, context, perfKey),
             }
           );
@@ -3115,15 +3113,28 @@ function visitFunctionWithDependencies(
         return false;
       }
 
-      if (
-        typeof depKey === 'string' &&
-        depKey.startsWith(`${reference.identifier.name}.current`) &&
-        isUseRefVariable(def)
-      ) {
-        debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:skip-ref-current', {
-          depKey,
-        });
-        continue;
+      if (typeof depKey === 'string') {
+        const isCurrentAccess =
+          depKey.startsWith(`${reference.identifier.name}.current`) ||
+          depKey.startsWith(`${reference.identifier.name}?.current`);
+
+        // Skip dependencies for React refs:
+        // - Accesses to `.current` (including optional chaining)
+        // - Passing/using the ref object identity itself (stable)
+        const isRefNameHeuristic = /(?:Ref|ref)$/.test(reference.identifier.name);
+        const isRefLike = isUseRefVariable(def) || isRefTypeAnnotated(def) || isRefNameHeuristic;
+
+        if (isRefLike && (isCurrentAccess || depKey === reference.identifier.name)) {
+          debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:skip-ref-like', {
+            depKey,
+            baseName: reference.identifier.name,
+            isCurrentAccess,
+            isBareRef: depKey === reference.identifier.name,
+            isRefNameHeuristic,
+          });
+
+          continue;
+        }
       }
 
       if (
