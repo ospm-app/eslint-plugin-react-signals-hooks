@@ -2991,6 +2991,56 @@ function visitFunctionWithDependencies(
         // @ts-expect-error reading isComputedAssignmentOnly to Reference
         reference.isComputedAssignmentOnly === true;
 
+      // Helper: detect if a variable was created via useRef/React.useRef
+      function isUseRefVariable(definition: Definition | undefined): boolean {
+        if (!definition || definition.type !== 'Variable') {
+          return false;
+        }
+
+        const varDecl = definition.node as TSESTree.VariableDeclarator;
+
+        let init = varDecl.init;
+
+        if (init === null) {
+          return false;
+        }
+
+        while (init.type === AST_NODE_TYPES.TSAsExpression) {
+          init = init.expression;
+        }
+
+        if (init.type === AST_NODE_TYPES.CallExpression) {
+          const callee = init.callee;
+
+          if (callee.type === AST_NODE_TYPES.Identifier) {
+            return callee.name === 'useRef';
+          }
+
+          if (
+            callee.type === AST_NODE_TYPES.MemberExpression &&
+            !callee.computed &&
+            callee.property.type === AST_NODE_TYPES.Identifier &&
+            callee.property.name === 'useRef' &&
+            callee.object.type === AST_NODE_TYPES.Identifier &&
+            callee.object.name === 'React'
+          ) {
+            return true;
+          }
+        }
+
+        return false;
+      }
+
+      // Ignore dependencies that are ref.current[...] (or ref.current) when base is a useRef var
+      // We can safely rely on `dependency` string starting with `${identifier}.current` for such cases
+      if (
+        typeof dependency === 'string' &&
+        dependency.startsWith(`${reference.identifier.name}.current`) &&
+        isUseRefVariable(def)
+      ) {
+        continue;
+      }
+
       if (dependencies.has(dependency)) {
         debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:update', {
           dependency,
