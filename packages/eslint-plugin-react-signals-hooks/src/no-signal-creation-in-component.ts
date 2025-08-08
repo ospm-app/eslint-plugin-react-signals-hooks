@@ -1,9 +1,9 @@
 /** biome-ignore-all assist/source/organizeImports: off */
 import {
-	AST_NODE_TYPES,
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type {
 	SourceCode,
@@ -413,7 +413,7 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator(
 				}
 			},
 
-			CallExpression(node: TSESTree.CallExpression): void {
+			[AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
 				const wasInEffect = inEffect;
 
 				if (
@@ -473,16 +473,13 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator(
 											return;
 										}
 
-										// Add the signal to the top of the file
 										yield fixer.insertTextBefore(
 											firstNode,
 											`const ${varName} = ${signalName}(${signalValue});${newLine}${newLine}`,
 										);
 
-										// Replace the original signal creation with the variable name
 										yield fixer.replaceText(node, varName);
 
-										// Handle comments if any
 										const comments = getLeadingCommentsText(node, sourceCode);
 
 										if (comments !== null) {
@@ -555,7 +552,6 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator(
 									*fix(
 										fixer: TSESLint.RuleFixer,
 									): Generator<TSESLint.RuleFix, void, unknown> {
-										// Find the last import or the start of the file
 										const lastImport = sourceCode.ast.body
 											.slice()
 											.reverse()
@@ -580,16 +576,13 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator(
 											? "\r\n"
 											: "\n";
 
-										// Add the new custom hook after the last import
 										yield fixer.insertTextAfterRange(
 											[insertPosition, insertPosition],
 											`${newLine}function ${hookName}() {${newLine}  return ${signalName}(${signalValue});${newLine}}${newLine}${newLine}`,
 										);
 
-										// Replace the signal creation with a call to the hook
 										yield fixer.replaceText(node, `${hookName}()`);
 
-										// Handle comments if any
 										const comments = getLeadingCommentsText(node, sourceCode);
 
 										if (comments !== null) {
@@ -608,7 +601,7 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator(
 				}
 
 				if (
-					node.callee.type === "Identifier"
+					node.callee.type === AST_NODE_TYPES.Identifier
 						? [
 								"useEffect",
 								"useCallback",
@@ -641,7 +634,7 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator(
 				}
 			},
 
-			"Program:exit"(_node: TSESTree.Program): void {
+			[`${AST_NODE_TYPES.Program}:exit`](_node: TSESTree.Program): void {
 				startPhase(perfKey, "programExit");
 
 				try {

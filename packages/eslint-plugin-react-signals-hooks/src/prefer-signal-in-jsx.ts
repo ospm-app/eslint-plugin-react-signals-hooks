@@ -1,9 +1,9 @@
 /** biome-ignore-all assist/source/organizeImports: off */
 import {
-	AST_NODE_TYPES,
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 

@@ -237,10 +237,8 @@ function processBlock(
 
 	const messageId = "useBatch";
 
-	const severity = getSeverity(messageId, context.options[0]);
-
 	if (
-		severity !== "off" &&
+		getSeverity(messageId, context.options[0]) !== "off" &&
 		updatesInScope.length > 0 &&
 		!isInsideBatchCall(firstNode, context)
 	) {

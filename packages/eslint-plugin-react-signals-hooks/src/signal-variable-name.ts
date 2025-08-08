@@ -5,6 +5,7 @@ import {
 	type TSESTree,
 	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
+import type { Scope } from "@typescript-eslint/utils/ts-eslint";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
 import { PerformanceOperations } from "./utils/performance-constants.js";
@@ -67,8 +68,6 @@ function isValidSignalName(name: string): boolean {
 		return false;
 	}
 
-	// Only forbid 'use' prefix when followed by a capital letter
-	// (e.g., 'useSignal' is invalid, but 'userSignal' is valid)
 	if (
 		name.startsWith("use") &&
 		name.length > 2 &&
@@ -84,7 +83,7 @@ function isValidSignalName(name: string): boolean {
 function getFixedName(originalName: string): string {
 	let fixedName = originalName;
 
-	if (fixedName.startsWith("use")) {
+	if (fixedName.startsWith("use") && fixedName.length > 3) {
 		fixedName = fixedName.slice(3);
 	}
 
@@ -97,6 +96,60 @@ function getFixedName(originalName: string): string {
 	}
 
 	return fixedName;
+}
+
+function findAllReferences(
+	node: TSESTree.Node,
+	context: Readonly<RuleContext<MessageIds, Options>>,
+): {
+	variableName: string;
+	references: Array<TSESTree.Identifier | TSESTree.JSXIdentifier>;
+} | null {
+	if (
+		node.type !== AST_NODE_TYPES.VariableDeclarator ||
+		node.id.type !== AST_NODE_TYPES.Identifier
+	) {
+		return null;
+	}
+
+	const variableName = node.id.name;
+
+	const references: Array<TSESTree.Identifier | TSESTree.JSXIdentifier> = [];
+
+	const scopeManager = context.sourceCode.scopeManager;
+
+	if (!scopeManager) {
+		return null;
+	}
+
+	const scope = scopeManager.acquire(node);
+
+	if (!scope) {
+		return null;
+	}
+
+	let currentScope: Scope.Scope | null = scope;
+
+	while (currentScope) {
+		const variable = currentScope.set.get(variableName);
+
+		if (variable) {
+			for (const ref of variable.references) {
+				if (
+					variable.identifiers[0]?.range &&
+					ref.identifier.range[0] >= variable.identifiers[0].range[0]
+				) {
+					references.push(ref.identifier);
+				}
+			}
+
+			return { variableName, references };
+		}
+
+		currentScope = currentScope.upper;
+	}
+
+	return null;
 }
 
 const ruleName = "signal-variable-name";
@@ -227,7 +280,9 @@ export const signalVariableNameRule = ESLintUtils.RuleCreator(
 				);
 			},
 
-			VariableDeclarator(node: TSESTree.VariableDeclarator): void {
+			[AST_NODE_TYPES.VariableDeclarator](
+				node: TSESTree.VariableDeclarator,
+			): void {
 				if (
 					node.id.type === AST_NODE_TYPES.Identifier &&
 					node.init &&
@@ -258,8 +313,44 @@ export const signalVariableNameRule = ESLintUtils.RuleCreator(
 								data: {
 									name: variableName,
 								},
-								fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-									return fixer.replaceText(node.id, getFixedName(variableName));
+								fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+									const refs = findAllReferences(node, context);
+
+									if (!refs) {
+										return null;
+									}
+
+									const fixedName = getFixedName(refs.variableName);
+
+									if (fixedName === refs.variableName) {
+										return null;
+									}
+
+									const fixes: Array<TSESLint.RuleFix> = [];
+
+									fixes.push(fixer.replaceText(node.id, fixedName));
+
+									refs.references.forEach(
+										(
+											ref: TSESTree.Identifier | TSESTree.JSXIdentifier,
+										): void => {
+											if (ref === node.id) {
+												return;
+											}
+
+											if (
+												ref.parent.type === AST_NODE_TYPES.MemberExpression &&
+												ref.parent.property === ref &&
+												!ref.parent.computed
+											) {
+												return;
+											}
+
+											fixes.push(fixer.replaceText(ref, fixedName));
+										},
+									);
+
+									return fixes.length > 0 ? fixes : null;
 								},
 							});
 						}
@@ -267,8 +358,7 @@ export const signalVariableNameRule = ESLintUtils.RuleCreator(
 				}
 			},
 
-			// Clean up
-			"Program:exit"(): void {
+			[`${AST_NODE_TYPES.Program}:exit`](): void {
 				startPhase(perfKey, "programExit");
 
 				try {

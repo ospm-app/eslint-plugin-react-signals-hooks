@@ -1,10 +1,10 @@
 // FIXED by @ospm/eslint-plugin-react-signals-hooks
 /** biome-ignore-all assist/source/organizeImports: off */
 import {
-	AST_NODE_TYPES,
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
@@ -69,7 +69,7 @@ function getAssignmentType(
 		return "memberAssignment";
 	}
 
-	if (node.left.type === "Identifier") {
+	if (node.left.type === AST_NODE_TYPES.Identifier) {
 		return "identifierAssignment";
 	}
 
@@ -86,7 +86,6 @@ function trackIdentifier(
 	resolvedIdentifiers.set(name, count + 1);
 
 	if (count === 0) {
-		// Only count unique identifier resolutions
 		trackOperation(perfKey, PerformanceOperations.identifierResolution);
 	}
 }
@@ -534,9 +533,7 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 						);
 					}) === true
 				) {
-					const severity = getSeverity("signalValueAssignment", option);
-
-					if (severity === "off") {
+					if (getSeverity("signalValueAssignment", option) === "off") {
 						return;
 					}
 
@@ -590,9 +587,7 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 						);
 					}) === true
 				) {
-					const severity = getSeverity("signalArrayIndexAssignment", option);
-
-					if (severity !== "off") {
+					if (getSeverity("signalArrayIndexAssignment", option) !== "off") {
 						context.report({
 							node,
 							messageId: "signalArrayIndexAssignment",
@@ -638,25 +633,24 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 								"name" in node.left.object.object &&
 								node.left.object.object.name === name)
 						);
-					}) === true
+					}) === true &&
+					getSeverity("signalNestedPropertyAssignment", option) !== "off"
 				) {
-					if (getSeverity("signalNestedPropertyAssignment", option) !== "off") {
-						context.report({
-							node,
-							messageId: "signalNestedPropertyAssignment",
-							suggest: [
-								{
-									messageId: "suggestUseEffect",
-									fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-										return fixer.replaceText(
-											node,
-											`useEffect(() => { ${context.sourceCode.getText(node)} }, [])`,
-										);
-									},
+					context.report({
+						node,
+						messageId: "signalNestedPropertyAssignment",
+						suggest: [
+							{
+								messageId: "suggestUseEffect",
+								fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+									return fixer.replaceText(
+										node,
+										`useEffect(() => { ${context.sourceCode.getText(node)} }, [])`,
+									);
 								},
-							],
-						});
-					}
+							},
+						],
+					});
 				}
 			},
 
@@ -692,9 +686,7 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 						);
 					}) === true
 				) {
-					const severity = getSeverity("signalValueAssignment", option);
-
-					if (severity === "off") {
+					if (getSeverity("signalValueAssignment", option) === "off") {
 						return;
 					}
 

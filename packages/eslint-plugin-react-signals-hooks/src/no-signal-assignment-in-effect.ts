@@ -4,8 +4,8 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
-import { AST_NODE_TYPES } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
 import { PerformanceOperations } from "./utils/performance-constants.js";
@@ -28,29 +28,54 @@ function getSeverity(
 	options: Option | undefined,
 ): "error" | "warn" | "off" {
 	if (!options?.severity) {
-		return "error"; // Default to 'error' if no severity is specified
+		return "error";
 	}
 
-	// Handle performance limit exceeded as a special case
 	if (messageId === "performanceLimitExceeded") {
-		return "warn"; // Default to 'warn' for performance issues
+		return "warn";
 	}
 
-	// Handle specific message IDs with their corresponding severity settings
 	switch (messageId) {
-		case "avoidSignalAssignmentInEffect":
-			return options.severity.signalAssignmentInEffect ?? "error";
-		case "avoidSignalAssignmentInLayoutEffect":
-			return options.severity.signalAssignmentInLayoutEffect ?? "error";
-		default:
-			// Default to 'error' for any other message IDs
+		case "avoidSignalAssignmentInEffect": {
+			return options.severity.avoidSignalAssignmentInEffect ?? "error";
+		}
+		case "suggestUseSignalsEffect": {
+			return options.severity.suggestUseSignalsEffect ?? "error";
+		}
+		case "suggestUseSignalsLayoutEffect": {
+			return options.severity.suggestUseSignalsLayoutEffect ?? "error";
+		}
+		case "missingDependencies": {
+			return options.severity.missingDependencies ?? "error";
+		}
+
+		case "unnecessaryDependencies": {
+			return options.severity.unnecessaryDependencies ?? "error";
+		}
+
+		case "duplicateDependencies": {
+			return options.severity.duplicateDependencies ?? "error";
+		}
+
+		case "avoidSignalAssignmentInLayoutEffect": {
+			return options.severity.avoidSignalAssignmentInLayoutEffect ?? "error";
+		}
+
+		default: {
 			return "error";
+		}
 	}
 }
 
 type Severity = {
-	signalAssignmentInEffect?: "error" | "warn" | "off";
-	signalAssignmentInLayoutEffect?: "error" | "warn" | "off";
+	avoidSignalAssignmentInEffect?: "error" | "warn" | "off";
+	suggestUseSignalsEffect?: "error" | "warn" | "off";
+	suggestUseSignalsLayoutEffect?: "error" | "warn" | "off";
+	performanceLimitExceeded?: "error" | "warn" | "off";
+	missingDependencies?: "error" | "warn" | "off";
+	unnecessaryDependencies?: "error" | "warn" | "off";
+	duplicateDependencies?: "error" | "warn" | "off";
+	avoidSignalAssignmentInLayoutEffect?: "error" | "warn" | "off";
 };
 
 type Option = {
@@ -97,7 +122,6 @@ function isSignalAssignment(
 	try {
 		trackOperation(perfKey, PerformanceOperations.signalCheck);
 
-		// Check if this is a property access like `something.value`
 		if (
 			!node.computed &&
 			node.property.type === AST_NODE_TYPES.Identifier &&
@@ -107,12 +131,10 @@ function isSignalAssignment(
 			const object = node.object;
 			const cacheKey = `${object.name}:${signalNames.join(",")}`;
 
-			// Check if we've already identified this as a signal variable
 			if (signalVariables.has(object.name)) {
 				return true;
 			}
 
-			// Check cache next
 			if (signalNameCache.has(cacheKey)) {
 				const cached = signalNameCache.get(cacheKey) ?? false;
 
@@ -123,7 +145,6 @@ function isSignalAssignment(
 				return cached;
 			}
 
-			// Check if the variable name matches any signal names
 			const isSignal = signalNames.some((name: string): boolean => {
 				return object.name.endsWith(name);
 			});
@@ -140,10 +161,9 @@ function isSignalAssignment(
 		return false;
 	} catch (error: unknown) {
 		if (error instanceof PerformanceLimitExceededError) {
-			throw error; // Re-throw to be handled by the caller
+			throw error;
 		}
 
-		// For other errors, assume it's not a signal assignment
 		return false;
 	}
 }
@@ -155,12 +175,10 @@ function isEffectHook(
 	try {
 		trackOperation(perfKey, PerformanceOperations.hookCheck);
 
-		// Must be an identifier (not a member expression)
 		if (node.callee.type !== AST_NODE_TYPES.Identifier) {
 			return null;
 		}
 
-		// Check if this is one of our target effect hooks
 		if (["useEffect", "useLayoutEffect"].includes(node.callee.name)) {
 			return {
 				isEffect: true,
@@ -171,10 +189,9 @@ function isEffectHook(
 		return null;
 	} catch (error: unknown) {
 		if (error instanceof PerformanceLimitExceededError) {
-			throw error; // Re-throw to be handled by the caller
+			throw error;
 		}
 
-		// For other errors, assume it's not an effect hook
 		return null;
 	}
 }
@@ -187,7 +204,6 @@ function visitNode(
 	signalVariables: Set<string>,
 	perfKey: string,
 ): void {
-	// Track variable declarations that might be signals
 	if (
 		node.type === AST_NODE_TYPES.VariableDeclarator &&
 		node.init?.type === AST_NODE_TYPES.CallExpression &&
@@ -212,9 +228,8 @@ function visitNode(
 	try {
 		trackOperation(perfKey, PerformanceOperations.nodeProcessing);
 
-		// Check for signal assignments
 		if (
-			node.type === "AssignmentExpression" &&
+			node.type === AST_NODE_TYPES.AssignmentExpression &&
 			node.operator === "=" &&
 			isSignalAssignment(
 				node.left,
@@ -230,15 +245,13 @@ function visitNode(
 				currentEffect.signalAssignments.push(node.left);
 			}
 
-			return; // No need to visit children of an assignment
+			return;
 		}
 
-		// Only process object values that might contain AST nodes
 		if (typeof node !== "object") {
 			return;
 		}
 
-		// Process child nodes, skipping known non-node properties
 		for (const key in node) {
 			if (
 				key === "parent" ||
@@ -251,11 +264,11 @@ function visitNode(
 
 			const value = node[key as "parent" | "loc" | "range" | "type"];
 
-			// Array.isArray produces incorrect item type number, which down the line converts to never
 			if (Array.isArray(value)) {
 				for (const item of value) {
 					if (typeof item === "object" && "type" in item) {
 						visitNode(
+							// Array.isArray produces incorrect item type number, which down the line converts to never
 							item as TSESTree.Node,
 							effectStack,
 							signalNames,
@@ -267,7 +280,7 @@ function visitNode(
 				}
 			} else if (typeof value === "object" && "type" in value) {
 				visitNode(
-					value as TSESTree.Node,
+					value,
 					effectStack,
 					signalNames,
 					signalNameCache,
@@ -278,9 +291,9 @@ function visitNode(
 		}
 	} catch (error: unknown) {
 		if (error instanceof PerformanceLimitExceededError) {
-			throw error; // Re-throw to be handled by the caller
+			throw error;
 		}
-		// For other errors, assume it's not an effect hook
+
 		return;
 	}
 }
@@ -340,18 +353,54 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator(
 					severity: {
 						type: "object",
 						properties: {
-							signalAssignmentInEffect: {
+							avoidSignalAssignmentInEffect: {
 								type: "string",
 								enum: ["off", "warn", "error"],
 								default: "error",
 								description: "Severity for signal assignments in useEffect",
 							},
-							signalAssignmentInLayoutEffect: {
+							avoidSignalAssignmentInLayoutEffect: {
 								type: "string",
 								enum: ["off", "warn", "error"],
 								default: "error",
 								description:
 									"Severity for signal assignments in useLayoutEffect",
+							},
+							missingDependencies: {
+								type: "string",
+								enum: ["off", "warn", "error"],
+								default: "error",
+								description: "Severity for missing dependencies",
+							},
+							unnecessaryDependencies: {
+								type: "string",
+								enum: ["off", "warn", "error"],
+								default: "error",
+								description: "Severity for unnecessary dependencies",
+							},
+							duplicateDependencies: {
+								type: "string",
+								enum: ["off", "warn", "error"],
+								default: "error",
+								description: "Severity for duplicate dependencies",
+							},
+							suggestUseSignalsEffect: {
+								type: "string",
+								enum: ["off", "warn", "error"],
+								default: "error",
+								description: "Severity for suggest useSignalsEffect",
+							},
+							suggestUseSignalsLayoutEffect: {
+								type: "string",
+								enum: ["off", "warn", "error"],
+								default: "error",
+								description: "Severity for suggest useSignalsLayoutEffect",
+							},
+							performanceLimitExceeded: {
+								type: "string",
+								enum: ["off", "warn", "error"],
+								default: "error",
+								description: "Severity for performance limit exceeded",
 							},
 						},
 						additionalProperties: false,
@@ -386,8 +435,14 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator(
 			signalNames: ["signal", "useSignal", "createSignal"],
 			allowedPatterns: [],
 			severity: {
-				signalAssignmentInEffect: "error",
-				signalAssignmentInLayoutEffect: "error",
+				avoidSignalAssignmentInEffect: "error",
+				avoidSignalAssignmentInLayoutEffect: "error",
+				missingDependencies: "error",
+				unnecessaryDependencies: "error",
+				duplicateDependencies: "error",
+				suggestUseSignalsEffect: "error",
+				suggestUseSignalsLayoutEffect: "error",
+				performanceLimitExceeded: "error",
 			},
 			performance: DEFAULT_PERFORMANCE_BUDGET,
 		},
@@ -531,9 +586,7 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator(
 						if (error instanceof PerformanceLimitExceededError) {
 							const messageId = "performanceLimitExceeded";
 
-							const severity = getSeverity(messageId, option);
-
-							if (severity !== "off") {
+							if (getSeverity(messageId, option) !== "off") {
 								context.report({
 									node,
 									messageId,
@@ -783,9 +836,9 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator(
 
 					const messageId = currentEffect.isLayoutEffect
 						? "avoidSignalAssignmentInLayoutEffect"
-						: ("avoidSignalAssignmentInEffect" as const);
-					const severity = getSeverity(messageId, option);
-					if (severity !== "off") {
+						: "avoidSignalAssignmentInEffect";
+
+					if (getSeverity(messageId, option) !== "off") {
 						context.report({
 							node,
 							messageId,
@@ -836,9 +889,7 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator(
 						if (finalMetrics.exceededBudget === true) {
 							const messageId = "performanceLimitExceeded" as const;
 
-							const severity = getSeverity(messageId, option);
-
-							if (severity !== "off") {
+							if (getSeverity(messageId, option) !== "off") {
 								context.report({
 									node,
 									messageId,

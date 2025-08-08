@@ -555,12 +555,12 @@ function collectRecommendations({
 
 					staleAssignments.add(key);
 
-					const severity = getSeverity(
-						"useEffectEventInDependencyArray",
-						context.options[0],
-					);
-
-					if (severity !== "off") {
+					if (
+						getSeverity(
+							"useEffectEventInDependencyArray",
+							context.options[0],
+						) !== "off"
+					) {
 						context.report({
 							node: reference.writeExpr ?? reference.identifier,
 							data: {
@@ -1371,24 +1371,24 @@ function getConstructionExpressionType(
 	node: TSESTree.Expression,
 ): string | null {
 	switch (node.type) {
-		case "ObjectExpression": {
+		case AST_NODE_TYPES.ObjectExpression: {
 			return "object";
 		}
 
-		case "ArrayExpression": {
+		case AST_NODE_TYPES.ArrayExpression: {
 			return "array";
 		}
 
-		case "ArrowFunctionExpression":
-		case "FunctionExpression": {
+		case AST_NODE_TYPES.ArrowFunctionExpression:
+		case AST_NODE_TYPES.FunctionExpression: {
 			return "function";
 		}
 
-		case "ClassExpression": {
+		case AST_NODE_TYPES.ClassExpression: {
 			return "class";
 		}
 
-		case "ConditionalExpression": {
+		case AST_NODE_TYPES.ConditionalExpression: {
 			if (
 				getConstructionExpressionType(node.consequent) != null ||
 				getConstructionExpressionType(node.alternate) != null
@@ -1399,7 +1399,7 @@ function getConstructionExpressionType(
 			return null;
 		}
 
-		case "LogicalExpression": {
+		case AST_NODE_TYPES.LogicalExpression: {
 			if (
 				getConstructionExpressionType(node.left) != null ||
 				getConstructionExpressionType(node.right) != null
@@ -1410,15 +1410,15 @@ function getConstructionExpressionType(
 			return null;
 		}
 
-		case "JSXFragment": {
+		case AST_NODE_TYPES.JSXFragment: {
 			return "JSX fragment";
 		}
 
-		case "JSXElement": {
+		case AST_NODE_TYPES.JSXElement: {
 			return "JSX element";
 		}
 
-		case "AssignmentExpression": {
+		case AST_NODE_TYPES.AssignmentExpression: {
 			if (getConstructionExpressionType(node.right) != null) {
 				return "assignment expression";
 			}
@@ -1426,11 +1426,11 @@ function getConstructionExpressionType(
 			return null;
 		}
 
-		case "NewExpression": {
+		case AST_NODE_TYPES.NewExpression: {
 			return "object construction";
 		}
 
-		case "Literal": {
+		case AST_NODE_TYPES.Literal: {
 			if (node.value instanceof RegExp) {
 				return "regular expression";
 			}
@@ -1438,7 +1438,7 @@ function getConstructionExpressionType(
 			return null;
 		}
 
-		case "TSAsExpression": {
+		case AST_NODE_TYPES.TSAsExpression: {
 			return getConstructionExpressionType(node.expression);
 		}
 	}
@@ -1480,8 +1480,8 @@ function scanForConstructions({
 			if (
 				def.type === "Variable" &&
 				// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-				def.node.type === "VariableDeclarator" &&
-				def.node.id.type === "Identifier" &&
+				def.node.type === AST_NODE_TYPES.VariableDeclarator &&
+				def.node.id.type === AST_NODE_TYPES.Identifier &&
 				def.node.init != null
 			) {
 				const constantExpressionType = getConstructionExpressionType(
@@ -1495,12 +1495,15 @@ function scanForConstructions({
 
 			if (
 				def.type === "FunctionName" &&
-				def.node.type === "FunctionDeclaration"
+				def.node.type === AST_NODE_TYPES.FunctionDeclaration
 			) {
 				return [ref, "function"];
 			}
 
-			if (def.type === "ClassName" && def.node.type === "ClassDeclaration") {
+			if (
+				def.type === "ClassName" &&
+				def.node.type === AST_NODE_TYPES.ClassDeclaration
+			) {
 				return [ref, "class"];
 			}
 
@@ -1528,10 +1531,11 @@ function scanForConstructions({
 				currentScope = currentScope.upper;
 			}
 
-			if (currentScope !== scope) {
-				if (!isAncestorNodeOf(declaredDependenciesNode, reference.identifier)) {
-					return true;
-				}
+			if (
+				currentScope !== scope &&
+				!isAncestorNodeOf(declaredDependenciesNode, reference.identifier)
+			) {
+				return true;
 			}
 		}
 
@@ -1575,12 +1579,12 @@ function getDependency(
 	try {
 		trackOperation(perfKey, PerformanceOperations.dependencyCheck);
 
-		if (node.type === "MemberExpression") {
+		if (node.type === AST_NODE_TYPES.MemberExpression) {
 			if (
 				!node.computed &&
-				node.property.type === "Identifier" &&
+				node.property.type === AST_NODE_TYPES.Identifier &&
 				node.property.name === "value" &&
-				node.object.type === "Identifier" &&
+				node.object.type === AST_NODE_TYPES.Identifier &&
 				node.object.name.endsWith("Signal")
 			) {
 				return node;
@@ -1589,27 +1593,33 @@ function getDependency(
 			return node;
 		}
 
-		if (node.type === "Identifier" && isSignalVariable(node, perfKey)) {
+		if (
+			node.type === AST_NODE_TYPES.Identifier &&
+			isSignalVariable(node, perfKey)
+		) {
 			return node;
 		}
 
-		if (node.type === "Identifier" && node.name.endsWith("Signal")) {
+		if (
+			node.type === AST_NODE_TYPES.Identifier &&
+			node.name.endsWith("Signal")
+		) {
 			return node;
 		}
 
-		if (node.type === "JSXExpressionContainer") {
+		if (node.type === AST_NODE_TYPES.JSXExpressionContainer) {
 			return getDependency(node.expression, optionalChains, perfKey);
 		}
 
-		if (node.type === "CallExpression") {
+		if (node.type === AST_NODE_TYPES.CallExpression) {
 			return getDependency(node.callee, optionalChains, perfKey);
 		}
 
-		if (node.type === "ChainExpression") {
+		if (node.type === AST_NODE_TYPES.ChainExpression) {
 			return getDependency(node.expression, optionalChains, perfKey);
 		}
 
-		if (node.type === "TSNonNullExpression") {
+		if (node.type === AST_NODE_TYPES.TSNonNullExpression) {
 			return getDependency(node.expression, optionalChains, perfKey);
 		}
 
@@ -1618,7 +1628,7 @@ function getDependency(
 		if (error instanceof PerformanceLimitExceededError) {
 			trackOperation(perfKey, PerformanceOperations.getDependencyFailed);
 
-			return node; // Return the node as is on performance limit exceeded
+			return node;
 		}
 
 		throw error;
@@ -1646,8 +1656,6 @@ function markNode(
 	} catch (error: unknown) {
 		if (error instanceof PerformanceLimitExceededError) {
 			trackOperation(perfKey, PerformanceOperations.markNodeFailed);
-
-			// Continue execution even if marking fails
 		} else {
 			throw error;
 		}
@@ -1658,10 +1666,10 @@ function getNodeWithoutReactNamespace(
 	node: TSESTree.Expression | TSESTree.Super,
 ): TSESTree.Expression | TSESTree.Identifier | TSESTree.Super {
 	if (
-		node.type === "MemberExpression" &&
-		node.object.type === "Identifier" &&
+		node.type === AST_NODE_TYPES.MemberExpression &&
+		node.object.type === AST_NODE_TYPES.Identifier &&
 		node.object.name === "React" &&
-		node.property.type === "Identifier" &&
+		node.property.type === AST_NODE_TYPES.Identifier &&
 		!node.computed
 	) {
 		return node.property;
@@ -1681,7 +1689,7 @@ function getReactiveHookCallbackIndex(
 ): 0 | -1 | 1 {
 	const node = getNodeWithoutReactNamespace(calleeNode);
 
-	if (node.type !== "Identifier") {
+	if (node.type !== AST_NODE_TYPES.Identifier) {
 		return -1;
 	}
 
@@ -1737,7 +1745,7 @@ function isInsideEffectCleanup(
 		if (curScope.type === "function") {
 			isInReturnedFunction =
 				curScope.block.parent != null &&
-				curScope.block.parent.type === "ReturnStatement";
+				curScope.block.parent.type === AST_NODE_TYPES.ReturnStatement;
 		}
 
 		curScope = curScope.upper;
@@ -1804,16 +1812,14 @@ function visitFunctionWithDependencies(
 	context: TSESLint.RuleContext<MessageIds, Options>,
 	perfKey: string,
 ): void {
-	// Track function analysis
 	startPhase(perfKey, "function-analysis");
 	trackOperation(perfKey, PerformanceOperations.hookCheck);
 
 	try {
 		if (isEffect && node.async === true) {
 			trackOperation(perfKey, PerformanceOperations.effectCheck);
-			const severity = getSeverity("asyncEffect", context.options[0]);
 
-			if (severity === "off") {
+			if (getSeverity("asyncEffect", context.options[0]) === "off") {
 				return;
 			}
 
@@ -2746,12 +2752,9 @@ function visitFunctionWithDependencies(
 			return;
 		}
 
-		const severity = getSeverity(
-			"staleAssignmentDependency",
-			context.options[0],
-		);
-
-		if (severity === "off") {
+		if (
+			getSeverity("staleAssignmentDependency", context.options[0]) === "off"
+		) {
 			return;
 		}
 
@@ -2786,12 +2789,13 @@ function visitFunctionWithDependencies(
 
 					staleAssignments.add(key);
 
-					const severity = getSeverity(
-						"useEffectEventInDependencyArray",
-						context.options[0],
-					);
-
-					if (severity === "off") return;
+					if (
+						getSeverity(
+							"useEffectEventInDependencyArray",
+							context.options[0],
+						) === "off"
+					)
+						return;
 
 					context.report({
 						node: reference.writeExpr ?? reference.identifier,
@@ -2889,10 +2893,7 @@ function visitFunctionWithDependencies(
 			typeof setStateInsideEffectWithoutDeps === "string" &&
 			setStateInsideEffectWithoutDeps !== ""
 		) {
-			// Report a more specific error when setState is used without dependencies
-			const severity = getSeverity("missingDependency", context.options[0]);
-
-			if (severity === "off") {
+			if (getSeverity("missingDependency", context.options[0]) === "off") {
 				return;
 			}
 
@@ -2934,21 +2935,14 @@ function visitFunctionWithDependencies(
 					: [],
 			});
 		} else if (hasDependencies) {
-			// Report a general missing dependencies error
 			const messageId =
 				suggestedDependencies.length > 1
 					? "missingDependencies"
 					: "missingDependency";
 
-			const severity = getSeverity(messageId, context.options[0]);
-
-			if (severity === "off") {
+			if (getSeverity(messageId, context.options[0]) === "off") {
 				return;
 			}
-
-			const hookName = context.sourceCode.getText(
-				"callee" in reactiveHook ? reactiveHook.callee : reactiveHook,
-			);
 
 			context.report({
 				node: reactiveHook,
@@ -2957,7 +2951,9 @@ function visitFunctionWithDependencies(
 						? "missingDependencies"
 						: "missingDependency",
 				data: {
-					hookName,
+					hookName: context.sourceCode.getText(
+						"callee" in reactiveHook ? reactiveHook.callee : reactiveHook,
+					),
 					dependencies: depsText,
 					dependency: suggestedDependencies[0],
 					reason:
@@ -3022,11 +3018,11 @@ function visitFunctionWithDependencies(
 			.filter(([_, dep]): boolean => {
 				return dep.hasReads && dep.isComputedAssignmentOnly !== true;
 			})
-			.map(([key]) => key);
+			.map(([key]): string => {
+				return key;
+			});
 
-		const severity = getSeverity("notArrayLiteral", context.options[0]);
-
-		if (severity === "off") {
+		if (getSeverity("notArrayLiteral", context.options[0]) === "off") {
 			return;
 		}
 
@@ -3073,12 +3069,12 @@ function visitFunctionWithDependencies(
 						declaredDependencyNode.argument,
 					);
 
-					const severity = getSeverity(
-						"spreadElementInDependencyArray",
-						context.options[0],
-					);
-
-					if (severity === "off") {
+					if (
+						getSeverity(
+							"spreadElementInDependencyArray",
+							context.options[0],
+						) === "off"
+					) {
 						return;
 					}
 
@@ -3128,12 +3124,12 @@ function visitFunctionWithDependencies(
 				) {
 					const eventName = context.sourceCode.getText(declaredDependencyNode);
 
-					const severity = getSeverity(
-						"useEffectEventInDependencyArray",
-						context.options[0],
-					);
-
-					if (severity !== "off") {
+					if (
+						getSeverity(
+							"useEffectEventInDependencyArray",
+							context.options[0],
+						) !== "off"
+					) {
 						return;
 					}
 
@@ -3277,12 +3273,10 @@ function visitFunctionWithDependencies(
 								"Move the bind call outside the component or use useCallback.";
 						}
 
-						const severity = getSeverity(
-							"dependencyWithoutSignal",
-							context.options[0],
-						);
-
-						if (severity === "off") {
+						if (
+							getSeverity("dependencyWithoutSignal", context.options[0]) ===
+							"off"
+						) {
 							return;
 						}
 
@@ -3318,12 +3312,10 @@ function visitFunctionWithDependencies(
 								declaredDependencyNode.value != null &&
 								dependencies.has(declaredDependencyNode.value as string)
 							) {
-								const severity = getSeverity(
-									"staleAssignmentLiteral",
-									context.options[0],
-								);
-
-								if (severity === "off") {
+								if (
+									getSeverity("staleAssignmentLiteral", context.options[0]) ===
+									"off"
+								) {
 									return;
 								}
 
@@ -3348,12 +3340,10 @@ function visitFunctionWithDependencies(
 									],
 								});
 							} else {
-								const severity = getSeverity(
-									"staleAssignmentUnstable",
-									context.options[0],
-								);
-
-								if (severity !== "off") {
+								if (
+									getSeverity("staleAssignmentUnstable", context.options[0]) !==
+									"off"
+								) {
 									return;
 								}
 
@@ -3383,12 +3373,10 @@ function visitFunctionWithDependencies(
 								declaredDependencyNode,
 							);
 
-							const severity = getSeverity(
-								"staleAssignmentExpression",
-								context.options[0],
-							);
-
-							if (severity === "off") {
+							if (
+								getSeverity("staleAssignmentExpression", context.options[0]) ===
+								"off"
+							) {
 								return;
 							}
 
@@ -3519,9 +3507,7 @@ function visitFunctionWithDependencies(
 					`${reactiveHookName} Hook (at line ${declaredDependenciesNode.loc.start.line}) ` +
 					`change on every render. ${advice}`;
 
-				const severity = getSeverity("missingDependencies", context.options[0]);
-
-				if (severity === "off") {
+				if (getSeverity("missingDependencies", context.options[0]) === "off") {
 					return;
 				}
 
@@ -3635,9 +3621,7 @@ function visitFunctionWithDependencies(
 						? "unnecessaryDependencies"
 						: "unnecessaryDependency";
 
-				const severity = getSeverity(messageId, context.options[0]);
-
-				if (severity === "off") {
+				if (getSeverity(messageId, context.options[0]) === "off") {
 					return;
 				}
 
@@ -3923,9 +3907,7 @@ function visitFunctionWithDependencies(
 							? "duplicateDependencies"
 							: "duplicateDependency";
 
-					const severity = getSeverity(messageId, context.options[0]);
-
-					if (severity === "off") {
+					if (getSeverity(messageId, context.options[0]) === "off") {
 						return;
 					}
 
@@ -4048,9 +4030,8 @@ function visitFunctionWithDependencies(
 		// Main report
 		const messageId =
 			missingDepsList.length > 1 ? "missingDependencies" : "missingDependency";
-		const severity = getSeverity(messageId, context.options[0]);
 
-		if (severity === "off") {
+		if (getSeverity(messageId, context.options[0]) === "off") {
 			return;
 		}
 
@@ -4134,9 +4115,7 @@ function visitFunctionWithDependencies(
 					? "unnecessaryDependencies"
 					: "unnecessaryDependency";
 
-			const severity = getSeverity(messageId, context.options[0]);
-
-			if (severity !== "off") {
+			if (getSeverity(messageId, context.options[0]) !== "off") {
 				context.report({
 					node: declaredDependenciesNode,
 					messageId,
@@ -4225,9 +4204,7 @@ function visitFunctionWithDependencies(
 			// Add the main report for this dependency
 			const messageId = "unnecessaryDependency";
 
-			const severity = getSeverity(messageId, context.options[0]);
-
-			if (severity !== "off") {
+			if (getSeverity(messageId, context.options[0]) !== "off") {
 				context.report({
 					node: depNode,
 					messageId,
@@ -4322,9 +4299,7 @@ function visitFunctionWithDependencies(
 				? "duplicateDependency"
 				: "duplicateDependencies";
 
-			const severity = getSeverity(messageId, context.options[0]);
-
-			if (severity !== "off") {
+			if (getSeverity(messageId, context.options[0]) !== "off") {
 				context.report({
 					node: declaredDependenciesNode,
 					messageId,
@@ -5003,9 +4978,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator(
 				if (!callback) {
 					const messageId = "missingEffectCallback";
 
-					const severity = getSeverity(messageId, context.options[0]);
-
-					if (severity !== "off") {
+					if (getSeverity(messageId, context.options[0]) !== "off") {
 						context.report({
 							messageId,
 							node: node.callee,
@@ -5028,9 +5001,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator(
 				) {
 					const messageId = "missingEffectCallback";
 
-					const severity = getSeverity(messageId, context.options[0]);
-
-					if (severity !== "off") {
+					if (getSeverity(messageId, context.options[0]) !== "off") {
 						context.report({
 							node: node.callee,
 							data: {
@@ -5066,9 +5037,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator(
 					) {
 						const messageId = "missingDependencies";
 
-						const severity = getSeverity(messageId, context.options[0]);
-
-						if (severity !== "off") {
+						if (getSeverity(messageId, context.options[0]) !== "off") {
 							context.report({
 								node: node.callee,
 								messageId,
@@ -5154,9 +5123,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator(
 						if (def.type === "Parameter") {
 							const messageId = "missingEffectCallback";
 
-							const severity = getSeverity(messageId, context.options[0]);
-
-							if (severity !== "off") {
+							if (getSeverity(messageId, context.options[0]) !== "off") {
 								context.report({
 									node: node.callee,
 									data: {
@@ -5230,9 +5197,8 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator(
 
 					default: {
 						const messageId = "missingDependency";
-						const severity = getSeverity(messageId, context.options[0]);
 
-						if (severity !== "off") {
+						if (getSeverity(messageId, context.options[0]) !== "off") {
 							context.report({
 								node: node.callee,
 								messageId,
@@ -5265,9 +5231,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator(
 					}
 				}
 
-				const severity = getSeverity("missingDependency", context.options[0]);
-
-				if (severity !== "off") {
+				if (getSeverity("missingDependency", context.options[0]) !== "off") {
 					context.report({
 						node: node.callee,
 						messageId: "missingDependency",
