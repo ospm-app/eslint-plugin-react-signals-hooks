@@ -234,9 +234,8 @@ function isSignalVariable(node: TSESTree.Node | Pattern, perfKey: string): boole
 function isSignalDependency(dependency: string, perfKey: string): boolean {
   trackOperation(perfKey, PerformanceOperations.signalCheck);
 
-  return (
-    dependency.includes('Signal') || dependency.endsWith('.value') || dependency.includes('Signal.')
-  );
+  // Only treat names containing 'Signal' as signals. Do not treat arbitrary '.value' as a signal.
+  return dependency.includes('Signal') || dependency.split('.')[0]?.endsWith('Signal') === true;
 }
 
 function isSignalValueAccess(
@@ -369,23 +368,6 @@ function fastFindReferenceWithParent(
             queue.push(val);
           }
         }
-      } else if (item.type === 'Identifier') {
-        debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:promote:skipped', {
-          base: item.name,
-          hasParent: 'parent' in item,
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          parentType: item.parent?.type,
-          reason: !('parent' in item)
-            ? 'no-parent-prop'
-            : // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
-              !item.parent
-              ? 'null-parent'
-              : item.parent.type !== 'MemberExpression'
-                ? 'parent-not-member'
-                : item.parent.object === item
-                  ? 'unknown'
-                  : 'object-not-self',
-        });
       }
     }
   }
@@ -413,11 +395,9 @@ function analyzePropertyChain(
       if (optionalChains) {
         optionalChains.set(result, false);
       }
-
       debugLog('[react-signals-hooks/exhaustive-deps][debug] analyzePropertyChain:Identifier', {
         result,
       });
-
       return result;
     }
 
@@ -438,12 +418,10 @@ function analyzePropertyChain(
           const result = objectPath;
 
           markNode(node, optionalChains, result, perfKey);
-
           debugLog(
             '[react-signals-hooks/exhaustive-deps][debug] analyzePropertyChain:Member.methodCallee',
             { result }
           );
-
           return result;
         }
 
@@ -455,14 +433,10 @@ function analyzePropertyChain(
         )}`;
 
         markNode(node, optionalChains, result, perfKey);
-
         debugLog(
           '[react-signals-hooks/exhaustive-deps][debug] analyzePropertyChain:Member.nonComputed',
-          {
-            result,
-          }
+          { result }
         );
-
         return result;
       }
 
@@ -490,34 +464,27 @@ function analyzePropertyChain(
       const result = `${object}[${computedResult}]`;
 
       markNode(node, optionalChains, result, perfKey);
-
       debugLog(
         '[react-signals-hooks/exhaustive-deps][debug] analyzePropertyChain:Member.computed',
-        {
-          result,
-        }
+        { result }
       );
-
       return result;
     }
 
-    // For all other node types, return the source text
     const fallback = context.sourceCode.getText(node);
     debugLog('[react-signals-hooks/exhaustive-deps][debug] analyzePropertyChain:fallback', {
       type: node.type,
       fallback,
     });
     return fallback;
-  } catch (error) {
+  } catch (error: unknown) {
     if (error instanceof PerformanceLimitExceededError) {
       trackOperation(perfKey, PerformanceOperations.analyzePropertyChainFailed);
-
-      // Return a fallback value to allow processing to continue
-      const result = error instanceof Error ? error.message : 'unknown';
+      const message = error instanceof Error ? error.message : 'unknown';
       debugLog('[react-signals-hooks/exhaustive-deps][debug] analyzePropertyChain:perf-error', {
-        message: result,
+        message,
       });
-      return result;
+      return message;
     }
     debugLog('[react-signals-hooks/exhaustive-deps][debug] analyzePropertyChain:error', error);
     throw error;
@@ -1158,7 +1125,7 @@ function collectRecommendations({
         key: k,
         hasReads: v.hasReads === true,
         isStable: v.isStable === true,
-        isSignal: isSignalDependency(k, perfKey) || k.endsWith('Signal') || k.endsWith('.value'),
+        isSignal: isSignalDependency(k, perfKey) || k.endsWith('Signal'),
       };
     }
   );
@@ -1365,16 +1332,6 @@ function collectRecommendations({
 
       const isUsed =
         (typeof depInfo !== 'undefined' && depInfo.hasReads) || node.isUsed || node.isSubtreeUsed;
-
-      debugLog('[react-signals-hooks/exhaustive-deps][debug] declared-satisfaction', {
-        declaredKey: key,
-        baseKey,
-        hasDepInfo: typeof depInfo !== 'undefined',
-        hasReads: depInfo?.hasReads === true,
-        nodeUsed: node.isUsed,
-        nodeSubtreeUsed: node.isSubtreeUsed,
-        isUsed,
-      });
 
       if (isUsed) {
         satisfyingDependencies.add(key);
@@ -2541,33 +2498,39 @@ function visitFunctionWithDependencies(
     const { parent } = reference.identifier;
 
     if (
-      parent.type === 'MemberExpression' &&
+      parent.type === AST_NODE_TYPES.MemberExpression &&
       parent.object === reference.identifier &&
-      parent.property.type === 'Identifier' &&
+      parent.property.type === AST_NODE_TYPES.Identifier &&
       parent.property.name === 'value'
     ) {
-      if (parent.parent.type === 'AssignmentExpression' && parent.parent.left === parent) {
+      if (
+        parent.parent.type === AST_NODE_TYPES.AssignmentExpression &&
+        parent.parent.left === parent
+      ) {
         return true;
       }
 
       if (
-        parent.parent.type === 'MemberExpression' &&
+        parent.parent.type === AST_NODE_TYPES.MemberExpression &&
         parent.parent.object === parent &&
-        parent.parent.parent.type === 'AssignmentExpression' &&
+        parent.parent.parent.type === AST_NODE_TYPES.AssignmentExpression &&
         parent.parent.parent.left === parent.parent
       ) {
         return true;
       }
 
       if (reference.identifier.name.endsWith('Signal') && parent.object === reference.identifier) {
-        if (parent.parent.type === 'AssignmentExpression' && parent.parent.left === parent) {
+        if (
+          parent.parent.type === AST_NODE_TYPES.AssignmentExpression &&
+          parent.parent.left === parent
+        ) {
           return true;
         }
 
         if (
-          parent.parent.type === 'MemberExpression' &&
+          parent.parent.type === AST_NODE_TYPES.MemberExpression &&
           parent.parent.object === parent &&
-          parent.parent.parent.type === 'AssignmentExpression' &&
+          parent.parent.parent.type === AST_NODE_TYPES.AssignmentExpression &&
           parent.parent.parent.left === parent.parent
         ) {
           return true;
@@ -2577,19 +2540,22 @@ function visitFunctionWithDependencies(
 
     if (
       identifier.name === 'value' &&
-      parent.type === 'MemberExpression' &&
+      parent.type === AST_NODE_TYPES.MemberExpression &&
       parent.property === identifier &&
-      parent.object.type === 'Identifier' &&
+      parent.object.type === AST_NODE_TYPES.Identifier &&
       parent.object.name.endsWith('Signal')
     ) {
-      if (parent.parent.type === 'AssignmentExpression' && parent.parent.left === parent) {
+      if (
+        parent.parent.type === AST_NODE_TYPES.AssignmentExpression &&
+        parent.parent.left === parent
+      ) {
         return true;
       }
 
       if (
-        parent.parent.type === 'MemberExpression' &&
+        parent.parent.type === AST_NODE_TYPES.MemberExpression &&
         parent.parent.object === parent &&
-        parent.parent.parent.type === 'AssignmentExpression' &&
+        parent.parent.parent.type === AST_NODE_TYPES.AssignmentExpression &&
         parent.parent.parent.left === parent.parent
       ) {
         return true;
@@ -2600,9 +2566,12 @@ function visitFunctionWithDependencies(
   }
 
   function gatherDependenciesRecursively(currentScope: Scope, pureScopes: Set<Scope>): void {
+    // Bases to skip for effects due to inner-scope computed indexing somewhere in the chain
+    const skipEffectBases = new Set<string>();
+
     for (const reference of currentScope.references) {
       const isSignalReference =
-        reference.identifier.type === 'Identifier' &&
+        reference.identifier.type === AST_NODE_TYPES.Identifier &&
         (reference.identifier.name.endsWith('Signal') ||
           reference.identifier.name.endsWith('signal') ||
           (reference.resolved?.name.endsWith('Signal') ?? false));
@@ -2613,9 +2582,9 @@ function visitFunctionWithDependencies(
 
       // biome-ignore format: because
       if (
-    reference.identifier.parent.type === "MemberExpression" &&
+    reference.identifier.parent.type === AST_NODE_TYPES.MemberExpression &&
     !reference.identifier.parent.computed &&
-    reference.identifier.parent.property.type === "Identifier" &&
+    reference.identifier.parent.property.type === AST_NODE_TYPES.Identifier &&
     reference.identifier.parent.property.name === 'value' &&
     'object' in reference.identifier &&
     reference.identifier.object === reference.identifier
@@ -2634,12 +2603,12 @@ function visitFunctionWithDependencies(
     let fullPath = `${objectName}.${propertyName}`;
 
     while (
-      currentNode.parent.type === "MemberExpression"
+      currentNode.parent.type === AST_NODE_TYPES.MemberExpression
     ) {
       if (currentNode.parent.object === currentNode) {
 
         if (!currentNode.parent.computed) {
-          if (currentNode.parent.property.type === "Identifier") {
+          if (currentNode.parent.property.type === AST_NODE_TYPES.Identifier) {
             fullPath += `.${currentNode.parent.property.name}`;
 
             currentNode = currentNode.parent;
@@ -2674,19 +2643,19 @@ function visitFunctionWithDependencies(
       let isComputedMemberAssignmentOnly = false;
 
       if (
-        reference.identifier.type === 'Identifier' &&
+        reference.identifier.type === AST_NODE_TYPES.Identifier &&
         reference.identifier.name.endsWith('Signal')
       ) {
         const parent = reference.identifier.parent;
 
         if (
-          parent.type === 'MemberExpression' &&
+          parent.type === AST_NODE_TYPES.MemberExpression &&
           parent.object === reference.identifier &&
           'name' in parent.property &&
           parent.property.name === 'value' &&
-          parent.parent.type === 'MemberExpression' &&
+          parent.parent.type === AST_NODE_TYPES.MemberExpression &&
           parent.parent.object === parent &&
-          parent.parent.parent.type === 'AssignmentExpression' &&
+          parent.parent.parent.type === AST_NODE_TYPES.AssignmentExpression &&
           parent.parent.parent.left === parent.parent
         ) {
           isComputedMemberAssignmentOnly = true;
@@ -2788,14 +2757,6 @@ function visitFunctionWithDependencies(
         dependencyNode.parent.type === AST_NODE_TYPES.MemberExpression &&
         dependencyNode.parent.object === dependencyNode
       ) {
-        debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:promote:eligible', {
-          base: dependencyNode.name,
-          parentType: dependencyNode.parent.type,
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          isMember: dependencyNode.parent.type === AST_NODE_TYPES.MemberExpression,
-          objectIsSelf: dependencyNode.parent.object === dependencyNode,
-        });
-
         let outermost: TSESTree.Node | TSESTree.MemberExpression = dependencyNode.parent;
 
         while (
@@ -2805,35 +2766,21 @@ function visitFunctionWithDependencies(
           outermost.parent.type === AST_NODE_TYPES.MemberExpression &&
           outermost.parent.object === outermost
         ) {
-          debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:promote:iteration', {
-            parentType: (outermost.parent as TSESTree.Node).type,
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-            isMember: outermost.parent.type === 'MemberExpression',
-            objectIsSelf: outermost.parent.object === outermost,
-          });
-
           outermost = outermost.parent;
         }
 
-        debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:promote:result', {
-          base: dependencyNode.name,
-          promoted:
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-            outermost.type === AST_NODE_TYPES.MemberExpression
-              ? analyzePropertyChain(outermost, optionalChains, context, perfKey)
-              : null,
-        });
         // Only promote if still a MemberExpression rooted at the identifier
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (outermost.type === AST_NODE_TYPES.MemberExpression) {
           debugLog(
             '[react-signals-hooks/exhaustive-deps][debug] gatherDeps:promoteIdentifierToMember',
             {
-              base: dependencyNode.name,
+              // dependencyNode is still the original Identifier here
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+              base: (dependencyNode as TSESTree.Identifier).name,
               promoted: analyzePropertyChain(outermost, optionalChains, context, perfKey),
             }
           );
-
           dependencyNode = outermost;
         }
       }
@@ -2928,6 +2875,14 @@ function visitFunctionWithDependencies(
                   if (baseValueDep) {
                     baseValueDep.hasInnerScopeComputedProperty = isInnerScopeProperty;
                   }
+
+                  debugLog(
+                    '[react-signals-hooks/exhaustive-deps][debug] gatherDeps:inner-scope-computed',
+                    {
+                      path: analyzePropertyChain(dependencyNode, optionalChains, context, perfKey),
+                      isInnerScope: isInnerScopeProperty,
+                    }
+                  );
                 }
               }
             }
@@ -2942,12 +2897,142 @@ function visitFunctionWithDependencies(
         }
       }
 
+      // For non-signal computed member expressions like options[index], determine if the index/key
+      // identifier comes from the inner scope of the hook callback. If yes, mark the reference so
+      // downstream logic can normalize/skip deps accordingly.
+      if (
+        dependencyNode.type === AST_NODE_TYPES.MemberExpression &&
+        dependencyNode.computed === true
+      ) {
+        const prop = dependencyNode.property;
+
+        let propertyName: string | null = null;
+
+        if (prop.type === AST_NODE_TYPES.Identifier) {
+          propertyName = prop.name;
+        } else if (
+          prop.type === AST_NODE_TYPES.TSAsExpression &&
+          prop.expression.type === AST_NODE_TYPES.Identifier
+        ) {
+          propertyName = prop.expression.name;
+        }
+
+        if (typeof propertyName === 'string' && propertyName !== '') {
+          let isInnerScopeProperty = false;
+
+          let propertyRef: Reference | null = null;
+
+          let searchScope: Scope | null = currentScope;
+
+          while (searchScope && searchScope !== scope?.upper) {
+            propertyRef =
+              searchScope.references.find((ref) => ref.identifier.name === propertyName) ?? null;
+
+            if (propertyRef) {
+              break;
+            }
+            searchScope = searchScope.upper;
+          }
+
+          if (propertyRef?.resolved) {
+            let checkScope: Scope | null = propertyRef.resolved.scope;
+            while (checkScope) {
+              if (checkScope === scope) {
+                isInnerScopeProperty = true;
+                break;
+              }
+              checkScope = checkScope.upper;
+            }
+
+            // @ts-expect-error extending Reference shape
+            reference.isInnerScopeComputedProperty = isInnerScopeProperty;
+          }
+        }
+      }
+
+      // Scan the entire member chain for inner-scope computed indexes and collect base identifiers
+      if (dependencyNode.type === AST_NODE_TYPES.MemberExpression) {
+        let cursor: TSESTree.Node | null = dependencyNode;
+
+        while (cursor.type === AST_NODE_TYPES.MemberExpression) {
+          if (cursor.computed === true) {
+            let propIdent: TSESTree.Identifier | null = null;
+
+            if (cursor.property.type === AST_NODE_TYPES.Identifier) {
+              propIdent = cursor.property;
+            } else if (
+              cursor.property.type === AST_NODE_TYPES.TSAsExpression &&
+              cursor.property.expression.type === AST_NODE_TYPES.Identifier
+            ) {
+              propIdent = cursor.property.expression;
+            }
+
+            if (propIdent !== null) {
+              let isInner = false;
+
+              let propertyRef: Reference | null = null;
+
+              let search: Scope | null = currentScope;
+
+              while (search && search !== scope?.upper) {
+                propertyRef =
+                  search.references.find((ref): boolean => {
+                    return ref.identifier.name === propIdent.name;
+                  }) ?? null;
+
+                if (propertyRef) {
+                  break;
+                }
+
+                search = search.upper;
+              }
+
+              if (propertyRef?.resolved) {
+                let s: Scope | null = propertyRef.resolved.scope;
+
+                while (s) {
+                  if (s === scope) {
+                    isInner = true;
+
+                    break;
+                  }
+
+                  s = s.upper;
+                }
+              }
+
+              // @ts-expect-error annotate reference for later normalization
+              if (isInner) reference.isInnerScopeComputedProperty = true;
+              if (isEffect === true && isInner === true) {
+                // Find left-most base identifier
+                let left: TSESTree.Node | null = cursor.object;
+                while (left.type === AST_NODE_TYPES.MemberExpression) {
+                  left = left.object;
+                }
+                if (left.type === AST_NODE_TYPES.Identifier) {
+                  skipEffectBases.add(left.name);
+
+                  debugLog(
+                    '[react-signals-hooks/exhaustive-deps][debug] gatherDeps:effect-skip-base',
+                    { base: left.name }
+                  );
+                }
+              }
+            }
+          }
+
+          cursor = cursor.object;
+        }
+      }
+
       // Always use analyzePropertyChain to avoid duplication issues
       const dependency = analyzePropertyChain(dependencyNode, optionalChains, context, perfKey);
+      // Normalized key we will operate on
+      let depKey: string = dependency;
 
       debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:dependency', {
         dependency,
-        nodeType: (dependencyNode as TSESTree.Node).type,
+        nodeType: dependencyNode.type,
       });
 
       if (
@@ -2991,7 +3076,6 @@ function visitFunctionWithDependencies(
         // @ts-expect-error reading isComputedAssignmentOnly to Reference
         reference.isComputedAssignmentOnly === true;
 
-      // Helper: detect if a variable was created via useRef/React.useRef
       function isUseRefVariable(definition: Definition | undefined): boolean {
         if (!definition || definition.type !== 'Variable') {
           return false;
@@ -3031,26 +3115,97 @@ function visitFunctionWithDependencies(
         return false;
       }
 
-      // Ignore dependencies that are ref.current[...] (or ref.current) when base is a useRef var
-      // We can safely rely on `dependency` string starting with `${identifier}.current` for such cases
       if (
-        typeof dependency === 'string' &&
-        dependency.startsWith(`${reference.identifier.name}.current`) &&
+        typeof depKey === 'string' &&
+        depKey.startsWith(`${reference.identifier.name}.current`) &&
         isUseRefVariable(def)
       ) {
+        debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:skip-ref-current', {
+          depKey,
+        });
         continue;
       }
 
-      if (dependencies.has(dependency)) {
+      if (
+        // @ts-expect-error reading isInnerScopeComputedProperty to Reference
+        reference.isInnerScopeComputedProperty === true
+      ) {
+        if (isEffect === true) {
+          // Skip tracking to avoid forcing effect autofix
+          debugLog(
+            '[react-signals-hooks/exhaustive-deps][debug] gatherDeps:skip-inner-scope-effect',
+            {
+              depKey,
+            }
+          );
+          continue;
+        }
+
+        if (typeof depKey === 'string') {
+          const bracketIdx = depKey.indexOf('[');
+          if (bracketIdx > 0) {
+            depKey = depKey.slice(0, bracketIdx);
+            debugLog(
+              '[react-signals-hooks/exhaustive-deps][debug] gatherDeps:normalize-inner-scope',
+              {
+                normalized: depKey,
+              }
+            );
+          }
+        }
+      }
+
+      // If the dependency is exactly a RefObject variable itself (bare identifier),
+      // skip requiring it in the array (passing ref objects is stable and `.current` is mutable).
+      if (
+        typeof depKey === 'string' &&
+        depKey === reference.identifier.name &&
+        (isUseRefVariable(def) || isRefTypeAnnotated(def))
+      ) {
+        debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:skip-bare-ref', {
+          depKey,
+        });
+        continue;
+      }
+
+      function isRefTypeAnnotated(definition: Definition | undefined): boolean {
+        if (!definition) {
+          return false;
+        }
+
+        // Variable declarator with TS type annotation
+        if (definition.type === 'Variable') {
+          const decl = definition.node;
+
+          const id = decl.id;
+
+          const typeNode = id.type === AST_NODE_TYPES.Identifier ? id.typeAnnotation : null;
+
+          if (typeNode) {
+            const text = context.sourceCode.getText(typeNode);
+
+            return /(?:\b|\.)RefObject\b|\bMutableRefObject\b|\bRef\b/.test(text);
+          }
+        }
+
+        if (definition.type === 'Parameter') {
+          const text = context.sourceCode.getText(definition.node);
+
+          return /(?:\b|\.)RefObject\b|\bMutableRefObject\b|\bRef\b/.test(text);
+        }
+
+        return false;
+      }
+
+      if (dependencies.has(depKey)) {
         debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:update', {
-          dependency,
+          dependency: depKey,
           isOnlyAssignment: isOnlyAssignmentReference(reference),
         });
-
-        dependencies.get(dependency)?.references.push(reference);
+        dependencies.get(depKey)?.references.push(reference);
 
         if (!isOnlyAssignmentReference(reference) && !isComputedAssignmentOnly) {
-          const dep = dependencies.get(dependency);
+          const dep = dependencies.get(depKey);
 
           if (dep) {
             dep.hasReads = true;
@@ -3058,15 +3213,15 @@ function visitFunctionWithDependencies(
         }
       } else {
         const isImportedSignal =
-          dependency.endsWith('Signal') ||
-          (dependency.includes('.') && dependency.split('.')[0]?.endsWith('Signal'));
+          depKey.endsWith('Signal') ||
+          (depKey.includes('.') && depKey.split('.')[0]?.endsWith('Signal'));
 
         // Only treat '.value' as a signal value access if the AST identifies it as such
         const isSignalValueAccessBool = isSignalValueAccess(reference.identifier, context);
 
         // Maintain externalDependencies appropriately for true signal cases only
         if (isImportedSignal === true) {
-          const toDelete = dependency.includes('.') ? dependency.split('.')[0] : dependency;
+          const toDelete = depKey.includes('.') ? depKey.split('.')[0] : depKey;
 
           if (typeof toDelete === 'string' && toDelete !== '') {
             externalDependencies.delete(toDelete);
@@ -3074,40 +3229,40 @@ function visitFunctionWithDependencies(
         }
         if (
           isSignalValueAccessBool === true &&
-          typeof dependency === 'string' &&
-          dependency.endsWith('.value')
+          typeof depKey === 'string' &&
+          depKey.endsWith('.value')
         ) {
-          externalDependencies.delete(dependency.slice(0, -'.value'.length));
+          externalDependencies.delete(depKey.slice(0, -'.value'.length));
         }
 
         debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:add', {
-          dependency,
+          dependency: depKey,
           isImportedSignal,
           isSignalValueAccess: isSignalValueAccessBool,
         });
 
         // Compute and record observed formatted variant for this exact usage
         const formattedVariant = formatDependency(
-          dependency,
-          projectOptionalChains(dependency, optionalChains)
+          depKey,
+          projectOptionalChains(depKey, optionalChains)
         );
 
-        const existing = dependencies.get(dependency);
+        const existing = dependencies.get(depKey);
 
         if (typeof existing?.observedFormatted !== 'undefined') {
           existing.observedFormatted.add(formattedVariant);
         }
 
-        dependencies.set(dependency, {
+        dependencies.set(depKey, {
           node: dependencyNode,
           isStable:
             isSignalValueAccessBool ||
-            isSignalDependency(dependency, perfKey) ||
+            isSignalDependency(depKey, perfKey) ||
             isImportedSignal === true
               ? false
-              : typeof dependency === 'string' &&
-                  !dependency.includes('.') &&
-                  !dependency.endsWith('Signal') &&
+              : typeof depKey === 'string' &&
+                  !depKey.includes('.') &&
+                  !depKey.endsWith('Signal') &&
                   reference.resolved.defs.length > 0 &&
                   !memoizedIsStableKnownHookValue(reference.resolved, componentScope, pureScopes)
                 ? false // Function dependencies should not be marked as stable
