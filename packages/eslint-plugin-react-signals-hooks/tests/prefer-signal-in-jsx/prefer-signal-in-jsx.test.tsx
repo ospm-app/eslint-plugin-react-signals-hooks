@@ -1,3 +1,4 @@
+/* eslint-disable react-signals-hooks/prefer-computed */
 /* eslint-disable react-signals-hooks/restrict-signal-locations */
 /* eslint-disable react-signals-hooks/prefer-for-over-map */
 /** biome-ignore-all assist/source/organizeImports: off */
