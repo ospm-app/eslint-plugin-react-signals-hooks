@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixes to exhaustive-deps rule, more edge cases handled and tested
 
+## [1.2.2] - 2025-08-08
+
+### Fixed
+
+- exhaustive-deps: Do not require array/object method names as dependencies when used as callees
+  (e.g., `.reduce`, `.map`, `.filter`). The rule now tracks only the object path, not the method name
+  (e.g., `matrixSignal.value[rowIndex]`, without `.reduce`).
+- exhaustive-deps: Allow listing only the base variable when it is directly read in sentinel guards
+  (e.g., `x === null || x === 'loading'`). Avoid forcing deep property chains like `base.deep.prop`
+  when `base` is declared and directly used in guards.
+
+### Added
+
+- Minimal regression test for sentinel-guarded base case: `tests/exhaustive-deps/sentinel-guarded-base.test.tsx`.
+- Additional edge-case adjustments in `tests/exhaustive-deps/edge-cases.test.tsx`.
+
 ## [1.2.0] - 2025-07-30
 
 - Fixed warning for signals assignments already inside batch call

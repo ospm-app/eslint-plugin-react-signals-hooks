@@ -423,12 +423,36 @@ function analyzePropertyChain(
 
     if (node.type === AST_NODE_TYPES.MemberExpression) {
       if (!node.computed) {
-        const result = `${analyzePropertyChain(
-          node.object,
-          optionalChains,
+        // If this member expression is a method call (e.g., obj.method(...)),
+        // we should NOT include the method name itself in the dependency path.
+        // Only the object (`obj`) should be tracked as the dependency.
+        // Example: matrixSignal.value[rowIndex]?.reduce(...) -> track up to matrixSignal.value[rowIndex]
+        const isCalleeMethodCall =
+          typeof node.parent !== 'undefined' &&
+          node.parent.type === AST_NODE_TYPES.CallExpression &&
+          node.parent.callee === node;
+
+        const objectPath = analyzePropertyChain(node.object, optionalChains, context, perfKey);
+
+        if (isCalleeMethodCall) {
+          const result = objectPath;
+
+          markNode(node, optionalChains, result, perfKey);
+
+          debugLog(
+            '[react-signals-hooks/exhaustive-deps][debug] analyzePropertyChain:Member.methodCallee',
+            { result }
+          );
+
+          return result;
+        }
+
+        const result = `${objectPath}.${analyzePropertyChain(
+          node.property,
+          null,
           context,
           perfKey
-        )}.${analyzePropertyChain(node.property, null, context, perfKey)}`;
+        )}`;
 
         markNode(node, optionalChains, result, perfKey);
 
@@ -1422,26 +1446,26 @@ function collectRecommendations({
       });
 
       if (hasDeepPropertyUsage) {
-        incompleteDependencies.add(key);
+        // If the base is directly used (e.g., in guards like `if (x == null || x === 'loading') return ...`),
+        // allow listing the base dependency without requiring deep property chains.
+        const baseDependency = dependencies.get(key);
 
-        satisfyingDependencies.delete(key);
-      } else {
-        const hasPropertyAlsoDeclared = Array.from(declaredDepsMap.keys()).some(
-          (declaredKey: string): boolean => {
-            return declaredKey.startsWith(`${key}.`) && declaredKey !== key;
-          }
-        );
+        if ((typeof baseDependency !== 'undefined' && baseDependency.hasReads === true) !== true) {
+          incompleteDependencies.add(key);
 
-        if (hasPropertyAlsoDeclared) {
-          // Check if the base dependency is directly used (not just through deeper properties)
-          const baseDependency = dependencies.get(key);
+          satisfyingDependencies.delete(key);
+        }
+      } else if (
+        Array.from(declaredDepsMap.keys()).some((declaredKey: string): boolean => {
+          return declaredKey.startsWith(`${key}.`) && declaredKey !== key;
+        })
+      ) {
+        // Check if the base dependency is directly used (not just through deeper properties)
+        const baseDependency = dependencies.get(key);
 
-          const isDirectlyUsed = baseDependency && baseDependency.hasReads === true;
-
-          if (isDirectlyUsed !== true) {
-            redundantDependencies.add(key);
-            satisfyingDependencies.delete(key);
-          }
+        if (!(typeof baseDependency !== 'undefined' && baseDependency.hasReads === true)) {
+          redundantDependencies.add(key);
+          satisfyingDependencies.delete(key);
         }
       }
     }
@@ -1480,6 +1504,38 @@ function collectRecommendations({
       unnecessaryDependencies.add(key);
     }
   });
+
+  // If a non-signal base dependency is declared and directly read (e.g., in sentinel guards),
+  // do not require deep properties under that base. Remove such deep entries from missingDependencies.
+  // Example: selectedTrip is declared and used in guards; accessing selectedTrip.travelPoints later
+  // should not force adding selectedTrip.travelPoints to deps.
+  if (missingDependencies.size > 0) {
+    const toDelete: Array<string> = [];
+
+    missingDependencies.forEach((m: string): void => {
+      if (!m.includes('.')) return;
+
+      const base = m.split('.')[0] ?? '';
+
+      if (base === '' || isSignalDependency(base, perfKey)) return;
+
+      const baseDep = dependencies.get(base);
+
+      const isBaseDeclared = declaredDepsMap.has(base);
+
+      if (isBaseDeclared && baseDep && baseDep.hasReads === true) {
+        toDelete.push(m);
+
+        // Mark base as satisfying to avoid it being considered incomplete
+        satisfyingDependencies.add(base);
+        incompleteDependencies.delete(base);
+      }
+    });
+
+    for (const m of toDelete) {
+      missingDependencies.delete(m);
+    }
+  }
 
   const missingDepsArray = Array.from(missingDependencies);
 
