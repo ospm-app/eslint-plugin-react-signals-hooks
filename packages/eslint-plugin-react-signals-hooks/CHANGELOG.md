@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixed warning for signals assignments already inside batch call
 - removed `prefer-batch-for-multi-mutations` rule, merged functionality with `prefer-batch-updates` rule
+- fixed signal-variable-name rule autofix
 
 ## [1.1.1] - 2025-07-30
 
