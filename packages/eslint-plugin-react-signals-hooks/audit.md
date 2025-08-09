@@ -409,8 +409,14 @@ Progress legend: [✓ audited] [⟲ in progress] [✗ missing spec]
 - Grouping logic:
   - Walks blocks via `processBlock()` to collect `SignalUpdate`s per immediate scope, honoring `minUpdates` and skipping nested scopes as needed.
   - Avoids scanning when `inBatch` and enforces budgets via `shouldContinue()` and performance tracker utilities.
+- Signal detection:
+  - Import-aware. Tracks creators (`signal`, `computed`) imported from `@preact/signals-react` (including via namespace) and marks variables initialized by those creators as signals.
+  - Updates are recognized only when operating on tracked signal variables (e.g., `.value` assignments/updates, `.set`, `.update`).
 - Reporting:
   - Emits `useBatch` with count and suggestion messages when threshold met and not inside a batch.
+  - Inside an existing `batch()` callback:
+    - Emits `nonUpdateSignalInBatch` for pure reads (no update) expressions.
+    - When there is exactly one signal update in the callback body, emits `removeUnnecessaryBatch` even if other non‑update statements are present. Provides an autofix only when the body has a single statement and it is the update; otherwise reports without a fixer.
 
 ### Options and messages (implementation)
 
@@ -433,16 +439,16 @@ Progress legend: [✓ audited] [⟲ in progress] [✗ missing spec]
 
 ### Inconsistencies (spec vs implementation)
 
-- __Spec documentation__: Spec mentions removing unnecessary `batch` when only a single update is present; implementation now supports this via `removeUnnecessaryBatch` with an autofix. Ensure the spec documents the message ID and behavior explicitly.
+- __Spec/documentation alignment__: Spec and docs have been updated to include both `removeUnnecessaryBatch` and `nonUpdateSignalInBatch`, including the case where exactly one update exists alongside other non‑update statements (report both; fixer only when single statement).
 - __Nested control-flow guidance__: Spec mentions wrapping whole control flow for loops/while. Implementation groups by immediate scope but does not include special casing for wrapping entire loop constructs; wrapping range is from first to last update statements, which may only partially cover loop bodies depending on placement.
 - __Signal reference heuristic__: Name-suffix heuristic may over-report in non-signal variables; spec doesn’t mention heuristic or its limitations.
 - __Severity docs__: Implementation supports per-message `severity`, spec does not document it.
 
 ### Actionable suggestions
 
-- __Document remove-batch behavior__: update spec/examples to include `removeUnnecessaryBatch` with autofix semantics; add notes on severity and import handling consistency.
-- __Clarify grouping semantics in spec__: explicitly state that wrapping covers the minimal contiguous range spanning updates in the same immediate scope; optionally add loop-aware examples.
-- __Consider tightening isSignalReference__ by incorporating import/type info where available to reduce false positives; or document heuristic in spec as a limitation.
+- __Ensure tests cover dual-reporting__: DONE. Fixtures added and verified in `tests/prefer-batch-updates` for single-update + read inside `batch()` reporting both messages; fixer only in single-statement body.
+- __Clarify grouping semantics in spec__: DONE. Spec updated to state minimal contiguous range in same scope and guidance for control-flow constructs.
+- __Consider tightening isSignalReference__: FUTURE WORK. Potential improvement: incorporate import-aware/type-aware checks to reduce false positives; alternatively document limitations more explicitly if we keep heuristic.
 
 ## 8) prefer-computed [✓]
 

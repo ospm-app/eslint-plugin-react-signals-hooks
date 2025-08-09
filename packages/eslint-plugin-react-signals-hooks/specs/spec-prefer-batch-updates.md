@@ -11,6 +11,12 @@ This rule suggests batching multiple signal updates to optimize performance by r
 
 The `prefer-batch-updates` rule detects multiple signal updates within the same scope and suggests wrapping them in a `batch()` call. This helps minimize the number of renders by batching multiple signal updates together.
 
+### Grouping semantics
+
+- The rule groups updates that occur in the same immediate lexical scope and wraps the minimal contiguous range spanning the first to the last update.
+- It does not attempt to expand across unrelated statements or across different scopes.
+- For control-flow constructs (loops/conditionals), prefer wrapping the whole construct when appropriate rather than only the assignments if they are separated by other logic.
+
 ## Handled Cases
 
 ### 1. Multiple Signal Updates in Same Scope
@@ -76,10 +82,12 @@ Performance tuning options:
 - **Add batch import**: Automatically adds the batch import from '@preact/signals-react' if missing
 - Should not wrap with batch if it is already inside a batch
 - **Remove unnecessary batch**: When a `batch` callback contains exactly one signal update statement, offer an autofix to replace the entire `batch(...)` call with the inner single statement (semicolon preserved)
+  - If the `batch` callback contains exactly one signal update but also contains other non-update statements (e.g., reads, logs), still report `removeUnnecessaryBatch` but do not offer an autofix (to avoid dropping code).
 
 ## Additional Warnings
 
 - `nonUpdateSignalInBatch`: If a `batch` callback contains expressions that read a signal but do not perform a signal update, report a warning (no autofix). This discourages wrapping pure reads in a `batch`, which is intended for grouping updates.
+  - This warning can appear alongside `removeUnnecessaryBatch` when there is exactly one update and additional non-update statements in the same batch body.
 
 ## Severity and Performance Options
 

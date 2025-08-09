@@ -331,9 +331,10 @@ This rule accepts an options object with the following properties:
 
 ## Options
 
-This rule accepts an options object with the following property:
+This rule accepts an options object with the following properties:
 
 - `minUpdates` (number): Minimum number of signal updates required to trigger the rule (default: 2)
+- `suffix` (string): Suffix to use for signal detection (default: 'Signal')
 
 ### Severity (optional)
 
@@ -346,6 +347,7 @@ You can control severity per message id (`'error' | 'warn' | 'off'`), including 
       "error",
       {
         "minUpdates": 2,
+        "suffix": "Signal",
         "severity": {
           "useBatch": "error",
           "suggestUseBatch": "warn",
@@ -387,6 +389,29 @@ This rule provides auto-fix suggestions to:
 Additional warning (no autofix):
 
 - Warn when a signal is read inside `batch()` without an update (`nonUpdateSignalInBatch`).
+
+### Dual reporting inside `batch()`
+
+- When a `batch` callback contains exactly one signal update and additional non-update statements (e.g., reads/logs), the rule reports both:
+  - `removeUnnecessaryBatch` on the `batch(...)` call, and
+  - `nonUpdateSignalInBatch` on the read expression(s).
+- Autofix to remove the batch is offered only when the batch body has a single statement and it is the signal update; otherwise, removal is reported without a fixer to avoid dropping other statements.
+
+#### ❌ Incorrect
+
+```tsx
+batch(() => {
+  console.info(countSignal.value); // read only
+  countSignal.value = 1;           // single update
+});
+```
+
+#### ✅ Correct
+
+```tsx
+console.info(countSignal.value);
+countSignal.value = 1;
+```
 
 ## When Not To Use It
 

@@ -41,7 +41,6 @@ type Severity = {
 type Option = {
   minUpdates?: number;
   performance?: PerformanceBudget;
-  suffix?: string;
   severity?: Severity;
 };
 
@@ -91,6 +90,12 @@ let isProcessedByHandlers = false;
 
 const DEFAULT_MIN_UPDATES = 2;
 
+const updatesInScope: Array<SignalUpdate> = [];
+
+const allUpdates: Array<SignalUpdate> = [];
+
+let trackedSignalVars: Set<string> = new Set();
+
 function processBlock(
   statements: Array<TSESTree.Statement>,
   context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
@@ -100,6 +105,12 @@ function processBlock(
 ): Array<SignalUpdate> {
   if (isProcessedByHandlers) {
     return [];
+  }
+
+  // Reset accumulators for a fresh analysis pass at the top-level invocation
+  if (scopeDepth === 0) {
+    updatesInScope.length = 0;
+    allUpdates.length = 0;
   }
 
   const minUpdates = context.options[0]?.minUpdates ?? DEFAULT_MIN_UPDATES;
@@ -113,10 +124,6 @@ function processBlock(
     return [];
   }
 
-  const updatesInScope: Array<SignalUpdate> = [];
-
-  const allUpdates: Array<SignalUpdate> = [];
-
   recordMetric(perfKey, 'processBlockStart', {
     scopeDepth,
     inBatch,
@@ -126,7 +133,7 @@ function processBlock(
   const hasBatchImport = context.sourceCode.ast.body.some(
     (node: TSESTree.ProgramStatement): boolean => {
       return (
-        node.type === 'ImportDeclaration' &&
+        node.type === AST_NODE_TYPES.ImportDeclaration &&
         node.source.value === '@preact/signals-react' &&
         node.specifiers.some((specifier: TSESTree.ImportClause): boolean => {
           return (
@@ -164,7 +171,7 @@ function processBlock(
       continue;
     }
 
-    if (isSignalUpdate(stmt.expression)) {
+    if (isSignalUpdate(stmt.expression, trackedSignalVars)) {
       const updateType = getUpdateType(stmt.expression);
 
       const signalName = getSignalName(stmt.expression);
@@ -481,7 +488,8 @@ function getSignalName(node: TSESTree.Node): string {
 }
 
 function isSignalUpdate(
-  node: TSESTree.Node
+  node: TSESTree.Node,
+  trackedSignalVars: Set<string>
 ): node is
   | TSESTree.AssignmentExpression
   | TSESTree.CallExpression
@@ -492,7 +500,7 @@ function isSignalUpdate(
       node.left.type === AST_NODE_TYPES.MemberExpression &&
       node.left.property.type === AST_NODE_TYPES.Identifier &&
       node.left.property.name === 'value' &&
-      isSignalReference(node.left.object)
+      isSignalReference(node.left.object, trackedSignalVars)
     ) {
       return true;
     }
@@ -502,7 +510,7 @@ function isSignalUpdate(
       node.left.type === AST_NODE_TYPES.MemberExpression &&
       node.left.property.type === AST_NODE_TYPES.Identifier &&
       node.left.property.name === 'value' &&
-      isSignalReference(node.left.object)
+      isSignalReference(node.left.object, trackedSignalVars)
     ) {
       return true;
     }
@@ -513,7 +521,7 @@ function isSignalUpdate(
     node.callee.type === AST_NODE_TYPES.MemberExpression &&
     node.callee.property.type === AST_NODE_TYPES.Identifier &&
     ['set', 'update'].includes(node.callee.property.name) &&
-    isSignalReference(node.callee.object)
+    isSignalReference(node.callee.object, trackedSignalVars)
   ) {
     return true;
   }
@@ -523,7 +531,7 @@ function isSignalUpdate(
     node.argument.type === AST_NODE_TYPES.MemberExpression &&
     node.argument.property.type === AST_NODE_TYPES.Identifier &&
     node.argument.property.name === 'value' &&
-    isSignalReference(node.argument.object)
+    isSignalReference(node.argument.object, trackedSignalVars)
   ) {
     return true;
   }
@@ -531,14 +539,9 @@ function isSignalUpdate(
   return false;
 }
 
-function isSignalReference(node: TSESTree.Node): boolean {
+function isSignalReference(node: TSESTree.Node, trackedSignalVars: Set<string>): boolean {
   if (node.type === AST_NODE_TYPES.Identifier) {
-    return (
-      node.name.endsWith('Signal') ||
-      node.name.endsWith('signal') ||
-      node.name.endsWith('Sig') ||
-      node.name.endsWith('sig')
-    );
+    return trackedSignalVars.has(node.name);
   }
 
   if (
@@ -546,36 +549,36 @@ function isSignalReference(node: TSESTree.Node): boolean {
     node.property.type === AST_NODE_TYPES.Identifier &&
     node.property.name === 'value'
   ) {
-    return isSignalReference(node.object);
+    return isSignalReference(node.object, trackedSignalVars);
   }
 
   return false;
 }
 
-function containsSignalRead(node: TSESTree.Node): boolean {
+function containsSignalRead(node: TSESTree.Node, trackedSignalVars: Set<string>): boolean {
   // Direct identifier like `countSignal`
   if (node.type === AST_NODE_TYPES.Identifier) {
-    return isSignalReference(node);
+    return isSignalReference(node, trackedSignalVars);
   }
 
   // Member expression like `countSignal.value` or deeper
   if (node.type === AST_NODE_TYPES.MemberExpression) {
-    if (isSignalReference(node.object)) {
+    if (isSignalReference(node.object, trackedSignalVars)) {
       return true;
     }
-    // Recurse into object/property as needed
+
     return (
       // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-      (node.object && containsSignalRead(node.object)) ||
+      (node.object && containsSignalRead(node.object, trackedSignalVars)) ||
       // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
       (node.property &&
         node.property.type !== AST_NODE_TYPES.PrivateIdentifier &&
-        containsSignalRead(node.property as unknown as TSESTree.Node))
+        containsSignalRead(node.property, trackedSignalVars))
     );
   }
 
   // Generic recursive descent for any child node/arrays
-  for (const key of Object.keys(node) as Array<keyof typeof node>) {
+  for (const key of Object.keys(node)) {
     const value = node[key as keyof typeof node];
 
     if (typeof value === 'undefined') {
@@ -590,12 +593,12 @@ function containsSignalRead(node: TSESTree.Node): boolean {
           if (item && typeof item.type === 'string') {
             // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
-            if (containsSignalRead(item)) {
+            if (containsSignalRead(item, trackedSignalVars)) {
               return true;
             }
           }
         }
-      } else if ('type' in value && containsSignalRead(value)) {
+      } else if ('type' in value && containsSignalRead(value, trackedSignalVars)) {
         return true;
       }
     }
@@ -605,6 +608,8 @@ function containsSignalRead(node: TSESTree.Node): boolean {
 }
 
 let signalUpdates: Array<SignalUpdate> = [];
+let trackedSignalCreators: Set<string> = new Set();
+let trackedSignalNamespaces: Set<string> = new Set();
 
 const ruleName = 'prefer-batch-updates';
 
@@ -786,6 +791,62 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
     }
 
     return {
+      [AST_NODE_TYPES.Program]: (): void => {
+        // reset tracking for this file
+        trackedSignalVars = new Set();
+        trackedSignalCreators = new Set();
+        trackedSignalNamespaces = new Set();
+      },
+
+      [`${AST_NODE_TYPES.ImportDeclaration}`](node: TSESTree.ImportDeclaration): void {
+        if (node.source.value !== '@preact/signals-react') {
+          return;
+        }
+
+        for (const spec of node.specifiers) {
+          if (spec.type === AST_NODE_TYPES.ImportSpecifier) {
+            // Track known creators
+            if (
+              spec.imported.type === AST_NODE_TYPES.Identifier &&
+              (spec.imported.name === 'signal' || spec.imported.name === 'computed')
+            ) {
+              trackedSignalCreators.add(spec.local.name);
+            }
+          } else if (spec.type === AST_NODE_TYPES.ImportNamespaceSpecifier) {
+            trackedSignalNamespaces.add(spec.local.name);
+          }
+        }
+      },
+
+      [AST_NODE_TYPES.VariableDeclarator](node: TSESTree.VariableDeclarator): void {
+        if (node.id.type !== AST_NODE_TYPES.Identifier || !node.init) {
+          return;
+        }
+
+        // signal creator call: signal(...)
+        if (
+          node.init.type === AST_NODE_TYPES.CallExpression &&
+          node.init.callee.type === AST_NODE_TYPES.Identifier &&
+          trackedSignalCreators.has(node.init.callee.name)
+        ) {
+          trackedSignalVars.add(node.id.name);
+          return;
+        }
+
+        // namespaced call: ns.signal(...) or ns.computed(...)
+        if (
+          node.init.type === AST_NODE_TYPES.CallExpression &&
+          node.init.callee.type === AST_NODE_TYPES.MemberExpression &&
+          !node.init.callee.computed &&
+          node.init.callee.object.type === AST_NODE_TYPES.Identifier &&
+          trackedSignalNamespaces.has(node.init.callee.object.name) &&
+          node.init.callee.property.type === AST_NODE_TYPES.Identifier &&
+          (node.init.callee.property.name === 'signal' ||
+            node.init.callee.property.name === 'computed')
+        ) {
+          trackedSignalVars.add(node.id.name);
+        }
+      },
       '*': (node: TSESTree.Node): void => {
         perf.trackNode(node);
       },
@@ -824,8 +885,8 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
                 for (const stmt of node.arguments[0].body.body) {
                   if (
                     stmt.type === AST_NODE_TYPES.ExpressionStatement &&
-                    !isSignalUpdate(stmt.expression) &&
-                    containsSignalRead(stmt.expression) &&
+                    !isSignalUpdate(stmt.expression, trackedSignalVars) &&
+                    containsSignalRead(stmt.expression, trackedSignalVars) &&
                     getSeverity('nonUpdateSignalInBatch', context.options[0]) !== 'off'
                   ) {
                     context.report({ node: stmt.expression, messageId: 'nonUpdateSignalInBatch' });
@@ -838,29 +899,48 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
 
                 // Count signal updates within the batch body
                 const updateStmts: Array<TSESTree.ExpressionStatement> = bodyStatements
-                  .filter(
-                    (s): s is TSESTree.ExpressionStatement =>
-                      s.type === AST_NODE_TYPES.ExpressionStatement
-                  )
-                  .filter((s) => isSignalUpdate(s.expression));
+                  .filter((s: TSESTree.Statement): s is TSESTree.ExpressionStatement => {
+                    return s.type === AST_NODE_TYPES.ExpressionStatement;
+                  })
+                  .filter((s: TSESTree.ExpressionStatement): boolean => {
+                    return isSignalUpdate(s.expression, trackedSignalVars);
+                  });
 
                 if (
                   updateStmts.length === 1 &&
                   getSeverity('removeUnnecessaryBatch', context.options[0]) !== 'off'
                 ) {
-                  const onlyUpdateStmt = updateStmts[0];
+                  const parent = node.parent;
 
-                  // If the body has exactly one statement and it is the update, provide a safe fixer
-                  if (bodyStatements.length === 1) {
-                    context.report({
-                      node,
-                      messageId: 'removeUnnecessaryBatch',
-                      fix(fixer) {
-                        return fixer.replaceText(node, context.sourceCode.getText(onlyUpdateStmt));
-                      },
-                    });
+                  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+                  if (parent && parent.type === AST_NODE_TYPES.ExpressionStatement) {
+                    if (bodyStatements.length === 1) {
+                      // Safe case: single update statement inside batch -> replace whole statement
+                      context.report({
+                        node,
+                        messageId: 'removeUnnecessaryBatch',
+                        fix(fixer) {
+                          return fixer.replaceText(
+                            parent,
+                            context.sourceCode.getText(updateStmts[0])
+                          );
+                        },
+                      });
+                    } else {
+                      // Unwrap batch while preserving all inner statements
+                      context.report({
+                        node,
+                        messageId: 'removeUnnecessaryBatch',
+                        fix(fixer) {
+                          const innerText = bodyStatements
+                            .map((s): string => context.sourceCode.getText(s))
+                            .join('\n');
+                          return fixer.replaceText(parent, innerText);
+                        },
+                      });
+                    }
                   } else {
-                    // Otherwise, just report (no fixer) to avoid dropping other non-update statements
+                    // Fallback: report without fix if parent is unexpected
                     context.report({ node, messageId: 'removeUnnecessaryBatch' });
                   }
                 }
@@ -869,8 +949,8 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
               // Concise arrow body case: body is an expression
               if (
                 node.arguments[0].body.type !== AST_NODE_TYPES.BlockStatement &&
-                !isSignalUpdate(node.arguments[0].body) &&
-                containsSignalRead(node.arguments[0].body) &&
+                !isSignalUpdate(node.arguments[0].body, trackedSignalVars) &&
+                containsSignalRead(node.arguments[0].body, trackedSignalVars) &&
                 getSeverity('nonUpdateSignalInBatch', context.options[0]) !== 'off'
               ) {
                 context.report({
@@ -891,8 +971,8 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
                 for (const stmt of bodyStatements) {
                   if (
                     stmt.type === AST_NODE_TYPES.ExpressionStatement &&
-                    !isSignalUpdate(stmt.expression) &&
-                    containsSignalRead(stmt.expression) &&
+                    !isSignalUpdate(stmt.expression, trackedSignalVars) &&
+                    containsSignalRead(stmt.expression, trackedSignalVars) &&
                     getSeverity('nonUpdateSignalInBatch', context.options[0]) !== 'off'
                   ) {
                     context.report({ node: stmt.expression, messageId: 'nonUpdateSignalInBatch' });
@@ -907,7 +987,9 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
                     (s): s is TSESTree.ExpressionStatement =>
                       s.type === AST_NODE_TYPES.ExpressionStatement
                   )
-                  .filter((s) => isSignalUpdate(s.expression));
+                  .filter((s: TSESTree.ExpressionStatement): boolean => {
+                    return isSignalUpdate(s.expression, trackedSignalVars);
+                  });
 
                 if (
                   updateStmts.length === 1 &&
@@ -915,17 +997,41 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
                 ) {
                   const onlyUpdateStmt = updateStmts[0];
 
-                  // If the body has exactly one statement and it is the update, provide a safe fixer
-                  if (bodyStatements.length === 1) {
-                    context.report({
-                      node,
-                      messageId: 'removeUnnecessaryBatch',
-                      fix(fixer) {
-                        return fixer.replaceText(node, context.sourceCode.getText(onlyUpdateStmt));
-                      },
-                    });
+                  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+                  if (node.parent && node.parent.type === AST_NODE_TYPES.ExpressionStatement) {
+                    if (bodyStatements.length === 1) {
+                      // Safe case: single update statement inside batch -> replace whole statement
+                      context.report({
+                        node,
+                        messageId: 'removeUnnecessaryBatch',
+                        fix(fixer: TSESLint.RuleFixer) {
+                          if (typeof onlyUpdateStmt === 'undefined') {
+                            return null;
+                          }
+
+                          return fixer.replaceText(
+                            node.parent,
+                            context.sourceCode.getText(onlyUpdateStmt)
+                          );
+                        },
+                      });
+                    } else {
+                      // Unwrap batch while preserving all inner statements
+                      context.report({
+                        node,
+                        messageId: 'removeUnnecessaryBatch',
+                        fix(fixer: TSESLint.RuleFixer) {
+                          const innerText = bodyStatements
+                            .map((s: TSESTree.Statement): string => {
+                              return context.sourceCode.getText(s);
+                            })
+                            .join('\n');
+                          return fixer.replaceText(node.parent, innerText);
+                        },
+                      });
+                    }
                   } else {
-                    // Otherwise, just report (no fixer) to avoid dropping other non-update statements
+                    // Fallback: report without fix if parent is unexpected
                     context.report({ node, messageId: 'removeUnnecessaryBatch' });
                   }
                 }
@@ -1002,7 +1108,10 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
             popBatchScope();
           }
 
-          if (isSignalUpdate(node) && batchScopeStack[batchScopeStack.length - 1] !== true) {
+          if (
+            isSignalUpdate(node, trackedSignalVars) &&
+            batchScopeStack[batchScopeStack.length - 1] !== true
+          ) {
             signalUpdates.push({
               node,
               isTopLevel: true,
@@ -1020,7 +1129,7 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
         }
       },
 
-      'AssignmentExpression:exit'(node: TSESTree.AssignmentExpression): void {
+      [`${AST_NODE_TYPES.AssignmentExpression}:exit`](node: TSESTree.AssignmentExpression): void {
         if (!shouldContinue()) {
           return;
         }
@@ -1028,7 +1137,10 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
         startPhase(perfKey, 'assignmentExpression');
 
         try {
-          if (isSignalUpdate(node) && batchScopeStack[batchScopeStack.length - 1] !== true) {
+          if (
+            isSignalUpdate(node, trackedSignalVars) &&
+            batchScopeStack[batchScopeStack.length - 1] !== true
+          ) {
             signalUpdates.push({
               node,
               isTopLevel: false,
@@ -1054,7 +1166,10 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
         startPhase(perfKey, 'updateExpression');
 
         try {
-          if (isSignalUpdate(node) && batchScopeStack[batchScopeStack.length - 1] !== true) {
+          if (
+            isSignalUpdate(node, trackedSignalVars) &&
+            batchScopeStack[batchScopeStack.length - 1] !== true
+          ) {
             signalUpdates.push({
               node,
               isTopLevel: false,
@@ -1101,6 +1216,11 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
       },
 
       [`${AST_NODE_TYPES.Program}:exit`](node: TSESTree.Program): void {
+        // clear tracking after file processed
+        trackedSignalVars.clear();
+        trackedSignalCreators.clear();
+        trackedSignalNamespaces.clear();
+
         startPhase(perfKey, 'programExit');
 
         processBlock(
