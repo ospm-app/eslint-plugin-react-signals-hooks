@@ -11,7 +11,6 @@ import { PerformanceOperations } from './utils/performance-constants.js';
 import {
   endPhase,
   startPhase,
-  stopTracking,
   recordMetric,
   startTracking,
   trackOperation,
@@ -21,12 +20,15 @@ import {
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
 
+type MessageIds =
+  | 'avoidSignalInComponent'
+  | 'suggestMoveToModuleLevel'
+  | 'suggestMoveToCustomHook'
+  | 'moveToModuleLevel'
+  | 'createCustomHook';
+
 type Severity = {
-  avoidSignalInComponent?: 'error' | 'warn' | 'off';
-  suggestMoveToModuleLevel?: 'error' | 'warn' | 'off';
-  suggestMoveToCustomHook?: 'error' | 'warn' | 'off';
-  moveToModuleLevel?: 'error' | 'warn' | 'off';
-  createCustomHook?: 'error' | 'warn' | 'off';
+  [key in MessageIds]?: 'error' | 'warn' | 'off';
 };
 
 type Option = {
@@ -35,13 +37,6 @@ type Option = {
 };
 
 type Options = [Option?];
-
-type MessageIds =
-  | 'avoidSignalInComponent'
-  | 'suggestMoveToModuleLevel'
-  | 'suggestMoveToCustomHook'
-  | 'moveToModuleLevel'
-  | 'createCustomHook';
 
 function getSeverity(messageId: MessageIds, options: Option | undefined): 'error' | 'warn' | 'off' {
   if (!options?.severity) {
@@ -293,14 +288,16 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator((name: st
 
     startPhase(perfKey, 'ruleInit');
 
-    const perf = createPerformanceTracker<Options>(perfKey, option?.performance, context);
+    const perf = createPerformanceTracker(perfKey, option?.performance);
 
     if (option?.performance?.enableMetrics === true) {
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    // console.info(`${ruleName}: Rule configuration:`, option);
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
     recordMetric(perfKey, 'config', {
       performance: {
@@ -318,7 +315,10 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator((name: st
     function shouldContinue(): boolean {
       nodeCount++;
 
-      if (nodeCount > (option?.performance?.maxNodes ?? 2000)) {
+      if (
+        typeof option?.performance?.maxNodes === 'number' &&
+        nodeCount > option.performance.maxNodes
+      ) {
         trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
@@ -329,19 +329,25 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator((name: st
 
     startPhase(perfKey, 'ruleExecution');
 
+    // Track local names and namespaces for signal creators
+    const signalCreatorLocals = new Set<string>(['signal', 'computed']);
+    const signalNamespaces = new Set<string>();
+
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
           endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
 
           return;
         }
 
         perf.trackNode(node);
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        trackOperation(
+          perfKey,
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing
+        );
       },
 
       'FunctionDeclaration, ArrowFunctionExpression, FunctionExpression'(
@@ -383,22 +389,76 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator((name: st
         }
       },
 
+      [AST_NODE_TYPES.Program](node: TSESTree.Program): void {
+        for (const stmt of node.body) {
+          if (
+            stmt.type === AST_NODE_TYPES.ImportDeclaration &&
+            typeof stmt.source.value === 'string' &&
+            stmt.source.value === '@preact/signals-react'
+          ) {
+            for (const spec of stmt.specifiers) {
+              if (spec.type === AST_NODE_TYPES.ImportSpecifier) {
+                if (
+                  'name' in spec.imported &&
+                  (spec.imported.name === 'signal' || spec.imported.name === 'computed')
+                ) {
+                  signalCreatorLocals.add(spec.local.name);
+                }
+              } else if (spec.type === AST_NODE_TYPES.ImportNamespaceSpecifier) {
+                signalNamespaces.add(spec.local.name);
+              }
+            }
+          }
+        }
+      },
+
       [AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
         const wasInEffect = inEffect;
 
         if (
-          node.callee.type === 'Identifier'
-            ? ['useEffect', 'useCallback', 'useMemo', 'useLayoutEffect'].includes(node.callee.name)
-            : false
+          (node.callee.type === AST_NODE_TYPES.Identifier &&
+            ['useEffect', 'useCallback', 'useMemo', 'useLayoutEffect'].includes(
+              node.callee.name
+            )) ||
+          (node.callee.type === AST_NODE_TYPES.MemberExpression &&
+            node.callee.property.type === AST_NODE_TYPES.Identifier &&
+            ['useEffect', 'useCallback', 'useMemo', 'useLayoutEffect'].includes(
+              node.callee.property.name
+            ))
         ) {
           inEffect = true;
         }
 
-        if (
-          node.callee.type === 'Identifier' &&
-          (node.callee.name === 'signal' || node.callee.name === 'computed') &&
-          (inComponent || inHook || wasInEffect)
-        ) {
+        function isSignalCreate(): boolean {
+          // identifier call: alias or bare
+          if (node.callee.type === AST_NODE_TYPES.Identifier) {
+            return signalCreatorLocals.has(node.callee.name);
+          }
+
+          // namespace call: ns.signal/ns.computed
+          if (
+            node.callee.type === AST_NODE_TYPES.MemberExpression &&
+            node.callee.object.type === AST_NODE_TYPES.Identifier &&
+            signalNamespaces.has(node.callee.object.name) &&
+            node.callee.property.type === AST_NODE_TYPES.Identifier &&
+            (node.callee.property.name === 'signal' || node.callee.property.name === 'computed')
+          ) {
+            return true;
+          }
+
+          // fallback to original broad heuristic (member .signal/.computed)
+          if (
+            node.callee.type === AST_NODE_TYPES.MemberExpression &&
+            node.callee.property.type === AST_NODE_TYPES.Identifier &&
+            (node.callee.property.name === 'signal' || node.callee.property.name === 'computed')
+          ) {
+            return true;
+          }
+
+          return false;
+        }
+
+        if (isSignalCreate() && (inComponent || inHook || wasInEffect)) {
           const { signalName, signalValue, varName } = getSignalInfo(node, context.sourceCode);
 
           const signalType = signalName === 'signal' ? 'reactive' : 'computed';
@@ -409,7 +469,7 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator((name: st
               messageId: 'avoidSignalInComponent',
               data: {
                 signalName,
-                location: inComponent ? 'component' : inHook ? 'hook' : 'effect',
+                context: inComponent ? 'component' : inHook ? 'hook' : 'effect',
               },
               suggest: [
                 {
@@ -419,7 +479,7 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator((name: st
                     const firstNode = context.sourceCode.ast.body[0];
                     const newLine = context.sourceCode.getText().includes('\r\n') ? '\r\n' : '\n';
 
-                    if (!firstNode) {
+                    if (typeof firstNode === 'undefined') {
                       return;
                     }
 
@@ -437,24 +497,6 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator((name: st
 
                       yield fixer.removeRange(comments.range);
                     }
-                  },
-                },
-                {
-                  messageId: 'suggestMoveToCustomHook',
-                  data: { signalType },
-                  *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix, void, unknown> {
-                    const newLine = context.sourceCode.getText().includes('\r\n') ? '\r\n' : '\n';
-
-                    if (typeof context.sourceCode.ast.body[0] === 'undefined') {
-                      return;
-                    }
-
-                    yield fixer.insertTextBefore(
-                      context.sourceCode.ast.body[0],
-                      `const ${varName} = ${signalName}(${signalValue});${newLine}${newLine}`
-                    );
-
-                    yield fixer.replaceText(node, varName);
                   },
                 },
                 {
@@ -528,9 +570,15 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator((name: st
         }
 
         if (
-          node.callee.type === AST_NODE_TYPES.Identifier
-            ? ['useEffect', 'useCallback', 'useMemo', 'useLayoutEffect'].includes(node.callee.name)
-            : false
+          (node.callee.type === AST_NODE_TYPES.Identifier &&
+            ['useEffect', 'useCallback', 'useMemo', 'useLayoutEffect'].includes(
+              node.callee.name
+            )) ||
+          (node.callee.type === AST_NODE_TYPES.MemberExpression &&
+            node.callee.property.type === AST_NODE_TYPES.Identifier &&
+            ['useEffect', 'useCallback', 'useMemo', 'useLayoutEffect'].includes(
+              node.callee.property.name
+            ))
         ) {
           inEffect = wasInEffect;
         }
@@ -556,33 +604,8 @@ export const noSignalCreationInComponentRule = ESLintUtils.RuleCreator((name: st
         }
       },
 
-      [`${AST_NODE_TYPES.Program}:exit`](_node: TSESTree.Program): void {
+      [`${AST_NODE_TYPES.Program}:exit`](): void {
         startPhase(perfKey, 'programExit');
-
-        try {
-          startPhase(perfKey, 'recordMetrics');
-
-          const finalMetrics = stopTracking(perfKey);
-
-          if (finalMetrics) {
-            console.info(
-              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
-
-            if (finalMetrics.exceededBudget === true) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
-        }
 
         perf['Program:exit']();
 

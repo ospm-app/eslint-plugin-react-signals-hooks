@@ -12,29 +12,28 @@ import {
   endPhase,
   startPhase,
   recordMetric,
-  stopTracking,
   startTracking,
   trackOperation,
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
 } from './utils/performance.js';
+import { buildSuffixRegex, hasSignalSuffix } from './utils/suffix.js';
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
 
+type MessageIds = 'preferSignalEffect' | 'suggestEffect' | 'addEffectImport';
+
 type Severity = {
-  preferSignalEffect?: 'error' | 'warn' | 'off';
-  suggestEffect?: 'error' | 'warn' | 'off';
-  addEffectImport?: 'error' | 'warn' | 'off';
+  [key in MessageIds]?: 'error' | 'warn' | 'off';
 };
 
 type Option = {
   performance?: PerformanceBudget;
   severity?: Severity;
+  suffix?: string;
 };
 
 type Options = [Option?];
-
-type MessageIds = 'preferSignalEffect' | 'suggestEffect' | 'addEffectImport';
 
 function getSeverity(messageId: MessageIds, options: Option | undefined): 'error' | 'warn' | 'off' {
   if (!options?.severity) {
@@ -60,23 +59,46 @@ function getSeverity(messageId: MessageIds, options: Option | undefined): 'error
   }
 }
 
-function isSignalDependency(dep: TSESTree.Expression | TSESTree.SpreadElement | null): boolean {
+function isSignalDependency(
+  dep: TSESTree.Expression | TSESTree.SpreadElement | null,
+  suffixRegex?: RegExp
+): boolean {
   if (!dep || dep.type === 'SpreadElement') {
     return false;
   }
+
+  const defaultSuffixRegex = buildSuffixRegex('Signal');
 
   if (
     dep.type === AST_NODE_TYPES.MemberExpression &&
     dep.property.type === AST_NODE_TYPES.Identifier &&
     dep.property.name === 'value' &&
     dep.object.type === AST_NODE_TYPES.Identifier &&
-    dep.object.name.endsWith('Signal')
+    hasSignalSuffix(dep.object.name, suffixRegex ?? defaultSuffixRegex)
   ) {
     return true;
   }
 
-  if (dep.type === AST_NODE_TYPES.Identifier && dep.name.endsWith('Signal')) {
+  if (
+    dep.type === AST_NODE_TYPES.Identifier &&
+    hasSignalSuffix(dep.name, suffixRegex ?? defaultSuffixRegex)
+  ) {
     return true;
+  }
+
+  return false;
+}
+
+function isUseEffectCall(callee: TSESTree.Expression, effectLocalNames: Set<string>): boolean {
+  if (callee.type === AST_NODE_TYPES.Identifier) {
+    return effectLocalNames.has(callee.name);
+  }
+
+  if (
+    callee.type === AST_NODE_TYPES.MemberExpression &&
+    callee.property.type === AST_NODE_TYPES.Identifier
+  ) {
+    return callee.property.name === 'useEffect' || callee.property.name === 'useLayoutEffect';
   }
 
   return false;
@@ -94,14 +116,14 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator((name: string) => 
     hasSuggestions: true,
     docs: {
       description:
-        'Encourages using `effect()` from @preact/signals instead of `useEffect` when working with signals. This provides better performance through automatic dependency tracking and more predictable reactivity behavior.',
+        'Encourages using `effect()` from @preact/signals-react instead of `useEffect` when working with signals. This provides better performance through automatic dependency tracking and more predictable reactivity behavior.',
       url: getRuleDocUrl(ruleName),
     },
     messages: {
       preferSignalEffect:
         'Prefer using `effect()` instead of `useEffect` for signal-only dependencies',
       suggestEffect: 'Replace `useEffect` with `effect()`',
-      addEffectImport: 'Add `effect` import from @preact/signals',
+      addEffectImport: 'Add `effect` import from @preact/signals-react',
     },
     schema: [
       {
@@ -145,6 +167,9 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator((name: string) => 
             },
             additionalProperties: false,
           },
+          suffix: {
+            type: 'string',
+          },
         },
         additionalProperties: false,
       },
@@ -160,14 +185,16 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator((name: string) => 
 
     startPhase(perfKey, 'ruleInit');
 
-    const perf = createPerformanceTracker<Options>(perfKey, option?.performance, context);
+    const perf = createPerformanceTracker(perfKey, option?.performance);
 
     if (option?.performance?.enableMetrics === true) {
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    // console.info(`${ruleName}: Rule configuration:`, option);
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
     recordMetric(perfKey, 'config', {
       performance: {
@@ -185,7 +212,10 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator((name: string) => 
     function shouldContinue(): boolean {
       nodeCount++;
 
-      if (nodeCount > (option?.performance?.maxNodes ?? 2_000)) {
+      if (
+        typeof option?.performance?.maxNodes === 'number' &&
+        nodeCount > option.performance.maxNodes
+      ) {
         trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
@@ -194,29 +224,48 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator((name: string) => 
       return true;
     }
 
+    const suffix =
+      typeof option?.suffix === 'string' && option.suffix.length > 0 ? option.suffix : 'Signal';
+    const suffixRegex = buildSuffixRegex(suffix);
+
+    // Collect local identifiers that refer to React's useEffect/useLayoutEffect
+    // Handles aliased imports like: import { useEffect as uef } from 'react'
+    const effectLocalNames = new Set<string>(['useEffect', 'useLayoutEffect']);
+    for (const stmt of context.sourceCode.ast.body) {
+      if (stmt.type === AST_NODE_TYPES.ImportDeclaration && stmt.source.value === 'react') {
+        for (const spec of stmt.specifiers) {
+          if (
+            spec.type === AST_NODE_TYPES.ImportSpecifier &&
+            spec.imported.type === AST_NODE_TYPES.Identifier &&
+            (spec.imported.name === 'useEffect' || spec.imported.name === 'useLayoutEffect')
+          ) {
+            effectLocalNames.add(spec.local.name);
+          }
+        }
+      }
+    }
+
     startPhase(perfKey, 'ruleExecution');
 
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
-          endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
-
           return;
         }
 
         perf.trackNode(node);
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        trackOperation(
+          perfKey,
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing
+        );
       },
 
-      CallExpression(node: TSESTree.CallExpression): void {
-        // Check if this is a useEffect call
+      [AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
         if (
-          node.callee.type !== AST_NODE_TYPES.Identifier ||
-          node.callee.name !== 'useEffect' ||
-          node.arguments.length < 2 ||
+          !isUseEffectCall(node.callee, effectLocalNames) ||
+          node.arguments.length !== 2 ||
           node.arguments[1]?.type !== AST_NODE_TYPES.ArrayExpression
         ) {
           return;
@@ -225,7 +274,11 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator((name: string) => 
         if (
           !(
             node.arguments[1].elements.length > 0 &&
-            node.arguments[1].elements.every(isSignalDependency)
+            node.arguments[1].elements.every(
+              (dep: TSESTree.Expression | TSESTree.SpreadElement | null): boolean => {
+                return isSignalDependency(dep, suffixRegex);
+              }
+            )
           )
         ) {
           return;
@@ -235,7 +288,7 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator((name: string) => 
           (node): node is TSESTree.ImportDeclaration => {
             return (
               node.type === AST_NODE_TYPES.ImportDeclaration &&
-              node.source.value === '@preact/signals' &&
+              node.source.value === '@preact/signals-react' &&
               node.specifiers.some((s: TSESTree.ImportClause): boolean => {
                 return (
                   s.type === AST_NODE_TYPES.ImportSpecifier &&
@@ -255,38 +308,61 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator((name: string) => 
           node,
           messageId: 'preferSignalEffect',
           fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
-            const fixes = [];
+            // Conservative autofix: only when callback is a zero-arg function with no cleanup return
+            const cb = node.arguments[0] as TSESTree.Node | undefined;
+            if (
+              !cb ||
+              (cb.type !== AST_NODE_TYPES.ArrowFunctionExpression &&
+                cb.type !== AST_NODE_TYPES.FunctionExpression)
+            ) {
+              return null;
+            }
 
-            // Replace useEffect with effect()
-            const [callback] = node.arguments;
+            // zero params only
+            const paramsLength = (
+              cb as TSESTree.ArrowFunctionExpression | TSESTree.FunctionExpression
+            ).params.length;
+            if (paramsLength !== 0) {
+              return null;
+            }
 
-            fixes.push(
-              fixer.replaceText(
-                node,
-                `effect(() => ${context.sourceCode.getText(callback as TSESTree.Node)})`
-              )
-            );
+            // if body contains a top-level return (cleanup), skip fix
+            const hasCleanupReturn = (() => {
+              if (
+                cb.type === AST_NODE_TYPES.ArrowFunctionExpression &&
+                cb.body.type === AST_NODE_TYPES.BlockStatement
+              ) {
+                return cb.body.body.some((s) => s.type === AST_NODE_TYPES.ReturnStatement);
+              }
+              if (cb.type === AST_NODE_TYPES.FunctionExpression) {
+                return cb.body.body.some((s) => s.type === AST_NODE_TYPES.ReturnStatement);
+              }
+              return false;
+            })();
 
-            // Add effect import if needed
+            if (hasCleanupReturn) {
+              return null;
+            }
+
+            const fixes: Array<TSESLint.RuleFix> = [];
+
+            fixes.push(fixer.replaceText(node, `effect(${context.sourceCode.getText(cb)})`));
+
             if (!hasEffectImport) {
-              const effectImport = "import { effect } from '@preact/signals';\n";
+              const effectImport = "import { effect } from '@preact/signals-react';\n";
 
               const firstImport = context.sourceCode.ast.body.find(
-                (n): n is TSESTree.ImportDeclaration => {
+                (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
                   return n.type === AST_NODE_TYPES.ImportDeclaration;
                 }
               );
 
               if (firstImport) {
                 fixes.push(fixer.insertTextBefore(firstImport, effectImport));
+              } else if (context.sourceCode.ast.body[0]) {
+                fixes.push(fixer.insertTextBefore(context.sourceCode.ast.body[0], effectImport));
               } else {
-                const b = context.sourceCode.ast.body[0];
-
-                if (!b) {
-                  return null;
-                }
-
-                fixes.push(fixer.insertTextBefore(b, effectImport));
+                return null;
               }
             }
 
@@ -297,20 +373,15 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator((name: string) => 
               messageId: 'suggestEffect',
               fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
                 const fixes: Array<TSESLint.RuleFix> = [];
-
-                // Replace useEffect with effect()
-                const [callback] = node.arguments;
-
+                const cb = node.arguments[0] as TSESTree.Node | undefined;
+                const cbText = cb ? context.sourceCode.getText(cb) : '';
                 fixes.push(
-                  fixer.replaceText(
-                    node,
-                    `effect(() => ${context.sourceCode.getText(callback as TSESTree.Node)})`
-                  )
+                  fixer.replaceText(node, `effect(${cbText || '() => { /* TODO: port body */ }'})`)
                 );
 
                 // Add effect import if needed
                 if (!hasEffectImport) {
-                  const effectImport = "import { effect } from '@preact/signals';\n";
+                  const effectImport = "import { effect } from '@preact/signals-react';\n";
 
                   const firstImport = context.sourceCode.ast.body.find(
                     (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
@@ -344,7 +415,7 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator((name: string) => 
                         (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
                           return (
                             n.type === AST_NODE_TYPES.ImportDeclaration &&
-                            n.source.value === '@preact/signals'
+                            n.source.value === '@preact/signals-react'
                           );
                         }
                       );
@@ -366,7 +437,10 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator((name: string) => 
                       }
 
                       return [
-                        fixer.insertTextBefore(b, "import { effect } from '@preact/signals';\n"),
+                        fixer.insertTextBefore(
+                          b,
+                          "import { effect } from '@preact/signals-react';\n"
+                        ),
                       ];
                     },
                   } satisfies SuggestionReportDescriptor<MessageIds>,
@@ -375,34 +449,8 @@ export const preferSignalEffectRule = ESLintUtils.RuleCreator((name: string) => 
         });
       },
 
-      // Clean up
-      'Program:exit'(): void {
+      [`${AST_NODE_TYPES.Program}:exit`](): void {
         startPhase(perfKey, 'programExit');
-
-        try {
-          startPhase(perfKey, 'recordMetrics');
-
-          const finalMetrics = stopTracking(perfKey);
-
-          if (finalMetrics) {
-            console.info(
-              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
-
-            if (finalMetrics.exceededBudget === true) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
-        }
 
         perf['Program:exit']();
 

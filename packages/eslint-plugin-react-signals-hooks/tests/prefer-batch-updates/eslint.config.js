@@ -28,6 +28,8 @@ export default [
             arrayUpdateInLoop: 'error',
             // Suggest batching for array updates
             suggestBatchArrayUpdate: 'error',
+            // New warning for read-only signal inside batch
+            nonUpdateSignalInBatch: 'warn',
           },
         },
       ],

@@ -14,7 +14,6 @@ export default [
         {
           ignorePattern: '^_',
           signalNames: ['signal', 'createSignal', 'useSignal'],
-          ignorePatterns: ['^_'],
           severity: {
             variableWithSignalSuffixNotSignal: 'error',
             parameterWithSignalSuffixNotSignal: 'error',

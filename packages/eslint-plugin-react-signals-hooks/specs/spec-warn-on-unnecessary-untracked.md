@@ -30,8 +30,9 @@ This rule identifies and warns about unnecessary usage of `untracked()` and `.pe
 
 ## Auto-fix Suggestions
 
-- Removes unnecessary `untracked()` wrappers
-- Replaces `.peek()` with direct signal access (`.value`)
+- Provides suggestions instead of unconditional automatic fixes:
+  - Replace unnecessary `untracked(() => expr)` with `expr` when safe
+  - Replace the entire call `X.value.peek()` with exactly `X.value` (no extra `.value` appended)
 
 ## Benefits
 
@@ -55,7 +56,21 @@ This rule can be disabled when:
   "react-signals-hooks/warn-on-unnecessary-untracked": ["error", {
     "allowInEffects": true,
     "allowInEventHandlers": true,
-    "allowForSignalWrites": true
+    "allowForSignalWrites": true,
+    "suffix": "Signal",
+    "severity": {
+      "unnecessaryUntracked": "error",
+      "unnecessaryPeek": "error",
+      "suggestRemoveUntracked": "warn",
+      "suggestRemovePeek": "warn"
+    },
+    "performance": {
+      "maxTime": 200,
+      "maxMemory": 256,
+      "maxNodes": 100000,
+      "enableMetrics": false,
+      "logMetrics": false
+    }
   }]
 }
 ```
@@ -65,6 +80,15 @@ This rule can be disabled when:
 - `allowInEffects` (default: `true`): Allow in `useSignalEffect` callbacks
 - `allowInEventHandlers` (default: `true`): Allow in DOM event handlers
 - `allowForSignalWrites` (default: `true`): Allow when used to prevent circular dependencies in effects
+- `suffix` (string, default: `"Signal"`): Suffix used to detect signal variables via naming (in addition to import tracking).
+- `severity` (object): Per-message severity overrides for `unnecessaryUntracked`, `unnecessaryPeek`, `suggestRemoveUntracked`, and `suggestRemovePeek`.
+- `performance` (object): Performance budgets and optional metrics logging.
+
+## Scope and Heuristics
+
+- Reactive contexts are detected heuristically as functions/components whose names are Capitalized or start with `use` (custom hooks).
+- For `.peek()`, the rule currently targets the common shape `someSignal.value.peek()` and replaces it with exactly `someSignal.value`.
+- The rule also identifies signals created in-file via `signal()` / `computed()` (including aliased or namespace imports) from `@preact/signals-react`.
 
 ## Best Practices
 

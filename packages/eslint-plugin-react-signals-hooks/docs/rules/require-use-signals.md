@@ -2,9 +2,18 @@
 
 This rule enforces the use of the `useSignals()` hook in components that utilize signals from `@preact/signals-react`. The `useSignals` hook is essential for proper signal reactivity in React components.
 
+## Plugin Scope
+
+- Signal creators are detected only from `@preact/signals-react` (direct, aliased, or namespace imports).
+- The `useSignals` hook is imported from `@preact/signals-react/runtime` by autofixes when needed.
+
 ## Rule Details
 
-This rule ensures that any React component using signals includes the `useSignals()` hook. The hook is required for signals to work correctly in React components, as it sets up the necessary reactivity system.
+This rule ensures that any React component using signals includes the `useSignals()` hook. The hook is required for signals to work correctly in React components, as it sets up the necessary reactivity system. The rule detects signal usage via:
+
+- Variables created with `signal()` or `computed()` from `@preact/signals-react`
+- Accesses like `someSignal.value` and `someSignal.peek()`
+- Identifiers ending with a configurable suffix (default `"Signal"`)
 
 ### Why is this important?
 
@@ -36,7 +45,8 @@ function Counter() {
 ### ✅ Correct
 
 ```tsx
-import { signal, useSignals } from '@preact/signals-react';
+import { signal } from '@preact/signals-react';
+import { useSignals } from '@preact/signals-react/runtime';
 
 const count = signal(0);
 
@@ -58,8 +68,9 @@ function Counter() {
 This rule provides an auto-fix that can automatically add the `useSignals()` hook and the necessary import. The fix will:
 
 1. Add `useSignals();` at the beginning of the component body
-2. Add the import statement if it's not already present
+2. Add or augment `import { useSignals } from '@preact/signals-react/runtime'`
 3. Preserve existing code formatting
+4. For expression-bodied arrow components, convert to a block and insert `useSignals(); return <expr>;`
 
 ## Options
 
@@ -79,6 +90,9 @@ This rule accepts an options object with the following properties:
 ```
 
 - `ignoreComponents` (string[]) - An array of component names to exclude from this rule.
+- `suffix` (string) - Suffix used by the heuristic to detect signal-like identifiers (default: `"Signal"`).
+- `severity` (object) - Per-message overrides, e.g. `{ missingUseSignals: 'error' | 'warn' | 'off' }`.
+- `performance` (object) - Performance budgets and metrics toggles (`maxTime`, `maxMemory`, `maxNodes`, `enableMetrics`, `logMetrics`, `maxOperations`).
 
 ## When Not To Use It
 
@@ -161,7 +175,7 @@ function UserProfile({ userSignal }) {
 }
 
 // After
-import { useSignals } from '@preact/signals-react';
+import { useSignals } from '@preact/signals-react/runtime';
 
 function UserProfile({ userSignal }) {
   useSignals();

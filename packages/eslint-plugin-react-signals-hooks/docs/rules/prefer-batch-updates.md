@@ -335,6 +335,32 @@ This rule accepts an options object with the following property:
 
 - `minUpdates` (number): Minimum number of signal updates required to trigger the rule (default: 2)
 
+### Severity (optional)
+
+You can control severity per message id (`'error' | 'warn' | 'off'`), including `removeUnnecessaryBatch` and `nonUpdateSignalInBatch`:
+
+```json
+{
+  "rules": {
+    "react-signals-hooks/prefer-batch-updates": [
+      "error",
+      {
+        "minUpdates": 2,
+        "severity": {
+          "useBatch": "error",
+          "suggestUseBatch": "warn",
+          "addBatchImport": "error",
+          "wrapWithBatch": "error",
+          "useBatchSuggestion": "warn",
+          "removeUnnecessaryBatch": "error",
+          "nonUpdateSignalInBatch": "warn"
+        }
+      }
+    ]
+  }
+}
+```
+
 ### Example configuration
 
 ```json
@@ -356,6 +382,11 @@ This rule provides auto-fix suggestions to:
 
 1. Wrap multiple signal updates in a `batch` call
 2. Add the `batch` import if it's not already imported
+3. Remove an unnecessary `batch` wrapper when it contains exactly one signal update
+
+Additional warning (no autofix):
+
+- Warn when a signal is read inside `batch()` without an update (`nonUpdateSignalInBatch`).
 
 ## When Not To Use It
 

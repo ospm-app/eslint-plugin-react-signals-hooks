@@ -17,8 +17,8 @@ export default [
           ignorePattern: '^_',
           // Custom signal function names to recognize
           signalNames: ['signal', 'createSignal', 'useSignal'],
-          // Patterns to ignore (regex as strings)
-          ignorePatterns: ['^_'],
+          // Pattern to ignore (regex string)
+          // Note: rule option is `ignorePattern` (singular)
           // Severity levels for different violation types
           severity: {
             variableWithSignalSuffixNotSignal: 'error',

@@ -75,7 +75,8 @@ export function TestSignalInJSXMissingUseSignals(): JSX.Element {
 
 // Component that should be ignored based on configuration
 export function IgnoredComponent(): JSX.Element {
-  const testSignal = signal('test');
+  	useSignals();
+const testSignal = signal('test');
 
   // This should be ignored if "IgnoredComponent" is in ignoreComponents config
   return <div>{testSignal}</div>;

@@ -12,37 +12,35 @@ import {
   endPhase,
   startPhase,
   recordMetric,
-  stopTracking,
   startTracking,
   trackOperation,
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
 } from './utils/performance.js';
+import { hasSignalSuffix, buildSuffixRegex } from './utils/suffix.js';
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
-
-type Severity = {
-  unnecessaryUntracked?: 'error' | 'warn' | 'off';
-  unnecessaryPeek?: 'error' | 'warn' | 'off';
-  suggestRemoveUntracked?: 'error' | 'warn' | 'off';
-  suggestRemovePeek?: 'error' | 'warn' | 'off';
-};
-
-type Option = {
-  allowInEffects?: boolean;
-  allowInEventHandlers?: boolean;
-  allowForSignalWrites?: boolean;
-  performance?: PerformanceBudget;
-  severity?: Severity;
-};
-
-type Options = [Option?];
 
 type MessageIds =
   | 'unnecessaryUntracked'
   | 'unnecessaryPeek'
   | 'suggestRemoveUntracked'
   | 'suggestRemovePeek';
+
+type Severity = {
+  [key in MessageIds]?: 'error' | 'warn' | 'off';
+};
+
+type Option = {
+  allowInEffects?: boolean;
+  allowInEventHandlers?: boolean;
+  allowForSignalWrites?: boolean;
+  suffix?: string;
+  performance?: PerformanceBudget;
+  severity?: Severity;
+};
+
+type Options = [Option?];
 
 function getSeverity(messageId: MessageIds, options: Option | undefined): 'error' | 'warn' | 'off' {
   if (!options?.severity) {
@@ -72,7 +70,30 @@ function getSeverity(messageId: MessageIds, options: Option | undefined): 'error
   }
 }
 
-function containsSignalAccess(node: TSESTree.Node): boolean {
+function getBaseIdentifierFromMemberChain(
+  node: TSESTree.MemberExpression
+): TSESTree.Identifier | null {
+  let current: TSESTree.Expression | TSESTree.PrivateIdentifier = node.object;
+
+  // Walk down to the left-most Identifier of the chain
+  // e.g., for a.b.c.value -> returns Identifier 'a'
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  while (true) {
+    if (current.type === AST_NODE_TYPES.Identifier) {
+      return current;
+    }
+
+    if (current.type === AST_NODE_TYPES.MemberExpression) {
+      current = current.object;
+      continue;
+    }
+
+    // Unsupported base (super, call result, etc.)
+    return null;
+  }
+}
+
+function containsSignalAccess(node: TSESTree.Node, suffixRegex: RegExp): boolean {
   if (
     [
       AST_NODE_TYPES.FunctionDeclaration,
@@ -86,40 +107,28 @@ function containsSignalAccess(node: TSESTree.Node): boolean {
   if (
     node.type === AST_NODE_TYPES.MemberExpression &&
     node.property.type === AST_NODE_TYPES.Identifier &&
-    node.property.name === 'value' &&
-    node.object.type === AST_NODE_TYPES.Identifier &&
-    (node.object.name.endsWith('Signal') || node.object.name.endsWith('signal'))
+    node.property.name === 'value'
   ) {
-    return true;
+    // Handle direct base: fooSignal.value
+    if (
+      node.object.type === AST_NODE_TYPES.Identifier &&
+      hasSignalSuffix(node.object.name, suffixRegex)
+    ) {
+      return true;
+    }
+
+    // Handle nested base: obj.fooSignal.value or state.user.fooSignal.value
+    const base = getBaseIdentifierFromMemberChain(node);
+
+    if (base && hasSignalSuffix(base.name, suffixRegex)) {
+      return true;
+    }
   }
 
   if ('children' in node && Array.isArray(node.children)) {
     return node.children.some((child: TSESTree.JSXChild): boolean => {
-      return typeof child === 'object' && 'type' in child && containsSignalAccess(child);
-    });
-  }
-
-  if ('properties' in node && Array.isArray(node.properties)) {
-    return node.properties.some(
-      (
-        prop:
-          | TSESTree.PropertyComputedName
-          | TSESTree.PropertyNonComputedName
-          | TSESTree.RestElement
-          | TSESTree.SpreadElement
-      ) => {
-        return containsSignalAccess(prop);
-      }
-    );
-  }
-
-  if ('elements' in node && Array.isArray(node.elements)) {
-    return node.elements.some((element): boolean => {
       return (
-        element !== null &&
-        typeof element === 'object' &&
-        'type' in element &&
-        containsSignalAccess(element)
+        typeof child === 'object' && 'type' in child && containsSignalAccess(child, suffixRegex)
       );
     });
   }
@@ -136,14 +145,34 @@ function containsSignalAccess(node: TSESTree.Node): boolean {
     // Array.isArray produces incorrect item type number, which down the line converts to never
     if (Array.isArray(value)) {
       for (const item of value) {
-        if (typeof item === 'object' && 'type' in item && containsSignalAccess(item)) {
+        if (
+          typeof item === 'object' &&
+          'type' in item &&
+          ![
+            AST_NODE_TYPES.FunctionDeclaration,
+            AST_NODE_TYPES.FunctionExpression,
+            AST_NODE_TYPES.ArrowFunctionExpression,
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-expect-error
+          ].includes(item.type) &&
+          containsSignalAccess(item, suffixRegex)
+        ) {
           return true;
         }
       }
     }
 
     // Handle single node values
-    else if (typeof value === 'object' && 'type' in value && containsSignalAccess(value)) {
+    else if (
+      typeof value === 'object' &&
+      'type' in value &&
+      ![
+        AST_NODE_TYPES.FunctionDeclaration,
+        AST_NODE_TYPES.FunctionExpression,
+        AST_NODE_TYPES.ArrowFunctionExpression,
+      ].includes(value.type) &&
+      containsSignalAccess(value, suffixRegex)
+    ) {
       return true;
     }
   }
@@ -195,7 +224,7 @@ function isInReactiveContext(
   return true;
 }
 
-function isInSignalWriteContext(node: TSESTree.Node): boolean {
+function isInSignalWriteContext(node: TSESTree.Node, suffixRegex: RegExp): boolean {
   let parent: TSESTree.Node | undefined = node.parent;
 
   while (parent) {
@@ -204,8 +233,12 @@ function isInSignalWriteContext(node: TSESTree.Node): boolean {
       parent.left.type === 'MemberExpression' &&
       parent.left.property.type === 'Identifier' &&
       parent.left.property.name === 'value' &&
-      parent.left.object.type === 'Identifier' &&
-      (parent.left.object.name.endsWith('Signal') || parent.left.object.name.endsWith('signal'))
+      ((parent.left.object.type === 'Identifier' &&
+        hasSignalSuffix(parent.left.object.name, suffixRegex)) ||
+        (() => {
+          const base = getBaseIdentifierFromMemberChain(parent.left);
+          return base ? hasSignalSuffix(base.name, suffixRegex) : false;
+        })())
     ) {
       return true;
     }
@@ -215,9 +248,12 @@ function isInSignalWriteContext(node: TSESTree.Node): boolean {
       parent.argument.type === 'MemberExpression' &&
       parent.argument.property.type === 'Identifier' &&
       parent.argument.property.name === 'value' &&
-      parent.argument.object.type === 'Identifier' &&
-      (parent.argument.object.name.endsWith('Signal') ||
-        parent.argument.object.name.endsWith('signal'))
+      ((parent.argument.object.type === 'Identifier' &&
+        hasSignalSuffix(parent.argument.object.name, suffixRegex)) ||
+        (() => {
+          const base = getBaseIdentifierFromMemberChain(parent.argument);
+          return base ? hasSignalSuffix(base.name, suffixRegex) : false;
+        })())
     ) {
       return true;
     }
@@ -271,6 +307,84 @@ function isInComponentOrHook(node: TSESTree.Node): boolean {
   return false;
 }
 
+function isSignalCreation(
+  callee: TSESTree.Expression,
+  creatorLocals: ReadonlySet<string>,
+  namespaces: ReadonlySet<string>
+): boolean {
+  if (callee.type === AST_NODE_TYPES.Identifier) {
+    return creatorLocals.has(callee.name);
+  }
+
+  if (
+    callee.type === AST_NODE_TYPES.MemberExpression &&
+    callee.object.type === AST_NODE_TYPES.Identifier &&
+    namespaces.has(callee.object.name) &&
+    callee.property.type === AST_NODE_TYPES.Identifier &&
+    (callee.property.name === 'signal' || callee.property.name === 'computed')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function containsSignalAccessTracked(node: TSESTree.Node, signalVariables: Set<string>): boolean {
+  // Quick path: look for .value reads whose base identifier is a tracked signal variable
+  if (
+    node.type === AST_NODE_TYPES.MemberExpression &&
+    node.property.type === AST_NODE_TYPES.Identifier &&
+    node.property.name === 'value'
+  ) {
+    const base = getBaseIdentifierFromMemberChain(node);
+
+    if (base && signalVariables.has(base.name)) {
+      return true;
+    }
+  }
+
+  // Generic scan of child nodes
+  for (const key in node) {
+    if (['parent', 'loc', 'range', 'type'].includes(key)) {
+      continue;
+    }
+
+    const value = node[key as keyof TSESTree.Node];
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item && typeof item === 'object' && 'type' in (item as TSESTree.Node)) {
+          const child = item as TSESTree.Node;
+          if (
+            child.type !== AST_NODE_TYPES.FunctionDeclaration &&
+            child.type !== AST_NODE_TYPES.FunctionExpression &&
+            child.type !== AST_NODE_TYPES.ArrowFunctionExpression &&
+            containsSignalAccessTracked(child, signalVariables)
+          ) {
+            return true;
+          }
+        }
+      }
+    } else if (
+      typeof value !== 'undefined' &&
+      typeof value === 'object' &&
+      'type' in (value as TSESTree.Node)
+    ) {
+      const child = value as TSESTree.Node;
+      if (
+        child.type !== AST_NODE_TYPES.FunctionDeclaration &&
+        child.type !== AST_NODE_TYPES.FunctionExpression &&
+        child.type !== AST_NODE_TYPES.ArrowFunctionExpression &&
+        containsSignalAccessTracked(child, signalVariables)
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 const ruleName = 'warn-on-unnecessary-untracked';
 
 export const warnOnUnnecessaryUntrackedRule = ESLintUtils.RuleCreator((name: string): string => {
@@ -296,6 +410,11 @@ export const warnOnUnnecessaryUntrackedRule = ESLintUtils.RuleCreator((name: str
       {
         type: 'object',
         properties: {
+          suffix: {
+            type: 'string',
+            description: "Suffix used to identify signal variables (default: 'Signal')",
+            default: 'Signal',
+          },
           allowInEffects: {
             type: 'boolean',
             description: 'Allow in useSignalEffect callbacks',
@@ -360,6 +479,7 @@ export const warnOnUnnecessaryUntrackedRule = ESLintUtils.RuleCreator((name: str
   },
   defaultOptions: [
     {
+      suffix: 'Signal',
       allowInEffects: true,
       allowInEventHandlers: true,
       allowForSignalWrites: true,
@@ -369,16 +489,20 @@ export const warnOnUnnecessaryUntrackedRule = ESLintUtils.RuleCreator((name: str
   create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
     const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
+    const suffixRegex = buildSuffixRegex(option?.suffix);
+
     startPhase(perfKey, 'ruleInit');
 
-    const perf = createPerformanceTracker<Options>(perfKey, option?.performance, context);
+    const perf = createPerformanceTracker(perfKey, option?.performance);
 
     if (option?.performance?.enableMetrics === true) {
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    console.info(`${ruleName}: Rule configuration:`, option);
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
     recordMetric(perfKey, 'config', {
       performance: {
@@ -410,29 +534,72 @@ export const warnOnUnnecessaryUntrackedRule = ESLintUtils.RuleCreator((name: str
 
     startPhase(perfKey, 'ruleExecution');
 
+    // Per-file detection state: import aliases/namespaces and variables created via signal/computed
+    const signalCreatorLocals = new Set<string>(['signal', 'computed']);
+    const signalNamespaces = new Set<string>();
+    const signalVariables = new Set<string>();
+
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
           endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
 
           return;
         }
 
         perf.trackNode(node);
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        // Guard dynamic PerformanceOperations lookup with a safe fallback
+        const op =
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing;
+
+        trackOperation(perfKey, op);
       },
 
-      CallExpression(node: TSESTree.CallExpression): void {
+      [AST_NODE_TYPES.Program](node: TSESTree.Program): void {
+        for (const stmt of node.body) {
+          if (
+            stmt.type === AST_NODE_TYPES.ImportDeclaration &&
+            typeof stmt.source.value === 'string' &&
+            stmt.source.value === '@preact/signals-react'
+          ) {
+            for (const spec of stmt.specifiers) {
+              if (spec.type === AST_NODE_TYPES.ImportSpecifier) {
+                if (
+                  'name' in spec.imported &&
+                  (spec.imported.name === 'signal' || spec.imported.name === 'computed')
+                ) {
+                  signalCreatorLocals.add(spec.local.name);
+                }
+              } else if (spec.type === AST_NODE_TYPES.ImportNamespaceSpecifier) {
+                signalNamespaces.add(spec.local.name);
+              }
+            }
+          }
+        }
+      },
+
+      [AST_NODE_TYPES.VariableDeclarator](node: TSESTree.VariableDeclarator): void {
+        if (
+          node.id.type === AST_NODE_TYPES.Identifier &&
+          node.init &&
+          node.init.type === AST_NODE_TYPES.CallExpression &&
+          isSignalCreation(node.init.callee, signalCreatorLocals, signalNamespaces)
+        ) {
+          signalVariables.add(node.id.name);
+        }
+      },
+
+      [AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
         if (
           node.callee.type === AST_NODE_TYPES.Identifier &&
           node.callee.name === 'untracked' &&
           node.arguments.length === 1 &&
           node.arguments[0]?.type === AST_NODE_TYPES.ArrowFunctionExpression &&
           node.arguments[0].params.length === 0 &&
-          containsSignalAccess(node.arguments[0].body) &&
+          (containsSignalAccess(node.arguments[0].body, suffixRegex) ||
+            containsSignalAccessTracked(node.arguments[0].body, signalVariables)) &&
           isInReactiveContext(node, context)
         ) {
           if (getSeverity('unnecessaryUntracked', option) !== 'off') {
@@ -466,10 +633,10 @@ export const warnOnUnnecessaryUntrackedRule = ESLintUtils.RuleCreator((name: str
           node.callee.object.property.type === AST_NODE_TYPES.Identifier &&
           node.callee.object.property.name === 'value' &&
           node.callee.object.object.type === AST_NODE_TYPES.Identifier &&
-          (node.callee.object.object.name.endsWith('Signal') ||
-            node.callee.object.object.name.endsWith('signal')) &&
+          (hasSignalSuffix(node.callee.object.object.name, suffixRegex) ||
+            signalVariables.has(node.callee.object.object.name)) &&
           isInReactiveContext(node, context) &&
-          (!isInSignalWriteContext(node) || option?.allowForSignalWrites !== true) &&
+          (!isInSignalWriteContext(node, suffixRegex) || option?.allowForSignalWrites !== true) &&
           getSeverity('unnecessaryPeek', option) !== 'off'
         ) {
           context.report({
@@ -483,9 +650,10 @@ export const warnOnUnnecessaryUntrackedRule = ESLintUtils.RuleCreator((name: str
                       messageId: 'suggestRemovePeek',
                       fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
                         if ('object' in node.callee) {
+                          // Replace the entire call `X.value.peek()` with just `X.value`
                           return fixer.replaceText(
                             node,
-                            `${context.sourceCode.getText(node.callee.object)}.value`
+                            context.sourceCode.getText(node.callee.object)
                           );
                         }
 
@@ -497,34 +665,8 @@ export const warnOnUnnecessaryUntrackedRule = ESLintUtils.RuleCreator((name: str
         }
       },
 
-      // Clean up
-      'Program:exit'(): void {
+      [`${AST_NODE_TYPES.Program}:exit`](): void {
         startPhase(perfKey, 'programExit');
-
-        try {
-          startPhase(perfKey, 'recordMetrics');
-
-          const finalMetrics = stopTracking(perfKey);
-
-          if (finalMetrics) {
-            console.info(
-              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
-
-            if (finalMetrics.exceededBudget === true) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
-        }
 
         perf['Program:exit']();
 

@@ -2,6 +2,11 @@
 
 This rule enforces best practices for signal creation by restricting where signals can be created in your codebase. It helps prevent performance issues by ensuring signals are created in appropriate scopes.
 
+## Plugin Scope
+
+- Signal creators are detected only from `@preact/signals-react` (direct, aliased, or namespace imports).
+- Any autofix import insertions/augmentations target `@preact/signals-react`.
+
 ## Core Functionality
 
 The `restrict-signal-locations` rule prevents signal creation in React components and other disallowed locations where it could lead to performance issues or bugs. It ensures signals are created in module scope or custom hooks.
@@ -65,7 +70,23 @@ Exporting signals from a file often leads to circular imports and breaks the bui
     "rules": {
       "react-signals-hooks/restrict-signal-locations": [
         "error",
-        { "allowedDirs": ["src/signals"] }
+        {
+          "allowedDirs": ["src/signals/"],
+          "allowComputedInComponents": false,
+          "customHookPattern": "^use[A-Z]",
+          "severity": {
+            "signalInComponent": "error",
+            "computedInComponent": "error",
+            "exportedSignal": "warn"
+          },
+          "performance": {
+            "maxTime": 200,
+            "maxMemory": 256,
+            "maxNodes": 100000,
+            "enableMetrics": false,
+            "logMetrics": false
+          }
+        }
       ]
     }
   }
@@ -102,10 +123,27 @@ Exporting signals from a file often leads to circular imports and breaks the bui
   }
   ```
 
+## Detection Heuristics
+
+- Components are detected via naming conventions (Capitalized identifiers for functions/variables).
+- Custom hooks are detected via `customHookPattern` (default `^use[A-Z]`).
+- The rule recognizes signal creators via direct or aliased imports of `signal`/`computed` and via namespace imports from `@preact/signals-react`.
+
+## Export Coverage
+
+- Disallows exporting signals to avoid circular dependencies.
+- Covers:
+  - `export const x = signal(...)`
+  - `export default signal(...)`
+  - `const x = signal(...); export { x }`
+  - `export { x as default }` where `x` is a signal/computed
+  - Namespace and aliased creator imports
+
 ## Error Messages
 
 - `signalInComponent`: "Avoid creating signals in component bodies. Move to module level or a custom hook."
 - `computedInComponent`: "Avoid creating computed values in component bodies. Consider using useMemo instead."
+- `exportedSignal`: "Avoid exporting signals to prevent circular dependencies."
 
 ## Auto-fix Suggestions
 
@@ -148,3 +186,17 @@ Regex pattern to identify custom hooks
 
 - Default: `'^use[A-Z]'`
 - Example: `'^use'` to match any function starting with 'use'
+
+### `severity` (object)
+
+Per-message severity override for `signalInComponent`, `computedInComponent`, and `exportedSignal`
+
+- Default: `{ "signalInComponent": "error", "computedInComponent": "error", "exportedSignal": "warn" }`
+- Example: `{ "signalInComponent": "warn", "computedInComponent": "error", "exportedSignal": "error" }`
+
+### `performance` (object)
+
+Performance budgets and optional metrics logging
+
+- Default: `{ "maxTime": 200, "maxMemory": 256, "maxNodes": 100000, "enableMetrics": false, "logMetrics": false }`
+- Example: `{ "maxTime": 100, "maxMemory": 128, "maxNodes": 50000, "enableMetrics": true, "logMetrics": true }`

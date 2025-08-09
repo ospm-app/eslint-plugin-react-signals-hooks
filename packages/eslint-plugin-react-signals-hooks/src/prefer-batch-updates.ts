@@ -9,7 +9,6 @@ import {
   endPhase,
   startPhase,
   recordMetric,
-  stopTracking,
   startTracking,
   trackOperation,
   createPerformanceTracker,
@@ -26,38 +25,31 @@ type SignalUpdate = {
   scopeDepth: number;
 };
 
-type Severity = {
-  useBatch?: 'error' | 'warn' | 'off';
-  suggestUseBatch?: 'error' | 'warn' | 'off';
-  addBatchImport?: 'error' | 'warn' | 'off';
-  wrapWithBatch?: 'error' | 'warn' | 'off';
-  useBatchSuggestion?: 'error' | 'warn' | 'off';
-  performanceLimitExceeded?: 'error' | 'warn' | 'off';
-};
-
-type Option = {
-  minUpdates?: number;
-  performance?: PerformanceBudget;
-  severity?: Severity;
-};
-
-type Options = [Option?];
-
 type MessageIds =
   | 'useBatch'
   | 'suggestUseBatch'
   | 'addBatchImport'
   | 'wrapWithBatch'
   | 'useBatchSuggestion'
-  | 'performanceLimitExceeded';
+  | 'removeUnnecessaryBatch'
+  | 'nonUpdateSignalInBatch';
+
+type Severity = {
+  [key in MessageIds]?: 'error' | 'warn' | 'off';
+};
+
+type Option = {
+  minUpdates?: number;
+  performance?: PerformanceBudget;
+  suffix?: string;
+  severity?: Severity;
+};
+
+type Options = [Option?];
 
 function getSeverity(messageId: MessageIds, options: Option | undefined): 'error' | 'warn' | 'off' {
   if (typeof options?.severity === 'undefined') {
     return 'error';
-  }
-
-  if (messageId === 'performanceLimitExceeded') {
-    return options.severity.performanceLimitExceeded || 'warn';
   }
 
   switch (messageId) {
@@ -79,6 +71,14 @@ function getSeverity(messageId: MessageIds, options: Option | undefined): 'error
 
     case 'useBatchSuggestion': {
       return options.severity.useBatchSuggestion ?? 'warn';
+    }
+
+    case 'removeUnnecessaryBatch': {
+      return options.severity.removeUnnecessaryBatch ?? 'error';
+    }
+
+    case 'nonUpdateSignalInBatch': {
+      return options.severity.nonUpdateSignalInBatch ?? 'warn';
     }
 
     default: {
@@ -552,6 +552,58 @@ function isSignalReference(node: TSESTree.Node): boolean {
   return false;
 }
 
+function containsSignalRead(node: TSESTree.Node): boolean {
+  // Direct identifier like `countSignal`
+  if (node.type === AST_NODE_TYPES.Identifier) {
+    return isSignalReference(node);
+  }
+
+  // Member expression like `countSignal.value` or deeper
+  if (node.type === AST_NODE_TYPES.MemberExpression) {
+    if (isSignalReference(node.object)) {
+      return true;
+    }
+    // Recurse into object/property as needed
+    return (
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+      (node.object && containsSignalRead(node.object)) ||
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+      (node.property &&
+        node.property.type !== AST_NODE_TYPES.PrivateIdentifier &&
+        containsSignalRead(node.property as unknown as TSESTree.Node))
+    );
+  }
+
+  // Generic recursive descent for any child node/arrays
+  for (const key of Object.keys(node) as Array<keyof typeof node>) {
+    const value = node[key as keyof typeof node];
+
+    if (typeof value === 'undefined') {
+      continue;
+    }
+
+    if (typeof value === 'object') {
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-expect-error
+          if (item && typeof item.type === 'string') {
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-expect-error
+            if (containsSignalRead(item)) {
+              return true;
+            }
+          }
+        }
+      } else if ('type' in value && containsSignalRead(value)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 let signalUpdates: Array<SignalUpdate> = [];
 
 const ruleName = 'prefer-batch-updates';
@@ -571,11 +623,14 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
     messages: {
       useBatch:
         '{{count}} signal updates detected in the same scope. Use `batch` to optimize performance by reducing renders.',
-      performanceLimitExceeded: 'Performance limit exceeded: {{message}}',
       suggestUseBatch: 'Use `batch` to group {{count}} signal updates',
       addBatchImport: "Add `batch` import from '@preact/signals-react'",
       wrapWithBatch: 'Wrap with `batch` to optimize signal updates',
       useBatchSuggestion: 'Use `batch` to group {{count}} signal updates',
+      removeUnnecessaryBatch:
+        'Unnecessary batch around a single signal update. Remove the batch wrapper',
+      nonUpdateSignalInBatch:
+        'Signal read inside `batch()` without an update. Batch is intended for grouping updates.',
     },
     schema: [
       {
@@ -667,7 +722,11 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
                 type: 'string',
                 enum: ['error', 'warn', 'off'],
               },
-              performanceLimitExceeded: {
+              removeUnnecessaryBatch: {
+                type: 'string',
+                enum: ['error', 'warn', 'off'],
+              },
+              nonUpdateSignalInBatch: {
                 type: 'string',
                 enum: ['error', 'warn', 'off'],
               },
@@ -689,7 +748,8 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
         addBatchImport: 'error',
         wrapWithBatch: 'error',
         useBatchSuggestion: 'error',
-        performanceLimitExceeded: 'error',
+        removeUnnecessaryBatch: 'error',
+        nonUpdateSignalInBatch: 'warn',
       },
     },
   ],
@@ -699,14 +759,16 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
   ): ESLintUtils.RuleListener {
     const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
-    const perf = createPerformanceTracker(perfKey, DEFAULT_PERFORMANCE_BUDGET, context);
+    const perf = createPerformanceTracker(perfKey, option?.performance);
 
     if (option?.performance?.enableMetrics === true) {
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    // console.info(`${ruleName}: Rule configuration:`, option);
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
     let nodeCount = 0;
 
@@ -749,19 +811,125 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
           ) {
             pushBatchScope(true);
 
-            const callback = node.arguments[0];
-
             if (
-              callback.type === AST_NODE_TYPES.ArrowFunctionExpression &&
-              callback.body.type === AST_NODE_TYPES.BlockStatement
+              node.arguments[0].type === AST_NODE_TYPES.ArrowFunctionExpression &&
+              node.arguments[0].body.type === AST_NODE_TYPES.BlockStatement
             ) {
               recordMetric(perfKey, 'skipArrowBatchBody', {
-                location: context.sourceCode.getLocFromIndex(callback.body.range[0]),
+                location: context.sourceCode.getLocFromIndex(node.arguments[0].body.range[0]),
               });
-            } else if (callback.type === AST_NODE_TYPES.FunctionExpression) {
+
+              // Report non-update signal reads inside batch body
+              if (Array.isArray(node.arguments[0].body.body)) {
+                for (const stmt of node.arguments[0].body.body) {
+                  if (
+                    stmt.type === AST_NODE_TYPES.ExpressionStatement &&
+                    !isSignalUpdate(stmt.expression) &&
+                    containsSignalRead(stmt.expression) &&
+                    getSeverity('nonUpdateSignalInBatch', context.options[0]) !== 'off'
+                  ) {
+                    context.report({ node: stmt.expression, messageId: 'nonUpdateSignalInBatch' });
+                  }
+                }
+              }
+
+              if (Array.isArray(node.arguments[0].body.body)) {
+                const bodyStatements = node.arguments[0].body.body;
+
+                // Count signal updates within the batch body
+                const updateStmts: Array<TSESTree.ExpressionStatement> = bodyStatements
+                  .filter(
+                    (s): s is TSESTree.ExpressionStatement =>
+                      s.type === AST_NODE_TYPES.ExpressionStatement
+                  )
+                  .filter((s) => isSignalUpdate(s.expression));
+
+                if (
+                  updateStmts.length === 1 &&
+                  getSeverity('removeUnnecessaryBatch', context.options[0]) !== 'off'
+                ) {
+                  const onlyUpdateStmt = updateStmts[0];
+
+                  // If the body has exactly one statement and it is the update, provide a safe fixer
+                  if (bodyStatements.length === 1) {
+                    context.report({
+                      node,
+                      messageId: 'removeUnnecessaryBatch',
+                      fix(fixer) {
+                        return fixer.replaceText(node, context.sourceCode.getText(onlyUpdateStmt));
+                      },
+                    });
+                  } else {
+                    // Otherwise, just report (no fixer) to avoid dropping other non-update statements
+                    context.report({ node, messageId: 'removeUnnecessaryBatch' });
+                  }
+                }
+              }
+            } else if (node.arguments[0].type === AST_NODE_TYPES.ArrowFunctionExpression) {
+              // Concise arrow body case: body is an expression
+              if (
+                node.arguments[0].body.type !== AST_NODE_TYPES.BlockStatement &&
+                !isSignalUpdate(node.arguments[0].body) &&
+                containsSignalRead(node.arguments[0].body) &&
+                getSeverity('nonUpdateSignalInBatch', context.options[0]) !== 'off'
+              ) {
+                context.report({
+                  node: node.arguments[0].body,
+                  messageId: 'nonUpdateSignalInBatch',
+                });
+              }
+              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+            } else if (node.arguments[0].type === AST_NODE_TYPES.FunctionExpression) {
               recordMetric(perfKey, 'skipFunctionBatchBody', {
-                location: context.sourceCode.getLocFromIndex(callback.body.range[0]),
+                location: context.sourceCode.getLocFromIndex(node.arguments[0].body.range[0]),
               });
+
+              const bodyStatements = node.arguments[0].body.body;
+
+              // Report non-update signal reads inside batch body
+              if (Array.isArray(bodyStatements)) {
+                for (const stmt of bodyStatements) {
+                  if (
+                    stmt.type === AST_NODE_TYPES.ExpressionStatement &&
+                    !isSignalUpdate(stmt.expression) &&
+                    containsSignalRead(stmt.expression) &&
+                    getSeverity('nonUpdateSignalInBatch', context.options[0]) !== 'off'
+                  ) {
+                    context.report({ node: stmt.expression, messageId: 'nonUpdateSignalInBatch' });
+                  }
+                }
+              }
+
+              if (Array.isArray(bodyStatements)) {
+                // Count signal updates within the batch body
+                const updateStmts: Array<TSESTree.ExpressionStatement> = bodyStatements
+                  .filter(
+                    (s): s is TSESTree.ExpressionStatement =>
+                      s.type === AST_NODE_TYPES.ExpressionStatement
+                  )
+                  .filter((s) => isSignalUpdate(s.expression));
+
+                if (
+                  updateStmts.length === 1 &&
+                  getSeverity('removeUnnecessaryBatch', context.options[0]) !== 'off'
+                ) {
+                  const onlyUpdateStmt = updateStmts[0];
+
+                  // If the body has exactly one statement and it is the update, provide a safe fixer
+                  if (bodyStatements.length === 1) {
+                    context.report({
+                      node,
+                      messageId: 'removeUnnecessaryBatch',
+                      fix(fixer) {
+                        return fixer.replaceText(node, context.sourceCode.getText(onlyUpdateStmt));
+                      },
+                    });
+                  } else {
+                    // Otherwise, just report (no fixer) to avoid dropping other non-update statements
+                    context.report({ node, messageId: 'removeUnnecessaryBatch' });
+                  }
+                }
+              }
             }
           }
         }
@@ -946,33 +1114,6 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
           context,
           perfKey
         );
-
-        try {
-          startPhase(perfKey, 'recordMetrics');
-
-          if (option?.performance?.logMetrics === true) {
-            const finalMetrics = stopTracking(perfKey);
-
-            if (typeof finalMetrics !== 'undefined') {
-              console.info(
-                `\n[prefer-batch-updates] Performance Metrics (${finalMetrics.exceededBudget === true ? 'EXCEEDED' : 'OK'}):`
-              );
-              console.info(`  File: ${context.filename}`);
-              console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-              console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
-
-              if (finalMetrics.exceededBudget === true) {
-                console.warn('\n⚠️  Performance budget exceeded!');
-              }
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
-        }
 
         perf['Program:exit']();
 

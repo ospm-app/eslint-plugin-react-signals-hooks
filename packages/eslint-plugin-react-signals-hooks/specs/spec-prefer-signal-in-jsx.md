@@ -6,6 +6,11 @@ This rule enforces direct usage of signals in JSX without the `.value` accessor,
 
 The `prefer-signal-in-jsx` rule detects unnecessary `.value` access on signals within JSX and suggests using the signal directly for cleaner and more idiomatic code.
 
+## Plugin Scope
+
+- Signal creator detection is scoped to `@preact/signals-react` only.
+- The rule recognizes `signal()` and `computed()` created in-file via direct, aliased, or namespace imports from `@preact/signals-react`.
+
 ## Handled Cases
 
 ### 1. Direct Signal Usage in JSX
@@ -36,11 +41,28 @@ The rule intelligently skips `.value` access in the following scenarios:
 
 - `preferDirectSignalUsage`: "Use the signal directly in JSX instead of accessing .value"
 
-## Auto-fix Suggestions
+## Autofix and Suggestions
 
-- Removes `.value` access from signals in JSX
-- Preserves the rest of the expression structure
-- Only modifies direct signal usage within JSX contexts
+- Autofix: Yes (fixable: `code`). Removes `.value` or `.peek()` access where applicable in JSX.
+- Suggestions: No (`hasSuggestions: false`).
+- Preserves the rest of the expression structure.
+- Only modifies direct signal usage within JSX contexts.
+
+## Options
+
+```ts
+type Options = [
+  {
+    performance?: PerformanceBudget;
+    severity?: { preferDirectSignalUsage?: 'error' | 'warn' | 'off' };
+    suffix?: string; // RegExp source for matching signal variable suffix (e.g., "Signal")
+  }?
+];
+```
+
+- `performance`: Enables performance tracking and budgeting.
+- `severity`: Per-message severity control. Defaults to `error`.
+- `suffix`: Custom suffix for detecting signal variable names (default handled by implementation).
 
 ## Benefits
 

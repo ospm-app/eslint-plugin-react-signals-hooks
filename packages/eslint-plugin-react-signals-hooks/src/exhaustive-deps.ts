@@ -14,17 +14,72 @@ import {
   endPhase,
   startPhase,
   recordMetric,
-  stopTracking,
   startTracking,
   trackOperation,
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
   PerformanceLimitExceededError,
 } from './utils/performance.js';
+import { buildSuffixRegex, hasSignalSuffix } from './utils/suffix.js';
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
 
-interface Dependency {
+type MessageIds =
+  | 'missingDependencies'
+  | 'missingDependency'
+  | 'unnecessaryDependencies'
+  | 'unnecessaryDependency'
+  | 'duplicateDependencies'
+  | 'duplicateDependency'
+  | 'unknownDependencies'
+  | 'asyncEffect'
+  | 'missingEffectCallback'
+  | 'staleAssignmentDependency'
+  | 'staleAssignmentLiteral'
+  | 'staleAssignmentExpression'
+  | 'staleAssignmentUnstable'
+  | 'spreadElementInDependencyArray'
+  | 'useEffectEventInDependencyArray'
+  | 'addAllDependencies'
+  | 'addSingleDependency'
+  | 'removeDependencyArray'
+  | 'addDependencies'
+  | 'removeDependency'
+  | 'removeSingleDependency'
+  | 'removeAllDuplicates'
+  | 'removeAllUnnecessaryDependencies'
+  | 'removeThisDuplicate'
+  | 'dependencyWithoutSignal'
+  | 'notArrayLiteral'
+  | 'moveInsideEffect';
+
+type Severity = {
+  [key in MessageIds]?: 'error' | 'warn' | 'off';
+};
+
+type Option = {
+  additionalHooks?: string | undefined;
+  unsafeAutofix?: boolean;
+  experimental_autoDependenciesHooks?: Array<string>;
+  requireExplicitEffectDeps?: boolean;
+  enableAutoFixForMemoAndCallback?: boolean;
+  performance?: PerformanceBudget;
+  severity?: Severity;
+  suffix?: string;
+};
+
+type Options = [Option?];
+
+type DeclaredDependency = { key: string; node: TSESTree.Node };
+
+type DependencyTreeNode = {
+  isUsed: boolean;
+  isSatisfiedRecursively: boolean;
+  isSubtreeUsed: boolean;
+  children: Map<string, DependencyTreeNode>;
+};
+
+type Dependency = {
   node:
     | TSESTree.Node
     | TSESTree.Expression
@@ -38,7 +93,7 @@ interface Dependency {
   isComputedAssignmentOnly?: boolean | undefined;
   // Observed formatted variants of this dependency path based on actual code usage optional chaining
   observedFormatted?: Set<string>;
-}
+};
 
 function getObservedFormatted(
   depKey: string,
@@ -76,8 +131,11 @@ function projectOptionalChains(
   let soFar = '';
 
   for (let i = 0; i < members.length; i++) {
-    // eslint-disable-next-line security/detect-object-injection
-    soFar = i === 0 && typeof members[0] === 'string' ? members[0] : `${soFar}.${members[i]}`;
+    soFar =
+      i === 0 && typeof members[0] === 'string'
+        ? members[0]
+        : // eslint-disable-next-line security/detect-object-injection
+          `${soFar}.${members[i]}`;
 
     const val = optionalChains.get(soFar);
 
@@ -88,89 +146,6 @@ function projectOptionalChains(
 
   return projected;
 }
-
-type Severity = {
-  addDependencies?: 'error' | 'warn' | 'off';
-  addAllDependencies?: 'error' | 'warn' | 'off';
-  addSingleDependency?: 'error' | 'warn' | 'off';
-  removeDependencyArray?: 'error' | 'warn' | 'off';
-  removeDependency?: 'error' | 'warn' | 'off';
-  removeSingleDependency?: 'error' | 'warn' | 'off';
-  removeAllDuplicates?: 'error' | 'warn' | 'off';
-  removeAllUnnecessaryDependencies?: 'error' | 'warn' | 'off';
-  removeThisDuplicate?: 'error' | 'warn' | 'off';
-  performanceLimitExceeded?: 'error' | 'warn' | 'off';
-  missingDependencies?: 'error' | 'warn' | 'off';
-  missingDependency?: 'error' | 'warn' | 'off';
-  unnecessaryDependencies?: 'error' | 'warn' | 'off';
-  unnecessaryDependency?: 'error' | 'warn' | 'off';
-  duplicateDependencies?: 'error' | 'warn' | 'off';
-  duplicateDependency?: 'error' | 'warn' | 'off';
-  unknownDependencies?: 'error' | 'warn' | 'off';
-  asyncEffect?: 'error' | 'warn' | 'off';
-  missingEffectCallback?: 'error' | 'warn' | 'off';
-  staleAssignmentDependency?: 'error' | 'warn' | 'off';
-  staleAssignmentLiteral?: 'error' | 'warn' | 'off';
-  staleAssignmentExpression?: 'error' | 'warn' | 'off';
-  staleAssignmentUnstable?: 'error' | 'warn' | 'off';
-  spreadElementInDependencyArray?: 'error' | 'warn' | 'off';
-  useEffectEventInDependencyArray?: 'error' | 'warn' | 'off';
-  dependencyWithoutSignal?: 'error' | 'warn' | 'off';
-  notArrayLiteral?: 'error' | 'warn' | 'off';
-  moveInsideEffect?: 'error' | 'warn' | 'off';
-};
-
-type Option = {
-  additionalHooks?: string | undefined;
-  unsafeAutofix?: boolean;
-  experimental_autoDependenciesHooks?: Array<string>;
-  requireExplicitEffectDeps?: boolean;
-  enableAutoFixForMemoAndCallback?: boolean;
-  performance?: PerformanceBudget;
-  /** Custom severity levels for different violation types */
-  severity?: Severity;
-};
-
-type Options = [Option?];
-
-type MessageIds =
-  | 'missingDependencies'
-  | 'missingDependency'
-  | 'unnecessaryDependencies'
-  | 'unnecessaryDependency'
-  | 'duplicateDependencies'
-  | 'duplicateDependency'
-  | 'unknownDependencies'
-  | 'asyncEffect'
-  | 'missingEffectCallback'
-  | 'staleAssignmentDependency'
-  | 'staleAssignmentLiteral'
-  | 'staleAssignmentExpression'
-  | 'staleAssignmentUnstable'
-  | 'spreadElementInDependencyArray'
-  | 'useEffectEventInDependencyArray'
-  | 'addAllDependencies'
-  | 'addSingleDependency'
-  | 'removeDependencyArray'
-  | 'addDependencies'
-  | 'removeDependency'
-  | 'removeSingleDependency'
-  | 'removeAllDuplicates'
-  | 'removeAllUnnecessaryDependencies'
-  | 'removeThisDuplicate'
-  | 'dependencyWithoutSignal'
-  | 'notArrayLiteral'
-  | 'moveInsideEffect'
-  | 'performanceLimitExceeded';
-
-type DeclaredDependency = { key: string; node: TSESTree.Node };
-
-type DependencyTreeNode = {
-  isUsed: boolean;
-  isSatisfiedRecursively: boolean;
-  isSubtreeUsed: boolean;
-  children: Map<string, DependencyTreeNode>;
-};
 
 function memoizeWithWeakMap(
   fn: (resolved: Variable, componentScope: Scope | null, pureScopes: Set<Scope>) => boolean,
@@ -216,6 +191,8 @@ function isSignalIdentifier(node: TSESTree.Node | TSESTree.Identifier, perfKey: 
   return ['signal', 'computed', 'effect'].includes(name);
 }
 
+const suffixByPerfKey = new Map<string, RegExp>();
+
 function isSignalVariable(node: TSESTree.Node | Pattern, perfKey: string): boolean {
   trackOperation(perfKey, PerformanceOperations.signalCheck);
 
@@ -223,14 +200,25 @@ function isSignalVariable(node: TSESTree.Node | Pattern, perfKey: string): boole
     return false;
   }
 
-  return node.name.endsWith('Signal');
+  const suffixRegex = suffixByPerfKey.get(perfKey) ?? buildSuffixRegex('Signal');
+
+  return hasSignalSuffix(node.name, suffixRegex);
 }
 
 function isSignalDependency(dependency: string, perfKey: string): boolean {
   trackOperation(perfKey, PerformanceOperations.signalCheck);
 
-  // Only treat names containing 'Signal' as signals. Do not treat arbitrary '.value' as a signal.
-  return dependency.includes('Signal') || dependency.split('.')[0]?.endsWith('Signal') === true;
+  const suffixRegex = suffixByPerfKey.get(perfKey) ?? buildSuffixRegex('Signal');
+
+  // Treat names ending with the configured suffix as signals.
+  // Handle both full path and the base identifier before the first '.'.
+  if (hasSignalSuffix(dependency, suffixRegex)) {
+    return true;
+  }
+
+  const base = dependency.split('.')[0] ?? '';
+
+  return base !== '' && hasSignalSuffix(base, suffixRegex);
 }
 
 function isSignalValueAccess(
@@ -244,7 +232,14 @@ function isSignalValueAccess(
     node.property.type === AST_NODE_TYPES.Identifier &&
     node.property.name === 'value' &&
     node.object.type === AST_NODE_TYPES.Identifier &&
-    node.object.name.endsWith('Signal')
+    hasSignalSuffix(
+      node.object.name,
+      buildSuffixRegex(
+        typeof context.options[0]?.suffix === 'string' && context.options[0].suffix.length > 0
+          ? context.options[0].suffix
+          : 'Signal'
+      )
+    )
   ) {
     const ancestors = context.sourceCode.getAncestors(node);
 
@@ -509,6 +504,58 @@ function joinEnglish(arr: Array<string>): string {
   return s;
 }
 
+function scanTreeRecursively(
+  node: DependencyTreeNode,
+  missingPaths: Set<string>,
+  satisfyingPaths: Set<string>,
+  keyToPath: (key: string) => string,
+  perfKey: string
+): void {
+  node.children.forEach((child: DependencyTreeNode, key: string): void => {
+    const path = keyToPath(key);
+
+    const isSignalPath = isSignalDependency(path, perfKey) || isSignalDependency(key, perfKey);
+
+    const hasValueAccess = path.endsWith('.value') || key.endsWith('.value');
+
+    const isAnySignalType = isSignalPath || hasValueAccess;
+
+    if (child.isSatisfiedRecursively) {
+      if (child.isSubtreeUsed || child.isUsed) {
+        satisfyingPaths.add(path);
+      }
+
+      if (isAnySignalType) {
+        return;
+      }
+    } else if (
+      child.isUsed ||
+      (isAnySignalType && child.isSubtreeUsed) ||
+      (!isAnySignalType && child.isSubtreeUsed && child.children.size === 0)
+    ) {
+      // If a root signal base is missing but its .value is used, prefer not to add the base
+      if (!path.includes('.') && isSignalDependency(path, perfKey)) {
+        const valueChild = child.children.get('value');
+        if (valueChild && (valueChild.isUsed || valueChild.isSubtreeUsed)) {
+          return;
+        }
+      }
+
+      missingPaths.add(path);
+
+      return;
+    }
+
+    scanTreeRecursively(
+      child,
+      missingPaths,
+      satisfyingPaths,
+      (childKey: string): string => `${path}.${childKey}`,
+      perfKey
+    );
+  });
+}
+
 function getWarningMessage(
   deps: Set<string>,
   singlePrefix: string,
@@ -607,68 +654,71 @@ function collectRecommendations({
     if (key.endsWith('.value')) {
       const signalName = key.slice(0, -6);
 
-      if (signalName.endsWith('Signal')) {
+      if (isSignalDependency(signalName, perfKey)) {
         externalDependencies.delete(signalName);
 
         externalDependencies.delete(key);
       }
-    } else if (key.includes('.value[') && key.includes('Signal')) {
+    } else if (key.includes('.value[')) {
       const valueIndex = key.indexOf('.value[');
 
       if (valueIndex !== -1) {
         const signalName = key.slice(0, valueIndex);
 
-        if (signalName.endsWith('Signal')) {
+        if (isSignalDependency(signalName, perfKey)) {
           externalDependencies.delete(signalName);
 
           externalDependencies.delete(key);
         }
       }
-    } else if (key.endsWith('Signal')) {
+    } else if (isSignalDependency(key, perfKey)) {
       externalDependencies.delete(key);
     }
   });
 
   dependencies.forEach((_, key): void => {
-    if (key.includes('Signal') && !key.endsWith('Signal')) {
-      if (key.includes('[') && key.includes(']')) {
+    if (isSignalDependency(key, perfKey)) {
+      return;
+    }
+
+    if (key.includes('[') && key.includes(']')) {
+      return;
+    }
+
+    const parts = key.split('.');
+
+    if (parts.length > 2 && parts[1] === 'value') {
+      const signalName = parts[0];
+
+      if (typeof signalName === 'undefined') {
         return;
       }
-      const parts = key.split('.');
 
-      if (parts.length > 2 && parts[1] === 'value') {
-        const signalName = parts[0];
+      if (!isSignalDependency(signalName, perfKey)) {
+        return;
+      }
 
-        const baseValueKey = `${signalName}.value`;
+      const dependency = dependencies.get(key);
 
-        const isBaseValueDeclared = declaredDependencies.some(
-          ({ key: depKey }: DeclaredDependency): boolean => {
-            return depKey === baseValueKey;
-          }
-        );
+      const isAssignmentOnly = dependency && dependency.hasReads === false;
 
-        const dependency = dependencies.get(key);
+      const hasInnerScopeComputedProperty =
+        dependency && dependency.hasInnerScopeComputedProperty === true;
 
-        const isAssignmentOnly = dependency && dependency.hasReads === false;
-
-        const hasInnerScopeComputedProperty =
-          dependency && dependency.hasInnerScopeComputedProperty === true;
-
-        if (
-          !isBaseValueDeclared &&
-          isAssignmentOnly !== true &&
-          hasInnerScopeComputedProperty !== true
-        ) {
-          dependencies.delete(key);
-        }
+      if (
+        !declaredDependencies.some(
+          ({ key: depKey }: DeclaredDependency): boolean => depKey === `${signalName}.value`
+        ) &&
+        isAssignmentOnly !== true &&
+        hasInnerScopeComputedProperty !== true
+      ) {
+        dependencies.delete(key);
       }
     }
   });
 
   dependencies.forEach((_, key): void => {
-    const node = getOrCreateNodeByPath(depTree, key);
-
-    node.isUsed = true;
+    getOrCreateNodeByPath(depTree, key).isUsed = true;
 
     markAllParentsByPath(depTree, key, (parent): void => {
       parent.isSubtreeUsed = true;
@@ -676,17 +726,11 @@ function collectRecommendations({
   });
 
   for (const { key } of declaredDependencies) {
-    // Normalize optional chaining for tree pathing; missing-deps reporting preserves optionals elsewhere
-    const baseKey = key.replace(/\?\./g, '.');
-    const node = getOrCreateNodeByPath(depTree, baseKey);
-
-    node.isSatisfiedRecursively = true;
+    getOrCreateNodeByPath(depTree, key.replace(/\?\./g, '.')).isSatisfiedRecursively = true;
   }
 
   for (const key of stableDependencies) {
-    const node = getOrCreateNodeByPath(depTree, key);
-
-    node.isSatisfiedRecursively = true;
+    getOrCreateNodeByPath(depTree, key).isSatisfiedRecursively = true;
   }
 
   function getOrCreateNodeByPath(rootNode: DependencyTreeNode, path: string): DependencyTreeNode {
@@ -734,35 +778,37 @@ function collectRecommendations({
 
   dependencies.forEach((_, key): void => {
     if (key.endsWith('.value')) {
-      const baseName = key.slice(0, -6);
+      const signalName = key.slice(0, -6);
 
-      if (baseName.endsWith('Signal')) {
+      if (isSignalDependency(signalName, perfKey)) {
         importedSignals.add(key);
 
-        externalDependencies.delete(baseName);
+        externalDependencies.delete(signalName);
 
         externalDependencies.delete(key);
       }
-    } else if (key.includes('.value[') && key.includes('Signal')) {
+    } else if (key.includes('.value[')) {
       const valueIndex = key.indexOf('.value[');
 
       if (valueIndex !== -1) {
-        const baseName = key.slice(0, valueIndex);
+        const signalName = key.slice(0, valueIndex);
 
-        if (baseName.endsWith('Signal')) {
+        if (isSignalDependency(signalName, perfKey)) {
           importedSignals.add(key);
 
-          externalDependencies.delete(baseName);
+          externalDependencies.delete(signalName);
 
           externalDependencies.delete(key);
         }
       }
-    } else if (key.endsWith('Signal')) {
+    } else if (isSignalDependency(key, perfKey)) {
       const valueKey = `${key}.value`;
 
-      const isBaseValueDeclared = declaredDependencies.some(({ key: depKey }) => {
-        return depKey === valueKey;
-      });
+      const isBaseValueDeclared = declaredDependencies.some(
+        ({ key: depKey }: DeclaredDependency): boolean => {
+          return depKey === valueKey;
+        }
+      );
 
       const dependency = dependencies.get(valueKey);
 
@@ -788,35 +834,46 @@ function collectRecommendations({
   });
 
   dependencies.forEach((_, key): void => {
-    if (key.includes('Signal') && !key.endsWith('Signal')) {
-      if (key.includes('[') && key.includes(']')) {
+    if (isSignalDependency(key, perfKey)) {
+      return;
+    }
+    if (key.includes('[') && key.includes(']')) {
+      return;
+    }
+    const parts = key.split('.');
+
+    if (parts.length > 2 && parts[1] === 'value') {
+      const signalName = parts[0];
+
+      if (typeof signalName !== 'string') {
         return;
       }
-      const parts = key.split('.');
 
-      if (parts.length > 2 && parts[1] === 'value') {
-        const signalName = parts[0];
+      if (!isSignalDependency(signalName, perfKey)) {
+        return;
+      }
 
-        const baseValueKey = `${signalName}.value`;
+      const baseValueKey = `${signalName}.value`;
 
-        const isBaseValueDeclared = declaredDependencies.some(({ key: depKey }) => {
+      const isBaseValueDeclared = declaredDependencies.some(
+        ({ key: depKey }: DeclaredDependency): boolean => {
           return depKey === baseValueKey;
-        });
-
-        const dependency = dependencies.get(key);
-
-        const isAssignmentOnly = dependency && dependency.hasReads === false;
-
-        const hasInnerScopeComputedProperty =
-          dependency && dependency.hasInnerScopeComputedProperty === true;
-
-        if (
-          !isBaseValueDeclared &&
-          isAssignmentOnly !== true &&
-          hasInnerScopeComputedProperty !== true
-        ) {
-          dependencies.delete(key);
         }
+      );
+
+      const dependency = dependencies.get(key);
+
+      const isAssignmentOnly = dependency && dependency.hasReads === false;
+
+      const hasInnerScopeComputedProperty =
+        dependency && dependency.hasInnerScopeComputedProperty === true;
+
+      if (
+        !isBaseValueDeclared &&
+        isAssignmentOnly !== true &&
+        hasInnerScopeComputedProperty !== true
+      ) {
+        dependencies.delete(key);
       }
     }
   });
@@ -829,7 +886,7 @@ function collectRecommendations({
     if (key.endsWith('.value')) {
       const signalName = key.slice(0, -6);
 
-      if (signalName.endsWith('Signal')) {
+      if (isSignalDependency(signalName, perfKey)) {
         const node = getOrCreateNodeByPath(depTree, signalName);
 
         node.isSatisfiedRecursively = true;
@@ -838,13 +895,13 @@ function collectRecommendations({
 
         externalDependencies.delete(key);
       }
-    } else if (key.includes('.value[') && key.includes('Signal')) {
+    } else if (key.includes('.value[')) {
       const valueIndex = key.indexOf('.value[');
 
       if (valueIndex !== -1) {
         const signalName = key.slice(0, valueIndex);
 
-        if (signalName.endsWith('Signal')) {
+        if (isSignalDependency(signalName, perfKey)) {
           const node = getOrCreateNodeByPath(depTree, signalName);
 
           node.isSatisfiedRecursively = true;
@@ -854,7 +911,7 @@ function collectRecommendations({
           externalDependencies.delete(key);
         }
       }
-    } else if (key.endsWith('Signal')) {
+    } else if (isSignalDependency(key, perfKey)) {
       const node = getOrCreateNodeByPath(depTree, key);
 
       node.isSatisfiedRecursively = true;
@@ -864,7 +921,7 @@ function collectRecommendations({
   });
 
   dependencies.forEach((_, key): void => {
-    if (key.includes('Signal') && !key.endsWith('Signal')) {
+    if (!isSignalDependency(key, perfKey)) {
       if (key.includes('[') && key.includes(']')) {
         return;
       }
@@ -873,11 +930,21 @@ function collectRecommendations({
       if (parts.length > 2 && parts[1] === 'value') {
         const signalName = parts[0];
 
+        if (typeof signalName !== 'string') {
+          return;
+        }
+
+        if (!isSignalDependency(signalName, perfKey)) {
+          return;
+        }
+
         const baseValueKey = `${signalName}.value`;
 
-        const isBaseValueDeclared = declaredDependencies.some(({ key: depKey }) => {
-          return depKey === baseValueKey;
-        });
+        const isBaseValueDeclared = declaredDependencies.some(
+          ({ key: depKey }: DeclaredDependency): boolean => {
+            return depKey === baseValueKey;
+          }
+        );
 
         const dependency = dependencies.get(key);
 
@@ -903,28 +970,30 @@ function collectRecommendations({
     if (key.endsWith('.value')) {
       const signalName = key.slice(0, -6);
 
-      if (signalName.endsWith('Signal')) {
+      if (isSignalDependency(signalName, perfKey)) {
         declaredSignals.add(signalName);
       }
-    } else if (key.includes('.value[') && key.includes('Signal')) {
+    } else if (key.includes('.value[')) {
       const valueIndex = key.indexOf('.value[');
 
       if (valueIndex !== -1) {
         const signalName = key.slice(0, valueIndex);
 
-        if (signalName.endsWith('Signal')) {
+        if (isSignalDependency(signalName, perfKey)) {
           declaredSignals.add(signalName);
         }
       }
-    } else if (key.endsWith('Signal')) {
+    } else if (isSignalDependency(key, perfKey)) {
       declaredSignals.add(key);
     }
   });
 
   importedSignals.forEach((signal: string): void => {
-    if (signal.includes('.value[') && signal.includes('Signal')) {
+    if (signal.includes('.value[')) {
       const isComputedPropertyDeclared = declaredDependencies.some(
-        ({ key: depKey }) => depKey === signal
+        ({ key: depKey }: DeclaredDependency): boolean => {
+          return depKey === signal;
+        }
       );
 
       if (!isComputedPropertyDeclared) {
@@ -942,6 +1011,10 @@ function collectRecommendations({
 
         if (valueIndex !== -1) {
           const signalName = signal.slice(0, valueIndex);
+
+          if (!isSignalDependency(signalName, perfKey)) {
+            return;
+          }
 
           const valueNode = getOrCreateNodeByPath(depTree, signalName);
 
@@ -991,9 +1064,7 @@ function collectRecommendations({
 
     if (hasValueAccess) {
       const isValueDeclared = declaredDependencies.some(({ key }: DeclaredDependency): boolean => {
-        return (
-          key === valueAccessKey || (key.startsWith(`${valueAccessKey}[`) && key.includes('Signal'))
-        );
+        return key === valueAccessKey || key.startsWith(`${valueAccessKey}[`);
       });
 
       if (!isValueDeclared) {
@@ -1041,7 +1112,7 @@ function collectRecommendations({
 
       let hasDeepPropertyChains = false;
 
-      if (signal.endsWith('Signal')) {
+      if (isSignalDependency(signal, perfKey)) {
         const deepPropertyChains = Array.from(dependencies.keys()).filter(
           (key: string): boolean => {
             return key.startsWith(`${signal}.value[`) && key.includes('.neighbors.');
@@ -1061,16 +1132,18 @@ function collectRecommendations({
         });
       }
 
-      if (isAssignmentOnly !== true && hasAssignmentOnlyComputedMembers !== true) {
-        if (!hasDeepPropertyChains) {
-          missingDependencies.add(signal);
-        }
+      if (
+        isAssignmentOnly !== true &&
+        hasAssignmentOnlyComputedMembers !== true &&
+        !hasDeepPropertyChains
+      ) {
+        missingDependencies.add(signal);
       }
     }
   });
 
-  dependencies.forEach((dep: Dependency, index: string): void => {
-    if (index.includes('.value[') && index.includes('Signal')) {
+  dependencies.forEach((depInfo: Dependency, index: string): void => {
+    if (index.includes('.value[') && isSignalDependency(index.split('.')[0] ?? '', perfKey)) {
       const valueIndex = index.indexOf('.value[');
 
       if (valueIndex !== -1) {
@@ -1080,8 +1153,8 @@ function collectRecommendations({
 
         if (
           !isComputedPropertyDeclared &&
-          dep.hasInnerScopeComputedProperty !== true &&
-          dep.hasReads !== false
+          depInfo.hasInnerScopeComputedProperty !== true &&
+          depInfo.hasReads !== false
         ) {
           missingDependencies.add(index);
         }
@@ -1100,7 +1173,7 @@ function collectRecommendations({
         key: k,
         hasReads: v.hasReads === true,
         isStable: v.isStable === true,
-        isSignal: isSignalDependency(k, perfKey) || k.endsWith('Signal'),
+        isSignal: isSignalDependency(k, perfKey),
       };
     }
   );
@@ -1139,8 +1212,11 @@ function collectRecommendations({
     perfKey
   );
 
-  // Post-process: if a non-signal base key is marked missing while any of its
-  // deeper properties are also missing, drop the base key to prefer the precise property.
+  // Accumulators for dependency recommendations
+  const suggestedDependencies: Array<string> = [];
+  const addedPaths = new Set<string>();
+  const addedRootPaths = new Set<string>();
+
   for (const base of Array.from(missingDependencies)) {
     if (!base.includes('.') && !isSignalDependency(base, perfKey)) {
       const hasDeeperMissing = Array.from(missingDependencies).some((d: string): boolean => {
@@ -1154,114 +1230,42 @@ function collectRecommendations({
       );
 
       if (hasDeeperMissing || hasAnyDeclaredDeeper) {
-        missingDependencies.delete(base);
-      }
-    }
-  }
+        const hasExistingDeepMissing = Array.from(missingDependencies).some(
+          (m: string): boolean => {
+            return m.startsWith(`${base}.`);
+          }
+        );
 
-  // If a non-signal base is missing but specific deep properties are actually read,
-  // replace the base missing with those deep properties to provide precise suggestions.
-  for (const base of Array.from(missingDependencies)) {
-    if (!base.includes('.') && !isSignalDependency(base, perfKey)) {
-      // First try via dependencies map
-      const deepReads: Array<string> = [];
-      dependencies.forEach((depInfo: Dependency, key: string) => {
-        if (key.startsWith(`${base}.`) && depInfo.hasReads === true) {
-          deepReads.push(key);
-        }
-      });
+        if (!hasExistingDeepMissing) {
+          const deepReadKeys: Array<string> = [];
 
-      // If none found, derive from the dependency tree usage flags
-      if (deepReads.length === 0) {
-        const baseNode = getOrCreateNodeByPath(depTree, base);
-
-        const collectUsedLeaves = (node: DependencyTreeNode, currentPath: string): void => {
-          if (node.children.size === 0) {
-            if (node.isUsed || node.isSubtreeUsed) {
-              deepReads.push(currentPath);
+          dependencies.forEach((depInfo: Dependency, depKey: string): void => {
+            if (depKey.startsWith(`${base}.`) && depInfo.hasReads === true) {
+              deepReadKeys.push(depKey);
             }
-            return;
-          }
-
-          node.children.forEach((child: DependencyTreeNode, key: string): void => {
-            collectUsedLeaves(child, `${currentPath}.${key}`);
           });
-        };
 
-        baseNode.children.forEach((child: DependencyTreeNode, key: string): void => {
-          collectUsedLeaves(child, `${base}.${key}`);
-        });
-      }
+          for (const dk of deepReadKeys) {
+            if (!addedPaths.has(dk) && !addedRootPaths.has(dk)) {
+              suggestedDependencies.push(dk);
 
-      if (deepReads.length > 0) {
-        missingDependencies.delete(base);
-        for (const k of deepReads) {
-          missingDependencies.add(k);
+              addedPaths.add(dk);
+
+              const dkRoot = dk.split('.')[0];
+
+              if (dk.includes('.') && typeof dkRoot === 'string' && dkRoot !== '') {
+                addedRootPaths.add(dkRoot);
+              }
+            }
+          }
         }
+
+        missingDependencies.delete(base);
       }
     }
   }
 
-  function scanTreeRecursively(
-    node: DependencyTreeNode,
-    missingPaths: Set<string>,
-    satisfyingPaths: Set<string>,
-    keyToPath: (key: string) => string,
-    perfKey: string
-  ): void {
-    node.children.forEach((child: DependencyTreeNode, key: string): void => {
-      const path = keyToPath(key);
-
-      const isSignalPath = isSignalDependency(path, perfKey) || isSignalDependency(key, perfKey);
-
-      const isImportedSignal =
-        path.endsWith('Signal') ||
-        key.endsWith('Signal') ||
-        (path.includes('.') && path.split('.')[0]?.endsWith('Signal')) === true ||
-        (key.includes('.') && key.split('.')[0]?.endsWith('Signal')) === true;
-
-      const hasValueAccess = path.endsWith('.value') || key.endsWith('.value');
-
-      const isAnySignalType = isSignalPath || isImportedSignal || hasValueAccess;
-
-      if (child.isSatisfiedRecursively) {
-        if (child.isSubtreeUsed || child.isUsed) {
-          satisfyingPaths.add(path);
-        }
-
-        if (isAnySignalType) {
-          return;
-        }
-      } else if (
-        child.isUsed ||
-        (isAnySignalType && child.isSubtreeUsed) ||
-        (!isAnySignalType && child.isSubtreeUsed && child.children.size === 0)
-      ) {
-        if (path.endsWith('Signal') && !path.includes('.')) {
-          const valueChild = child.children.get('value');
-          if (valueChild && (valueChild.isUsed || valueChild.isSubtreeUsed)) {
-            return;
-          }
-        }
-
-        missingPaths.add(path);
-
-        return;
-      }
-
-      scanTreeRecursively(
-        child,
-        missingPaths,
-        satisfyingPaths,
-        (childKey: string): string => {
-          return `${path}.${childKey}`;
-        },
-        perfKey
-      );
-    });
-  }
-
-  const suggestedDependencies: Array<string> = [];
+  /* suggestedDependencies declared above */
   const unnecessaryDependencies = new Set<string>();
   const duplicateDependencies = new Set<string>();
   const incompleteDependencies = new Set<string>();
@@ -1292,7 +1296,7 @@ function collectRecommendations({
   }
 
   declaredDependencies.forEach(({ key }: { key: string }): void => {
-    if (key.endsWith('Signal') && !key.includes('.')) {
+    if (isSignalDependency(key, perfKey) && !key.includes('.')) {
       const valueKey = `${key}.value`;
 
       if (missingDependencies.has(valueKey)) {
@@ -1306,7 +1310,7 @@ function collectRecommendations({
       }
     }
 
-    if (key.includes('.value[') && key.includes('Signal')) {
+    if (key.includes('.value[') && isSignalDependency(key.split('.')[0] ?? '', perfKey)) {
       const valueIndex = key.indexOf('.value[');
 
       if (valueIndex !== -1) {
@@ -1347,7 +1351,7 @@ function collectRecommendations({
       }
     }
 
-    if (!key.includes('.') && !key.endsWith('Signal')) {
+    if (!key.includes('.') && !isSignalDependency(key, perfKey)) {
       const hasDeepPropertyUsage = Array.from(missingDependencies).some((dep: string): boolean => {
         return dep.startsWith(`${key}.`) && dep !== key;
       });
@@ -1389,7 +1393,7 @@ function collectRecommendations({
       return;
     }
 
-    const isSignalDep = key.endsWith('Signal') || key.includes('Signal.') || key.endsWith('.value');
+    const isSignalDep = isSignalDependency(key, perfKey) || key.endsWith('.value');
 
     const dependency = dependencies.get(key);
 
@@ -1416,11 +1420,15 @@ function collectRecommendations({
     const toDelete: Array<string> = [];
 
     missingDependencies.forEach((m: string): void => {
-      if (!m.includes('.')) return;
+      if (!m.includes('.')) {
+        return;
+      }
 
       const base = m.split('.')[0] ?? '';
 
-      if (base === '' || isSignalDependency(base, perfKey)) return;
+      if (base === '' || isSignalDependency(base, perfKey)) {
+        return;
+      }
 
       const baseDep = dependencies.get(base);
 
@@ -1477,7 +1485,11 @@ function collectRecommendations({
         if (key.startsWith(`${base}.`) && dep.hasReads === true) deepReads.push(key);
       });
 
-      const leafUsage: Array<{ path: string; isUsed: boolean; isSubtreeUsed: boolean }> = [];
+      const leafUsage: Array<{
+        path: string;
+        isUsed: boolean;
+        isSubtreeUsed: boolean;
+      }> = [];
 
       const baseNode = getOrCreateNodeByPath(depTree, base);
 
@@ -1487,32 +1499,22 @@ function collectRecommendations({
     }
   }
 
-  const addedPaths = new Set<string>();
-
-  const addedRootPaths = new Set<string>();
-
   for (const key of missingDepsArray) {
     const rootPath = key.split('.')[0];
 
     const isChildPath = key.includes('.');
 
-    // Skip suggesting non-signal base keys if deeper properties are declared/missing
     if (
       !isSignalDependency(key, perfKey) &&
-      !key.endsWith('Signal') &&
       !key.endsWith('.value') &&
       !isChildPath &&
-      (declaredDependencies.some(({ key: depKey }: DeclaredDependency): boolean => {
+      declaredDependencies.some(({ key: depKey }: DeclaredDependency): boolean => {
         return depKey.startsWith(`${key}.`);
-      }) ||
-        // Also skip base if code actually reads deeper properties under this base
-        Array.from(dependencies.entries()).some(
-          ([depKey, depInfo]: [string, Dependency]): boolean => {
-            return depKey.startsWith(`${key}.`) && depInfo.hasReads === true;
-          }
-        ))
+      }) &&
+      missingDepsArray.some((dep: string): boolean => {
+        return dep.startsWith(`${key}.`);
+      })
     ) {
-      // If there are no deep missing entries yet for this base, add the deep reads now
       const hasExistingDeepMissing = missingDepsArray.some((m: string): boolean => {
         return m.startsWith(`${key}.`);
       });
@@ -1544,16 +1546,18 @@ function collectRecommendations({
       continue;
     }
 
-    if (key.endsWith('.value') && key.slice(0, -6).endsWith('Signal')) {
+    if (key.endsWith('.value')) {
       const signalName = key.slice(0, -6);
 
-      addedRootPaths.add(signalName);
+      if (isSignalDependency(signalName, perfKey)) {
+        addedRootPaths.add(signalName);
 
-      suggestedDependencies.push(key);
+        suggestedDependencies.push(key);
 
-      addedPaths.add(key);
+        addedPaths.add(key);
 
-      continue;
+        continue;
+      }
     }
 
     if (!addedPaths.has(key) && !addedRootPaths.has(key)) {
@@ -1574,12 +1578,7 @@ function collectRecommendations({
     const toAdd: Array<string> = [];
 
     for (const s of suggestedDependencies) {
-      if (
-        !s.includes('.') &&
-        !s.endsWith('Signal') &&
-        !s.endsWith('.value') &&
-        !isSignalDependency(s, perfKey)
-      ) {
+      if (!s.includes('.') && !s.endsWith('.value') && !isSignalDependency(s, perfKey)) {
         const deepMissingDependencies = Array.from(missingDependencies).filter(
           (m: string): boolean => {
             return m.startsWith(`${s}.`);
@@ -1838,7 +1837,7 @@ function getDependency(
         node.property.type === AST_NODE_TYPES.Identifier &&
         node.property.name === 'value' &&
         node.object.type === AST_NODE_TYPES.Identifier &&
-        node.object.name.endsWith('Signal')
+        isSignalDependency(node.object.name, perfKey)
       ) {
         return node;
       }
@@ -1850,7 +1849,7 @@ function getDependency(
       return node;
     }
 
-    if (node.type === AST_NODE_TYPES.Identifier && node.name.endsWith('Signal')) {
+    if (node.type === AST_NODE_TYPES.Identifier && isSignalDependency(node.name, perfKey)) {
       return node;
     }
 
@@ -2437,7 +2436,10 @@ function visitFunctionWithDependencies(
         return true;
       }
 
-      if (reference.identifier.name.endsWith('Signal') && parent.object === reference.identifier) {
+      if (
+        isSignalDependency(reference.identifier.name, perfKey) &&
+        parent.object === reference.identifier
+      ) {
         if (
           parent.parent.type === AST_NODE_TYPES.AssignmentExpression &&
           parent.parent.left === parent
@@ -2461,7 +2463,7 @@ function visitFunctionWithDependencies(
       parent.type === AST_NODE_TYPES.MemberExpression &&
       parent.property === identifier &&
       parent.object.type === AST_NODE_TYPES.Identifier &&
-      parent.object.name.endsWith('Signal')
+      isSignalDependency(parent.object.name, perfKey)
     ) {
       if (
         parent.parent.type === AST_NODE_TYPES.AssignmentExpression &&
@@ -2490,9 +2492,10 @@ function visitFunctionWithDependencies(
     for (const reference of currentScope.references) {
       const isSignalReference =
         reference.identifier.type === AST_NODE_TYPES.Identifier &&
-        (reference.identifier.name.endsWith('Signal') ||
-          reference.identifier.name.endsWith('signal') ||
-          (reference.resolved?.name.endsWith('Signal') ?? false));
+        (isSignalDependency(reference.identifier.name, perfKey) ||
+          (reference.resolved != null
+            ? isSignalDependency(reference.resolved.name, perfKey)
+            : false));
 
       if (reference.resolved == null) {
         continue;
@@ -2562,7 +2565,7 @@ function visitFunctionWithDependencies(
 
       if (
         reference.identifier.type === AST_NODE_TYPES.Identifier &&
-        reference.identifier.name.endsWith('Signal')
+        isSignalDependency(reference.identifier.name, perfKey)
       ) {
         const parent = reference.identifier.parent;
 
@@ -2603,7 +2606,7 @@ function visitFunctionWithDependencies(
 
       if (
         reference.identifier.type === AST_NODE_TYPES.Identifier &&
-        reference.identifier.name.endsWith('Signal')
+        isSignalDependency(reference.identifier.name, perfKey)
       ) {
         let allReferencesAreComputedAssignments = true;
 
@@ -2661,7 +2664,7 @@ function visitFunctionWithDependencies(
 
       if (
         dependencyNode.type === AST_NODE_TYPES.Identifier &&
-        !dependencyNode.name.endsWith('Signal') &&
+        !isSignalDependency(dependencyNode.name, perfKey) &&
         'parent' in dependencyNode &&
         // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
         dependencyNode.parent &&
@@ -2688,7 +2691,7 @@ function visitFunctionWithDependencies(
 
       if (
         dependencyNode.type === AST_NODE_TYPES.Identifier &&
-        dependencyNode.name.endsWith('Signal') &&
+        isSignalDependency(dependencyNode.name, perfKey) &&
         referenceNode.parent?.type === AST_NODE_TYPES.MemberExpression &&
         referenceNode.parent.object === referenceNode &&
         referenceNode.parent.property.type === AST_NODE_TYPES.Identifier &&
@@ -3079,8 +3082,9 @@ function visitFunctionWithDependencies(
         }
       } else {
         const isImportedSignal =
-          depKey.endsWith('Signal') ||
-          (depKey.includes('.') && depKey.split('.')[0]?.endsWith('Signal'));
+          typeof depKey === 'string' &&
+          (isSignalDependency(depKey, perfKey) ||
+            (depKey.includes('.') && isSignalDependency(depKey.split('.')[0] ?? '', perfKey)));
 
         const isSignalValueAccessBool = isSignalValueAccess(reference.identifier, context);
 
@@ -3119,7 +3123,7 @@ function visitFunctionWithDependencies(
               ? false
               : typeof depKey === 'string' &&
                   !depKey.includes('.') &&
-                  !depKey.endsWith('Signal') &&
+                  !isSignalDependency(depKey, perfKey) &&
                   reference.resolved.defs.length > 0 &&
                   !memoizedIsStableKnownHookValue(reference.resolved, componentScope, pureScopes)
                 ? false
@@ -4087,7 +4091,7 @@ function visitFunctionWithDependencies(
 
   if (!extraWarning && missingDependencies.size > 0) {
     dependencies.forEach((dep: Dependency, key: string): void => {
-      if (key.includes('.value[') && key.includes('Signal')) {
+      if (key.includes('.value[') && isSignalDependency(key.split('.')[0] ?? '', perfKey)) {
         const valueIndex = key.indexOf('.value[');
 
         if (valueIndex !== -1) {
@@ -4111,7 +4115,7 @@ function visitFunctionWithDependencies(
             const isAssignmentOnly = dep.hasReads === false;
 
             if (!isAssignmentOnly) {
-              if (key.includes('Signal') && key.includes('.')) {
+              if (key.includes('.') && isSignalDependency(key.split('.')[0] ?? '', perfKey)) {
                 const parts = key.split('.');
 
                 if (parts.length > 2 && parts[1] === 'value') {
@@ -4133,7 +4137,6 @@ function visitFunctionWithDependencies(
                 // Avoid adding non-signal base when deeper properties exist/are missing
                 const isBaseNonSignal =
                   !key.includes('.') &&
-                  !key.endsWith('Signal') &&
                   !key.endsWith('.value') &&
                   !isSignalDependency(key, perfKey);
 
@@ -4164,7 +4167,7 @@ function visitFunctionWithDependencies(
 
   if (!extraWarning && missingDependencies.size > 0) {
     dependencies.forEach((_dep, key) => {
-      if (key.includes('Signal') && key.includes('.')) {
+      if (isSignalDependency(key.split('.')[0] ?? '', perfKey) && key.includes('.')) {
         if (key.includes('[') && key.includes(']')) {
           return;
         }
@@ -4193,10 +4196,7 @@ function visitFunctionWithDependencies(
           ) {
             // Avoid adding non-signal base when deeper properties exist/are missing
             const isBaseNonSignal =
-              !key.includes('.') &&
-              !key.endsWith('Signal') &&
-              !key.endsWith('.value') &&
-              !isSignalDependency(key, perfKey);
+              !key.includes('.') && !key.endsWith('.value') && !isSignalDependency(key, perfKey);
 
             if (isBaseNonSignal) {
               const hasDeclaredDeeper = declaredDependencies.some(({ key: dKey }) =>
@@ -4800,10 +4800,6 @@ function getSeverity(messageId: MessageIds, option: Option | undefined): 'error'
       return option.severity.moveInsideEffect ?? 'error';
     }
 
-    case 'performanceLimitExceeded': {
-      return option.severity.performanceLimitExceeded ?? 'error';
-    }
-
     default: {
       return 'error';
     }
@@ -5005,7 +5001,6 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         '• Array literals allow React to properly track dependencies\n' +
         "• Non-array values won't trigger effect re-runs correctly\n" +
         '• This can lead to stale closures and unexpected behavior',
-      performanceLimitExceeded: 'Performance limit exceeded for rule exhaustive-deps {{message}}',
     },
     fixable: 'code',
     hasSuggestions: true,
@@ -5038,6 +5033,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
             type: 'boolean',
             description: 'Enable autofix for useMemo and useCallback hooks',
           },
+          suffix: { type: 'string', minLength: 1 },
           severity: {
             type: 'object',
             properties: {
@@ -5074,10 +5070,6 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
                 enum: ['error', 'warn', 'off'],
               },
               removeThisDuplicate: {
-                type: 'string',
-                enum: ['error', 'warn', 'off'],
-              },
-              performanceLimitExceeded: {
                 type: 'string',
                 enum: ['error', 'warn', 'off'],
               },
@@ -5193,14 +5185,16 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
 
     startPhase(perfKey, 'ruleInit');
 
-    const perf = createPerformanceTracker<Options>(perfKey, option?.performance, context);
+    const perf = createPerformanceTracker(perfKey, option?.performance);
 
     if (option?.performance?.enableMetrics === true) {
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    // console.info(`${ruleName}: Rule configuration:`, option);
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
     recordMetric(perfKey, 'config', {
       additionalHooks:
@@ -5215,6 +5209,12 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
     trackOperation(perfKey, PerformanceOperations.ruleInit);
 
     endPhase(perfKey, 'ruleInit');
+
+    // Initialize and store suffix regex for this rule run
+    const suffix =
+      typeof option?.suffix === 'string' && option.suffix.length > 0 ? option.suffix : 'Signal';
+    const suffixRegex = buildSuffixRegex(suffix);
+    suffixByPerfKey.set(perfKey, suffixRegex);
 
     let nodeCount = 0;
 
@@ -5237,17 +5237,20 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         if (!shouldContinue()) {
           endPhase(perfKey, 'recordMetrics');
 
-          stopTracking(perfKey);
-
           return;
         }
 
         perf.trackNode(node);
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        // Guard dynamic PerformanceOperations lookup with a safe fallback
+        const op =
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing;
+
+        trackOperation(perfKey, op);
       },
 
-      CallExpression(node: TSESTree.CallExpression): void {
+      [AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
         perf.trackNode(node);
 
         const callbackIndex = getReactiveHookCallbackIndex(
@@ -5278,7 +5281,8 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         const maybeNode = node.arguments[callbackIndex + 1];
 
         const declaredDependenciesNode: TSESTree.CallExpressionArgument | undefined =
-          maybeNode && !(maybeNode.type === 'Identifier' && maybeNode.name === 'undefined')
+          maybeNode &&
+          !(maybeNode.type === AST_NODE_TYPES.Identifier && maybeNode.name === 'undefined')
             ? maybeNode
             : undefined;
 
@@ -5323,7 +5327,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         if (
           (!declaredDependenciesNode ||
             (isAutoDepsHook === true &&
-              declaredDependenciesNode.type === 'Literal' &&
+              declaredDependenciesNode.type === AST_NODE_TYPES.Literal &&
               declaredDependenciesNode.value === null)) &&
           !isEffect
         ) {
@@ -5347,7 +5351,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
           return;
         }
 
-        while (callback.type === 'TSAsExpression') {
+        while (callback.type === AST_NODE_TYPES.TSAsExpression) {
           callback = callback.expression;
         }
 
@@ -5372,7 +5376,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
             if (
               !declaredDependenciesNode ||
               (isAutoDepsHook === true &&
-                declaredDependenciesNode.type === 'Literal' &&
+                declaredDependenciesNode.type === AST_NODE_TYPES.Literal &&
                 declaredDependenciesNode.value === null)
             ) {
               return;
@@ -5388,7 +5392,11 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
                     | TSESTree.DestructuringPattern
                     | null
                 ): boolean => {
-                  return el !== null && el.type === 'Identifier' && el.name === callback.name;
+                  return (
+                    el !== null &&
+                    el.type === AST_NODE_TYPES.Identifier &&
+                    el.name === callback.name
+                  );
                 }
               )
             ) {
@@ -5483,7 +5491,8 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
                 node: node.callee,
                 messageId,
                 data: {
-                  hookName: node.callee.type === 'Identifier' ? node.callee.name : 'Hook',
+                  hookName:
+                    node.callee.type === AST_NODE_TYPES.Identifier ? node.callee.name : 'Hook',
                   dependency: 'name' in callback ? callback.name : callback.type,
                   missingMessage: `The dependency '${'name' in callback ? callback.name : callback.type}' is used inside the effect but not listed in the dependency array.`,
                 },
@@ -5535,41 +5544,13 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         }
       },
 
-      'CallExpression  > :not(CallExpression)'(node: TSESTree.CallExpression): void {
-        perf.trackNode(node);
-      },
-
-      'Program:exit'(node: TSESTree.Node): void {
+      [`${AST_NODE_TYPES.Program}:exit`](): void {
         startPhase(perfKey, 'programExit');
 
-        perf.trackNode(node);
-
-        try {
-          startPhase(perfKey, 'recordMetrics');
-
-          const finalMetrics = stopTracking(perfKey);
-
-          if (finalMetrics) {
-            console.info(
-              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
-
-            if (finalMetrics.exceededBudget === true) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
-        }
-
         perf['Program:exit']();
+
+        // cleanup stored suffix regex for this run
+        suffixByPerfKey.delete(perfKey);
 
         endPhase(perfKey, 'programExit');
       },

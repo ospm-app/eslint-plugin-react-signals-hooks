@@ -6,6 +6,11 @@ This rule enforces consistent and optimal usage of signal methods (`.value`, `.p
 
 The `prefer-signal-methods` rule ensures that signal access methods are used appropriately in different contexts to optimize reactivity and prevent common pitfalls.
 
+## Plugin Scope
+
+- Signal creator detection is scoped to `@preact/signals-react` only.
+- The rule recognizes `signal()` and `computed()` created in-file via direct, aliased, or namespace imports from `@preact/signals-react`.
+
 ## Handled Cases
 
 ### 1. Direct Signal Usage in JSX
@@ -31,12 +36,35 @@ The `prefer-signal-methods` rule ensures that signal access methods are used app
 - `preferDirectSignalUsage`: "Use the signal directly in JSX instead of .peek()"
 - `preferPeekInNonReactiveContext`: "Prefer .peek() when reading signal value without using its reactive value"
 
-## Auto-fix Suggestions
+## Autofix and Suggestions
 
-- Removes unnecessary `.value` in JSX contexts
-- Replaces `.value` with `.peek()` in non-reactive contexts
-- Removes unnecessary `.peek()` in JSX
-- Adds appropriate method calls where needed
+- Autofix: Yes (fixable: `code`).
+- Suggestions: No (`hasSuggestions: false`).
+- Removes unnecessary `.value` in JSX contexts.
+- Replaces `.value` with `.peek()` in non-reactive contexts.
+- Removes unnecessary `.peek()` in JSX.
+- Adds appropriate method calls where needed.
+
+## Options
+
+```ts
+type Options = [
+  {
+    performance?: PerformanceBudget;
+    severity?: {
+      usePeekInEffect?: 'error' | 'warn' | 'off';
+      useValueInJSX?: 'error' | 'warn' | 'off';
+      preferDirectSignalUsage?: 'error' | 'warn' | 'off';
+      preferPeekInNonReactiveContext?: 'error' | 'warn' | 'off';
+    };
+    suffix?: string;
+  }?
+];
+```
+
+- `performance`: Enables performance tracking/budgeting.
+- `severity`: Per-message severity controls. Defaults to `error`.
+- `suffix`: Custom suffix for detecting signal variable names.
 
 ## Best Practices
 

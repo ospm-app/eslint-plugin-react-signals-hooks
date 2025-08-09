@@ -2,6 +2,11 @@
 
 This rule encourages using the `<For>` component from `@preact/signals-react` instead of the `.map()` method for rendering arrays of data in React components. This provides better performance and reactivity when working with signal arrays.
 
+## Plugin Scope
+
+- Only signals imported from `@preact/signals-react` are considered.
+- Autofix will add or augment imports from `@preact/signals-react`.
+
 ## Rule Details
 
 This rule identifies instances where `.map()` is used with signal arrays and suggests replacing them with the `<For>` component. The `<For>` component is optimized for rendering reactive arrays and provides better performance by minimizing re-renders.
@@ -104,7 +109,7 @@ This rule identifies instances where `.map()` is used with signal arrays and sug
 1. **Basic For component usage**
 
    ```tsx
-   import { For } from '@preact/signals-react/flexibles';
+   import { For } from '@preact/signals-react';
    
    function TodoList({ todos }) {
      const todoItems = useSignal([
@@ -544,7 +549,7 @@ function TodoList({ todos }: { todos: Todo[] }): JSX.Element {
 }
 
 // After
-import { For } from '@preact/signals-react/flexibles';
+import { For } from '@preact/signals-react';
 
 function TodoList({ todos }: { todos: Todo[] }): JSX.Element {
   return (

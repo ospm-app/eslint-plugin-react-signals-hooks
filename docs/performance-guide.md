@@ -114,7 +114,7 @@ function shouldContinue(): boolean {
   if (nodeCount > (option.performance?.maxNodeCount ?? DEFAULT_PERFORMANCE_BUDGET.maxNodeCount)) {
     context.report({
       node: context.sourceCode.ast,
-      messageId: 'performanceLimitExceeded',
+      messageId: 'someMessageId',
       data: {
         nodeCount,
         maxNodeCount: option.performance?.maxNodeCount ?? DEFAULT_PERFORMANCE_BUDGET.maxNodeCount,

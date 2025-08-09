@@ -2,6 +2,12 @@
 
 This rule enforces the use of the `useSignals()` hook in components that utilize signals, ensuring proper signal reactivity in Preact/React components.
 
+## Plugin Scope
+
+- Signal creator detection is scoped to `@preact/signals-react` only.
+- The rule recognizes `signal()` and `computed()` created in-file via direct, aliased, or namespace imports from `@preact/signals-react`.
+- The `useSignals` import is sourced from `@preact/signals-react/runtime` when adding or augmenting imports.
+
 ## Core Functionality
 
 The `require-use-signals` rule detects components that use signals but are missing the required `useSignals()` hook, which is necessary for proper signal reactivity in React/Preact components.
@@ -23,12 +29,31 @@ The `require-use-signals` rule detects components that use signals but are missi
 
 - Automatically adds `useSignals()` at the beginning of the component
 - Adds the necessary import if missing
+  - If a `@preact/signals-react/runtime` import exists, adds `useSignals` to its named imports
+  - Otherwise, inserts `import { useSignals } from '@preact/signals-react/runtime';`
+  - For expression-bodied arrow components, converts to a block body and inserts `useSignals(); return <expr>;`
 
 ## Configuration Options
 
 ### `ignoreComponents` (string[])
 
 - Array of component names to exclude from this rule
+
+### `suffix` (string)
+
+- RegExp-like suffix used by the heuristic to detect signal-like identifiers (default: `"Signal"`).
+
+### `severity` (object)
+
+- Per-message severity overrides.
+  - `missingUseSignals?: 'error' | 'warn' | 'off'` (default: `'error'`)
+
+### `performance` (object)
+
+- Performance budgets and metrics toggles used by the rule’s performance tracker.
+  - `maxTime`, `maxMemory`, `maxNodes`
+  - `enableMetrics`, `logMetrics`
+  - `maxOperations` keyed by internal operation names
 
 ## Error Messages
 

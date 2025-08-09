@@ -12,44 +12,37 @@ import {
   endPhase,
   startPhase,
   recordMetric,
-  stopTracking,
   startTracking,
   trackOperation,
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
-  PerformanceLimitExceededError,
 } from './utils/performance.js';
+import { buildSuffixRegex, hasSignalSuffix } from './utils/suffix.js';
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
-
-type Severity = {
-  preferComputedWithSignal?: 'error' | 'warn' | 'off';
-  preferComputedWithSignals?: 'error' | 'warn' | 'off';
-  suggestComputed?: 'error' | 'warn' | 'off';
-  addComputedImport?: 'error' | 'warn' | 'off';
-  suggestAddComputedImport?: 'error' | 'warn' | 'off';
-  performanceLimitExceeded?: 'error' | 'warn' | 'off';
-};
-
-type Option = {
-  performance?: PerformanceBudget;
-  severity?: Severity;
-};
-
-type Options = [Option?];
 
 type MessageIds =
   | 'preferComputedWithSignal'
   | 'preferComputedWithSignals'
   | 'suggestComputed'
   | 'addComputedImport'
-  | 'suggestAddComputedImport'
-  | 'performanceLimitExceeded';
+  | 'suggestAddComputedImport';
+
+type Severity = {
+  [key in MessageIds]?: 'error' | 'warn' | 'off';
+};
+
+type Option = {
+  performance?: PerformanceBudget;
+  severity?: Severity;
+  suffix?: string;
+};
+
+type Options = [Option?];
 
 function getSeverity(messageId: MessageIds, options: Option | undefined): 'error' | 'warn' | 'off' {
   if (!options?.severity) {
-    // Default to 'error' for all message types except performanceLimitExceeded
-    return messageId === 'performanceLimitExceeded' ? 'warn' : 'error';
+    return 'error';
   }
 
   switch (messageId) {
@@ -71,10 +64,6 @@ function getSeverity(messageId: MessageIds, options: Option | undefined): 'error
 
     case 'suggestAddComputedImport': {
       return options.severity.suggestAddComputedImport ?? 'error';
-    }
-
-    case 'performanceLimitExceeded': {
-      return options.severity.performanceLimitExceeded ?? 'warn';
     }
 
     default: {
@@ -104,7 +93,10 @@ function getOrCreateComputedImport(
   });
 }
 
-function getSignalDependencyInfo(dep: TSESTree.Node | null): SignalDependencyInfo | null {
+function getSignalDependencyInfo(
+  dep: TSESTree.Node | null,
+  suffixRegex: RegExp
+): SignalDependencyInfo | null {
   if (dep === null) {
     return null;
   }
@@ -114,7 +106,7 @@ function getSignalDependencyInfo(dep: TSESTree.Node | null): SignalDependencyInf
     dep.property.type === AST_NODE_TYPES.Identifier &&
     dep.property.name === 'value' &&
     dep.object.type === AST_NODE_TYPES.Identifier &&
-    (dep.object.name.endsWith('Signal') || dep.object.name.endsWith('signal'))
+    hasSignalSuffix(dep.object.name, suffixRegex)
   ) {
     return {
       signalName: dep.object.name,
@@ -123,10 +115,7 @@ function getSignalDependencyInfo(dep: TSESTree.Node | null): SignalDependencyInf
     };
   }
 
-  if (
-    dep.type === AST_NODE_TYPES.Identifier &&
-    (dep.name.endsWith('Signal') || dep.name.endsWith('signal'))
-  ) {
+  if (dep.type === AST_NODE_TYPES.Identifier && hasSignalSuffix(dep.name, suffixRegex)) {
     return {
       signalName: dep.name,
       isDirectAccess: true,
@@ -139,7 +128,6 @@ function getSignalDependencyInfo(dep: TSESTree.Node | null): SignalDependencyInf
 
 let hasComputedImport = false;
 let program: TSESTree.Program | null = null;
-let performanceBudgetExceeded = false;
 
 const ruleName = 'prefer-computed';
 
@@ -164,8 +152,6 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
       suggestComputed: 'Replace `useMemo` with `computed()`',
       addComputedImport: 'Add `computed` import from @preact/signals-react',
       suggestAddComputedImport: 'Add missing import for `computed`',
-      performanceLimitExceeded:
-        'Performance limit exceeded: {{message}}. Some checks may have been skipped.',
     },
     schema: [
       {
@@ -214,13 +200,10 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
                 type: 'string',
                 enum: ['error', 'warn', 'off'],
               },
-              performanceLimitExceeded: {
-                type: 'string',
-                enum: ['error', 'warn', 'off'],
-              },
             },
             additionalProperties: false,
           },
+          suffix: { type: 'string', minLength: 1 },
         },
         additionalProperties: false,
       },
@@ -236,14 +219,16 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
 
     startPhase(perfKey, 'ruleInit');
 
-    const perf = createPerformanceTracker<Options>(perfKey, option?.performance, context);
+    const perf = createPerformanceTracker(perfKey, option?.performance);
 
     if (option?.performance?.enableMetrics === true) {
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    // console.info(`${ruleName}: Rule configuration:`, option);
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
     recordMetric(perfKey, 'config', {
       performance: {
@@ -273,6 +258,10 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
       return true;
     }
 
+    const suffix =
+      typeof option?.suffix === 'string' && option.suffix.length > 0 ? option.suffix : 'Signal';
+    const suffixRegex = buildSuffixRegex(suffix);
+
     startPhase(perfKey, 'ruleExecution');
 
     return {
@@ -280,66 +269,45 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
         if (!shouldContinue()) {
           endPhase(perfKey, 'recordMetrics');
 
-          stopTracking(perfKey);
-
           return;
         }
 
         perf.trackNode(node);
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        const op =
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing;
+
+        trackOperation(perfKey, op);
       },
 
       [AST_NODE_TYPES.Program](node: TSESTree.Program): void {
         startPhase(perfKey, 'program-analysis');
 
-        try {
-          program = node;
+        program = node;
 
-          hasComputedImport = program.body.some(
-            (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
-              trackOperation(perfKey, PerformanceOperations.importCheck);
+        hasComputedImport = program.body.some(
+          (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
+            trackOperation(perfKey, PerformanceOperations.importCheck);
 
-              return (
-                n.type === 'ImportDeclaration' &&
-                n.source.value === '@preact/signals-react' &&
-                n.specifiers.some((s: TSESTree.ImportClause): boolean => {
-                  return (
-                    s.type === 'ImportSpecifier' &&
-                    'name' in s.imported &&
-                    s.imported.name === 'computed'
-                  );
-                })
-              );
-            }
-          );
-
-          endPhase(perfKey, 'program-analysis');
-        } catch (error: unknown) {
-          if (error instanceof PerformanceLimitExceededError) {
-            performanceBudgetExceeded = true;
-
-            if (getSeverity('performanceLimitExceeded', option) !== 'off') {
-              context.report({
-                loc: { line: 1, column: 0 },
-                messageId: 'performanceLimitExceeded',
-                data: {
-                  message: error.message,
-                  ruleName,
-                },
-              });
-            }
-          } else {
-            throw error;
+            return (
+              n.type === AST_NODE_TYPES.ImportDeclaration &&
+              n.source.value === '@preact/signals-react' &&
+              n.specifiers.some((s: TSESTree.ImportClause): boolean => {
+                return (
+                  s.type === AST_NODE_TYPES.ImportSpecifier &&
+                  'name' in s.imported &&
+                  s.imported.name === 'computed'
+                );
+              })
+            );
           }
-        }
+        );
+
+        endPhase(perfKey, 'program-analysis');
       },
 
       [AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
-        if (performanceBudgetExceeded) {
-          return;
-        }
-
         recordMetric(perfKey, 'useMemoCallsAnalyzed', 1);
 
         trackOperation(perfKey, PerformanceOperations.callExpressionCheck);
@@ -356,10 +324,25 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
 
         recordMetric(perfKey, 'currentCallDepth', depth);
 
+        const isUseMemoCall = (() => {
+          if (node.callee.type === AST_NODE_TYPES.Identifier) {
+            return node.callee.name === 'useMemo';
+          }
+
+          if (
+            node.callee.type === AST_NODE_TYPES.MemberExpression &&
+            node.callee.property.type === AST_NODE_TYPES.Identifier
+          ) {
+            // React.useMemo or aliased namespace
+            return node.callee.property.name === 'useMemo';
+          }
+
+          return false;
+        })();
+
         if (
-          node.callee.type !== 'Identifier' ||
-          node.callee.name !== 'useMemo' ||
-          node.arguments.length < 2 ||
+          !isUseMemoCall ||
+          node.arguments.length !== 2 ||
           node.arguments[1]?.type !== AST_NODE_TYPES.ArrayExpression
         ) {
           return;
@@ -367,177 +350,120 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
 
         startPhase(perfKey, 'signal-analysis');
 
-        try {
-          const signalDeps = [];
+        const signalDeps: Array<SignalDependencyInfo> = [];
 
-          for (const dep of node.arguments[1].elements) {
-            trackOperation(perfKey, PerformanceOperations.dependencyCheck);
+        for (const dep of node.arguments[1].elements) {
+          trackOperation(perfKey, PerformanceOperations.dependencyCheck);
 
-            const depInfo = getSignalDependencyInfo(dep);
+          const depInfo = getSignalDependencyInfo(dep, suffixRegex);
 
-            if (depInfo) {
-              signalDeps.push(depInfo);
-              recordMetric(perfKey, 'totalSignalDependencies', signalDeps.length);
-            }
+          if (depInfo) {
+            signalDeps.push(depInfo);
+
+            recordMetric(perfKey, 'totalSignalDependencies', signalDeps.length);
           }
+        }
 
-          if (signalDeps.length === 0) {
-            endPhase(perfKey, 'signal-analysis');
+        if (signalDeps.length === 0) {
+          endPhase(perfKey, 'signal-analysis');
 
-            return;
-          }
+          return;
+        }
 
-          recordMetric(perfKey, 'useMemoCallsWithSignals', 1);
+        recordMetric(perfKey, 'useMemoCallsWithSignals', 1);
 
-          const uniqueSignalNames = [...new Set(signalDeps.map((s) => s.signalName))];
+        const uniqueSignalNames = [...new Set(signalDeps.map((s) => s.signalName))];
 
-          const hasMultipleSignals = uniqueSignalNames.length > 1;
+        const hasMultipleSignals = uniqueSignalNames.length > 1;
 
-          recordMetric(perfKey, 'uniqueSignalsPerUseMemo', uniqueSignalNames.length);
+        recordMetric(perfKey, 'uniqueSignalsPerUseMemo', uniqueSignalNames.length);
 
-          if (hasMultipleSignals) {
-            recordMetric(perfKey, 'useMemoWithMultipleSignals', 1);
-          }
+        if (hasMultipleSignals) {
+          recordMetric(perfKey, 'useMemoWithMultipleSignals', 1);
+        }
 
-          const suggestionType = hasMultipleSignals ? 'multipleSignals' : 'singleSignal';
+        const suggestionType = hasMultipleSignals ? 'multipleSignals' : 'singleSignal';
 
-          recordMetric(perfKey, `suggestions.${suggestionType}`, 1);
+        recordMetric(perfKey, `suggestions.${suggestionType}`, 1);
 
-          trackOperation(perfKey, PerformanceOperations.reportGeneration);
+        trackOperation(perfKey, PerformanceOperations.reportGeneration);
 
-          const messageId =
-            signalDeps.length === 1 ? 'preferComputedWithSignal' : 'preferComputedWithSignals';
+        const messageId =
+          signalDeps.length === 1 ? 'preferComputedWithSignal' : 'preferComputedWithSignals';
 
-          if (getSeverity(messageId, option) !== 'off') {
-            context.report({
-              node,
-              messageId,
-              data: {
-                signalName: uniqueSignalNames[0],
-                signalNames: uniqueSignalNames.join(', '),
-              },
-              suggest: [
-                {
-                  messageId: 'suggestComputed',
-                  *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
-                    const callback = node.arguments[0];
+        if (getSeverity(messageId, option) !== 'off') {
+          context.report({
+            node,
+            messageId,
+            data: {
+              signalName: uniqueSignalNames[0],
+              signalNames: uniqueSignalNames.join(', '),
+            },
+            suggest: [
+              {
+                messageId: 'suggestComputed',
+                *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
+                  const callback = node.arguments[0];
 
-                    if (!callback) {
-                      return;
-                    }
+                  if (typeof callback === 'undefined') {
+                    return;
+                  }
 
-                    yield fixer.replaceText(
-                      node,
-                      `computed(${context.sourceCode.getText(callback)})`
+                  yield fixer.replaceText(
+                    node,
+                    `computed(${context.sourceCode.getText(callback)})`
+                  );
+
+                  if (getSeverity('suggestAddComputedImport', option) === 'off') {
+                    return;
+                  }
+
+                  if (hasComputedImport) {
+                    return;
+                  }
+
+                  const computedImport = getOrCreateComputedImport(
+                    context.getSourceCode(),
+                    program
+                  );
+
+                  recordMetric(
+                    perfKey,
+                    'computedImportStatus',
+                    computedImport ? 'present' : 'missing'
+                  );
+
+                  if (computedImport) {
+                    const hasComputed = computedImport.specifiers.some(
+                      (s: TSESTree.ImportClause): boolean => {
+                        return (
+                          s.type === AST_NODE_TYPES.ImportSpecifier &&
+                          'name' in s.imported &&
+                          s.imported.name === 'computed'
+                        );
+                      }
                     );
 
-                    if (hasComputedImport) {
-                      return;
+                    const last = computedImport.specifiers[computedImport.specifiers.length - 1];
+
+                    if (!hasComputed && last) {
+                      yield fixer.insertTextAfter(last, ', computed');
                     }
-
-                    if (getSeverity('suggestAddComputedImport', option) !== 'off') {
-                      context.report({
-                        node,
-                        messageId: 'suggestAddComputedImport',
-                        fix: (fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null => {
-                          const computedImport = getOrCreateComputedImport(
-                            context.getSourceCode(),
-                            program
-                          );
-                          const hasComputedImport = !!computedImport;
-
-                          recordMetric(
-                            perfKey,
-                            'computedImportStatus',
-                            hasComputedImport ? 'present' : 'missing'
-                          );
-
-                          if (computedImport) {
-                            const hasComputed = computedImport.specifiers.some(
-                              (s: TSESTree.ImportClause): boolean => {
-                                return (
-                                  s.type === AST_NODE_TYPES.ImportSpecifier &&
-                                  'name' in s.imported &&
-                                  s.imported.name === 'computed'
-                                );
-                              }
-                            );
-
-                            const last =
-                              computedImport.specifiers[computedImport.specifiers.length - 1];
-
-                            if (hasComputed || !last) {
-                              return null;
-                            }
-
-                            return [fixer.insertTextAfter(last, ', computed')];
-                          }
-
-                          if (typeof program?.body[0] === 'undefined') {
-                            return null;
-                          }
-
-                          return [
-                            fixer.insertTextBefore(
-                              program.body[0],
-                              "import { computed } from '@preact/signals-react';\n"
-                            ),
-                          ];
-                        },
-                      });
-                    }
-                  },
+                  } else if (typeof program?.body[0] !== 'undefined') {
+                    yield fixer.insertTextBefore(
+                      program.body[0],
+                      "import { computed } from '@preact/signals-react';\n"
+                    );
+                  }
                 },
-              ],
-            });
-          }
-        } catch (error: unknown) {
-          if (error instanceof PerformanceLimitExceededError) {
-            performanceBudgetExceeded = true;
-
-            if (getSeverity('performanceLimitExceeded', option) !== 'off') {
-              context.report({
-                loc: { line: 1, column: 0 },
-                messageId: 'performanceLimitExceeded',
-                data: {
-                  message: error.message,
-                  ruleName,
-                },
-              });
-            }
-          } else {
-            throw error;
-          }
+              },
+            ],
+          });
         }
       },
 
       [`${AST_NODE_TYPES.Program}:exit`]: (): void => {
         startPhase(perfKey, 'programExit');
-
-        try {
-          startPhase(perfKey, 'recordMetrics');
-
-          const finalMetrics = stopTracking(perfKey);
-
-          if (finalMetrics) {
-            console.info(
-              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
-
-            if (finalMetrics.exceededBudget === true) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
-        }
 
         perf['Program:exit']();
 

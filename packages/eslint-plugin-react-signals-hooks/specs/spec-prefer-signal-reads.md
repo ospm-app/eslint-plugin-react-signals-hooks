@@ -6,6 +6,11 @@ This rule enforces explicit `.value` access when reading signal values in non-JS
 
 The `prefer-signal-reads` rule ensures that signal values are explicitly accessed using `.value` in non-JSX contexts, while allowing direct usage in JSX where automatic `.value` access is handled.
 
+## Plugin Scope
+
+- Signal creator detection is scoped to `@preact/signals-react` only.
+- The rule recognizes `signal()` and `computed()` created in-file via direct, aliased, or namespace imports from `@preact/signals-react`.
+
 ## Handled Cases
 
 ### 1. Direct Signal Usage in Non-JSX Contexts
@@ -32,11 +37,29 @@ The rule intelligently skips enforcing `.value` in these contexts:
 
 - `useValueInNonJSX`: "Use .value to read the current value of the signal in non-JSX context"
 
-## Auto-fix Suggestions
+## Autofix and Suggestions
 
-- Automatically adds `.value` to signal references in non-JSX contexts
-- Preserves the rest of the expression
-- Skips already correct usages
+- Autofix: Yes (fixable: `code`).
+- Suggestions: No (`hasSuggestions: false`).
+- Automatically adds `.value` to signal references in non-JSX contexts.
+- Preserves the rest of the expression.
+- Skips already-correct usages.
+
+## Options
+
+```ts
+type Options = [
+  {
+    performance?: PerformanceBudget;
+    severity?: { useValueInNonJSX?: 'error' | 'warn' | 'off' };
+    suffix?: string;
+  }?
+];
+```
+
+- `performance`: Enables performance tracking/budgeting.
+- `severity`: Per-message severity control. Defaults to `error`.
+- `suffix`: Custom suffix for detecting signal variable names.
 
 ## Benefits
 

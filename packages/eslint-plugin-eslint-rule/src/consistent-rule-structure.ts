@@ -1,7 +1,7 @@
 /** biome-ignore-all assist/source/organizeImports: off */
 import * as path from 'node:path';
 
-import { ESLintUtils } from '@typescript-eslint/utils';
+import { AST_NODE_TYPES, ESLintUtils } from '@typescript-eslint/utils';
 import type { TSESLint, TSESTree } from '@typescript-eslint/utils';
 
 import {
@@ -488,13 +488,13 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
               // Track if the rule has suggestions enabled
               hasSuggestions =
                 'value' in hasSuggestionsProp &&
-                hasSuggestionsProp.value.type === 'Literal' &&
+                hasSuggestionsProp.value.type === AST_NODE_TYPES.Literal &&
                 hasSuggestionsProp.value.value === true;
 
               // Ensure hasSuggestions is a boolean
               if (
                 'value' in hasSuggestionsProp &&
-                (hasSuggestionsProp.value.type !== 'Literal' ||
+                (hasSuggestionsProp.value.type !== AST_NODE_TYPES.Literal ||
                   typeof hasSuggestionsProp.value.value !== 'boolean')
               ) {
                 context.report({
@@ -508,13 +508,12 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
                 hasSuggestions = true;
               }
 
-              // If the rule has suggestions, ensure it has a proper URL in the docs
               if (hasSuggestions) {
                 const metaProperty = ruleOptions.properties.find(
                   (prop: TSESTree.ObjectLiteralElement): boolean => {
                     return (
-                      prop.type === 'Property' &&
-                      prop.key.type === 'Identifier' &&
+                      prop.type === AST_NODE_TYPES.Property &&
+                      prop.key.type === AST_NODE_TYPES.Identifier &&
                       prop.key.name === 'meta'
                     );
                   }
@@ -523,13 +522,13 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
                 if (
                   typeof metaProperty !== 'undefined' &&
                   'value' in metaProperty &&
-                  metaProperty.value.type === 'ObjectExpression'
+                  metaProperty.value.type === AST_NODE_TYPES.ObjectExpression
                 ) {
                   const docsProp = metaProperty.value.properties.find(
                     (prop: TSESTree.ObjectLiteralElement): boolean => {
                       return (
-                        prop.type === 'Property' &&
-                        prop.key.type === 'Identifier' &&
+                        prop.type === AST_NODE_TYPES.Property &&
+                        prop.key.type === AST_NODE_TYPES.Identifier &&
                         prop.key.name === 'docs'
                       );
                     }
@@ -538,14 +537,14 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
                   if (
                     typeof docsProp !== 'undefined' &&
                     'value' in docsProp &&
-                    docsProp.value.type === 'ObjectExpression'
+                    docsProp.value.type === AST_NODE_TYPES.ObjectExpression
                   ) {
                     if (
                       !docsProp.value.properties.find(
                         (prop: TSESTree.ObjectLiteralElement): boolean => {
                           return (
-                            prop.type === 'Property' &&
-                            prop.key.type === 'Identifier' &&
+                            prop.type === AST_NODE_TYPES.Property &&
+                            prop.key.type === AST_NODE_TYPES.Identifier &&
                             prop.key.name === 'url'
                           );
                         }
@@ -562,41 +561,37 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
               }
             }
 
-            // Check for fixable property
             const fixableProp = metaProperty.value.properties.find(
               (prop: TSESTree.ObjectLiteralElement): boolean => {
                 return (
-                  prop.type === 'Property' &&
-                  prop.key.type === 'Identifier' &&
+                  prop.type === AST_NODE_TYPES.Property &&
+                  prop.key.type === AST_NODE_TYPES.Identifier &&
                   prop.key.name === 'fixable'
                 );
               }
             );
 
-            if (fixableProp) {
-              // Ensure fixable is 'code' or 'whitespace'
-              if (
-                'value' in fixableProp &&
-                fixableProp.value.type === 'Literal' &&
-                fixableProp.value.value !== 'code' &&
-                fixableProp.value.value !== 'whitespace'
-              ) {
-                context.report({
-                  node: fixableProp.value,
-                  messageId: 'invalidFixableValue',
-                  fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-                    return fixer.replaceText(fixableProp.value, "'code'");
-                  },
-                });
-              }
+            if (
+              fixableProp &&
+              'value' in fixableProp &&
+              fixableProp.value.type === AST_NODE_TYPES.Literal &&
+              fixableProp.value.value !== 'code' &&
+              fixableProp.value.value !== 'whitespace'
+            ) {
+              context.report({
+                node: fixableProp.value,
+                messageId: 'invalidFixableValue',
+                fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+                  return fixer.replaceText(fixableProp.value, "'code'");
+                },
+              });
             }
 
-            // Check for docs object
             const docsProp = metaProperty.value.properties.find(
               (prop: TSESTree.ObjectLiteralElement): boolean => {
                 return (
-                  prop.type === 'Property' &&
-                  prop.key.type === 'Identifier' &&
+                  prop.type === AST_NODE_TYPES.Property &&
+                  prop.key.type === AST_NODE_TYPES.Identifier &&
                   prop.key.name === 'docs'
                 );
               }
@@ -605,14 +600,13 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
             if (
               typeof docsProp !== 'undefined' &&
               'value' in docsProp &&
-              docsProp.value.type === 'ObjectExpression'
+              docsProp.value.type === AST_NODE_TYPES.ObjectExpression
             ) {
-              // Check for recommended property (should not be present)
               const recommendedProp = docsProp.value.properties.find(
                 (prop: TSESTree.ObjectLiteralElement): boolean => {
                   return (
-                    prop.type === 'Property' &&
-                    prop.key.type === 'Identifier' &&
+                    prop.type === AST_NODE_TYPES.Property &&
+                    prop.key.type === AST_NODE_TYPES.Identifier &&
                     prop.key.name === 'recommended'
                   );
                 }
@@ -628,12 +622,11 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
                 });
               }
 
-              // Check for URL
               const urlProp = docsProp.value.properties.find(
                 (prop: TSESTree.ObjectLiteralElement): boolean => {
                   return (
-                    prop.type === 'Property' &&
-                    prop.key.type === 'Identifier' &&
+                    prop.type === AST_NODE_TYPES.Property &&
+                    prop.key.type === AST_NODE_TYPES.Identifier &&
                     prop.key.name === 'url'
                   );
                 }
@@ -652,8 +645,8 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
               (prop: TSESTree.ObjectLiteralElement): boolean => {
                 try {
                   return (
-                    prop.type === 'Property' &&
-                    prop.key.type === 'Identifier' &&
+                    prop.type === AST_NODE_TYPES.Property &&
+                    prop.key.type === AST_NODE_TYPES.Identifier &&
                     prop.key.name === 'messages'
                   );
                 } catch (e) {
@@ -667,7 +660,7 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
               typeof messagesProp !== 'undefined' &&
               'value' in messagesProp &&
               messagesProp.value &&
-              messagesProp.value.type === 'ObjectExpression'
+              messagesProp.value.type === AST_NODE_TYPES.ObjectExpression
             ) {
               // Validate all message IDs
               if (messagesProp.value.properties && Array.isArray(messagesProp.value.properties)) {
@@ -676,9 +669,9 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
                     try {
                       if (
                         prop &&
-                        prop.type === 'Property' &&
+                        prop.type === AST_NODE_TYPES.Property &&
                         prop.key &&
-                        prop.key.type === 'Literal' &&
+                        prop.key.type === AST_NODE_TYPES.Literal &&
                         typeof prop.key.value === 'string'
                       ) {
                         validateMessageId(prop.key.value, prop.key, context);
@@ -695,19 +688,19 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
       },
 
       // Check for default exports
-      ExportDefaultDeclaration(node: TSESTree.ExportDefaultDeclaration): void {
+      [AST_NODE_TYPES.ExportDefaultDeclaration](node: TSESTree.ExportDefaultDeclaration): void {
         defaultExportNode = node;
       },
 
       // Check for export declarations
-      ExportNamedDeclaration(node: TSESTree.ExportNamedDeclaration): void {
+      [AST_NODE_TYPES.ExportNamedDeclaration](node: TSESTree.ExportNamedDeclaration): void {
         // Track named exports that are rules
-        if (node.declaration?.type === 'VariableDeclaration') {
+        if (node.declaration?.type === AST_NODE_TYPES.VariableDeclaration) {
           for (const decl of node.declaration.declarations) {
             if (
               decl.init &&
-              decl.init.type === 'CallExpression' &&
-              decl.init.callee.type === 'Identifier' &&
+              decl.init.type === AST_NODE_TYPES.CallExpression &&
+              decl.init.callee.type === AST_NODE_TYPES.Identifier &&
               decl.init.callee.name === 'createRule'
             ) {
               if (decl.id.type === 'Identifier') {
@@ -718,13 +711,12 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
         }
       },
 
-      // Check variable declarations for rule definitions
-      VariableDeclarator(node: TSESTree.VariableDeclarator): void {
+      [AST_NODE_TYPES.VariableDeclarator](node: TSESTree.VariableDeclarator): void {
         if (
           node.init === null ||
           !(
-            node.init.type === 'CallExpression' &&
-            node.init.callee.type === 'Identifier' &&
+            node.init.type === AST_NODE_TYPES.CallExpression &&
+            node.init.callee.type === AST_NODE_TYPES.Identifier &&
             node.init.callee.name === 'createRule'
           )
         ) {
@@ -734,22 +726,20 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
         inRuleDefinition = true;
         currentRuleNode = node;
         currentRuleName =
-          node.id.type === 'Identifier' &&
+          node.id.type === AST_NODE_TYPES.Identifier &&
           node.init &&
-          node.init.type === 'CallExpression' &&
-          node.init.callee.type === 'Identifier' &&
+          node.init.type === AST_NODE_TYPES.CallExpression &&
+          node.init.callee.type === AST_NODE_TYPES.Identifier &&
           node.init.callee.name === 'createRule'
             ? node.id.name
             : null;
 
-        // Check rule naming convention
         checkRuleNaming(node, context);
 
-        // Check the rule's option object (first argument to createRule)
         const ruleOptions =
           node.init !== null && 'arguments' in node.init ? node.init?.arguments?.[0] : null;
 
-        if (!(ruleOptions !== null && ruleOptions?.type === 'ObjectExpression')) {
+        if (!(ruleOptions !== null && ruleOptions?.type === AST_NODE_TYPES.ObjectExpression)) {
           return;
         }
 
@@ -757,7 +747,7 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
 
         const meta = prop !== null && 'value' in prop ? prop.value : null;
 
-        if (!meta || meta.type !== 'ObjectExpression') {
+        if (!meta || meta.type !== AST_NODE_TYPES.ObjectExpression) {
           context.report({
             node: ruleOptions,
             messageId: 'missingMetaProperty',
@@ -767,7 +757,6 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
           return;
         }
 
-        // Check required meta properties
         const requiredMetaProperties = ['type', 'docs', 'messages'];
 
         for (const prop of requiredMetaProperties) {
@@ -782,11 +771,9 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
 
         const docsProp = getProperty(meta, 'docs');
 
-        // Check meta.docs
         const docs = docsProp !== null && 'value' in docsProp ? docsProp.value : null;
 
-        if (docs && docs.type === 'ObjectExpression') {
-          // Check for documentation URL
+        if (docs && docs.type === AST_NODE_TYPES.ObjectExpression) {
           if (option?.requireDocumentationUrl && !hasProperty(docs, 'url')) {
             context.report({
               node: docs,
@@ -794,7 +781,6 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
             });
           }
 
-          // Check for invalid 'recommended' property in docs
           const recommendedProp = getProperty(docs, 'recommended');
 
           if (recommendedProp) {
@@ -825,14 +811,13 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
           }
         }
 
-        // Check hasSuggestions
         const hasSuggestionsProp = getProperty(meta, 'hasSuggestions');
 
         if (hasSuggestionsProp !== null) {
           hasSuggestions = true;
           if (
             'value' in hasSuggestionsProp &&
-            hasSuggestionsProp.value.type === 'Literal' &&
+            hasSuggestionsProp.value.type === AST_NODE_TYPES.Literal &&
             hasSuggestionsProp.value.value !== true
           ) {
             context.report({
@@ -845,13 +830,12 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
           }
         }
 
-        // Check fixable
         const fixableProp = getProperty(meta, 'fixable');
 
         if (
           fixableProp !== null &&
           'value' in fixableProp &&
-          fixableProp.value.type === 'Literal' &&
+          fixableProp.value.type === AST_NODE_TYPES.Literal &&
           fixableProp.value.value === true
         ) {
           context.report({
@@ -871,7 +855,7 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
 
           if (
             createFn !== null &&
-            createFn.type === 'FunctionExpression' &&
+            createFn.type === AST_NODE_TYPES.FunctionExpression &&
             !/createPerformanceTracker|trackOperation/.test(context.sourceCode.getText(createFn))
           ) {
             context.report({
@@ -946,10 +930,9 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
         currentRuleName = null;
       },
 
-      'Program:exit'(): void {
+      [`${AST_NODE_TYPES.Program}:exit`](): void {
         startPhase(perfKey, 'programExit');
 
-        // Check for missing exports
         if (
           currentRuleNode &&
           !ruleExports.some((exp: { node: TSESTree.Node; name: string }): boolean => {
@@ -962,13 +945,13 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
             fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
               if (
                 !currentRuleNode?.parent ||
-                currentRuleNode?.parent.type !== 'VariableDeclaration'
+                currentRuleNode?.parent.type !== AST_NODE_TYPES.VariableDeclaration
               ) {
                 return null;
               }
 
-              // Insert 'export ' before 'const'
               const constToken = context.sourceCode.getFirstToken(currentRuleNode?.parent);
+
               if (constToken === null) {
                 return null;
               }
@@ -977,94 +960,33 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
             },
           });
         }
-        try {
-          startPhase(perfKey, 'programExit');
 
-          // Check for missing exports
-          if (
-            currentRuleNode &&
-            !ruleExports.some((exp: { node: TSESTree.Node; name: string }): boolean => {
-              return exp.node === currentRuleNode;
-            })
-          ) {
-            context.report({
-              node: currentRuleNode,
-              messageId: 'missingExport',
-              fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-                if (
-                  !currentRuleNode?.parent ||
-                  currentRuleNode?.parent.type !== 'VariableDeclaration'
-                ) {
-                  return null;
-                }
-
-                // Insert 'export ' before 'const'
-                const constToken = context.sourceCode.getFirstToken(currentRuleNode?.parent);
-                if (constToken === null) {
-                  return null;
-                }
-
-                return fixer.insertTextBefore(constToken, 'export ');
-              },
-            });
-          }
-
-          // Check for default exports
-          if (defaultExportNode !== null) {
-            context.report({
-              node: defaultExportNode,
-              messageId: 'defaultExportNotAllowed',
-              fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-                if (defaultExportNode === null) {
-                  return null;
-                }
-
-                return fixer.remove(defaultExportNode);
-              },
-            });
-          }
-
-          // Check for multiple exports
-          if (ruleExports.length > 1) {
-            ruleExports.slice(1).forEach((exp: { node: TSESTree.Node; name: string }): void => {
-              context.report({
-                node: exp.node,
-                messageId: 'multipleExportsNotAllowed',
-              });
-            });
-          }
-
-          try {
-            startPhase(perfKey, 'recordMetrics');
-
-            const finalMetrics = stopTracking(perfKey);
-
-            if (typeof finalMetrics !== 'undefined') {
-              console.info(
-                `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget ? 'EXCEEDED' : 'OK'}):`
-              );
-              console.info(`  File: ${context.filename}`);
-              console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-              console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
-
-              if (finalMetrics.exceededBudget) {
-                console.warn('\n⚠️  Performance budget exceeded!');
+        // Check for default exports
+        if (defaultExportNode !== null) {
+          context.report({
+            node: defaultExportNode,
+            messageId: 'defaultExportNotAllowed',
+            fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+              if (defaultExportNode === null) {
+                return null;
               }
-            }
-          } catch (error: unknown) {
-            console.error('Error recording metrics:', error);
-          } finally {
-            endPhase(perfKey, 'recordMetrics');
 
-            stopTracking(perfKey);
-          }
-
-          perf['Program:exit']();
-        } catch (error) {
-          console.error('Error in Program:exit handler:', error);
-        } finally {
-          endPhase(perfKey, 'programExit');
+              return fixer.remove(defaultExportNode);
+            },
+          });
         }
+
+        // Check for multiple exports
+        if (ruleExports.length > 1) {
+          ruleExports.slice(1).forEach((exp: { node: TSESTree.Node; name: string }): void => {
+            context.report({
+              node: exp.node,
+              messageId: 'multipleExportsNotAllowed',
+            });
+          });
+        }
+
+        endPhase(perfKey, 'programExit');
       },
     };
   },

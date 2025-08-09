@@ -44,20 +44,26 @@ interface Options {
   
   /**
    * Pattern to identify custom hooks
-   * @default '^use[A-Z]'
+   * @default '^use[A-Z][a-zA-Z0-9]*$'
    */
   customHookPattern?: string;
   
+  /**
+   * Per-message overrides for severity
+   */
+  severity?: {
+    signalInComponent?: 'error' | 'warn' | 'off';
+    signalInHook?: 'error' | 'warn' | 'off';
+    signalExported?: 'error' | 'warn' | 'off';
+  };
+  
   /** Performance tuning options */
   performance?: {
-    maxNodeCount?: number;
-    maxNodeCountPerRun?: number;
-    maxFixCount?: number;
-    maxFixCountPerRun?: number;
-    maxFixIterations?: number;
-    maxFixTimeMs?: number;
-    maxTotalTimeMs?: number;
+    maxTime?: number;
+    maxMemory?: number;
+    maxNodes?: number;
     enableMetrics?: boolean;
+    logMetrics?: boolean;
   };
 }
 ```
@@ -68,10 +74,16 @@ interface Options {
 {
   "allowedDirs": [],
   "allowComputedInComponents": false,
-  "customHookPattern": "^use[A-Z]",
+  "customHookPattern": "^use[A-Z][a-zA-Z0-9]*$",
+  "severity": {
+    "signalInComponent": "error",
+    "signalInHook": "error",
+    "signalExported": "error"
+  },
   "performance": {
-    "maxTime": 1000,
-    "maxNodes": 2000,
+    "maxTime": 200,
+    "maxMemory": 256,
+    "maxNodes": 100000,
     "enableMetrics": false,
     "logMetrics": false
   }
@@ -84,76 +96,52 @@ interface Options {
 
 - **Message**: "Avoid creating signals in component bodies. Move to module level or a custom hook."
 - **Description**: A signal is being created inside a React component body
-- **Fix Suggestion**: Move the signal creation to the module level or a custom hook
 
 ### computedInComponent
 
 - **Message**: "Avoid creating computed values in component bodies. Consider using useMemo instead."
 - **Description**: A computed value is being created inside a React component body
-- **Fix Suggestion**: Use `useMemo` for computed values inside components or move the computation to a custom hook
 
 ### exportedSignal
 
 - **Message**: "Exporting signals from a file often leads to circular imports and breaks the build with hard to debug. Use @biomejs/biome for circular imports diagnostic."
 - **Description**: A signal is being exported from a module
-- **Fix Suggestion**: Avoid exporting signals directly to prevent circular dependencies
 
 ## Examples
 
 ### ❌ Incorrect
 
 ```tsx
-// signals.ts - Exporting signals (not recommended)
-export const count = signal(0);
+// Bad: creating a signal inside a component
+import { signal, computed } from '@preact/signals-react';
 
 export function Counter() {
-  // Creating signal in component body (not recommended)
-  const [name, setName] = createSignal('');
+  const count = signal(0);
+  const doubleCount = computed(() => count.value * 2);
   
-  // Computed value in component body (not recommended)
-  const fullName = createMemo(() => `User: ${name()}`);
-  
-  return <div>{fullName()}</div>;
+  return <div>Count: {count.value}, Double Count: {doubleCount.value}</div>;
 }
 ```
 
 ### ✅ Correct
 
 ```tsx
-// hooks/useUser.ts - Custom hook for user-related state
-export function useUser() {
-  const name = signal('');
-  const fullName = computed(() => `User: ${name.value}`);
-  
-  return { name, fullName };
-}
+// Good: creating a signal at the module level
+import { signal, computed } from '@preact/signals-react';
 
-// components/Counter.tsx
-import { useUser } from '../hooks/useUser';
+const count = signal(0);
+const doubleCount = computed(() => count.value * 2);
 
 export function Counter() {
-  const { name, fullName } = useUser();
-  
-  return <div>{fullName}</div>;
+  return <div>Count: {count.value}, Double Count: {doubleCount.value}</div>;
 }
 ```
 
 ## Configuration Examples
 
-### Allow signals in specific directories
+### Options
 
-```json
-{
-  "rules": {
-    "react-signals-hooks/restrict-signal-locations": [
-      "error",
-      {
-        "allowedDirs": ["src/store", "src/lib"]
-      }
-    ]
-  }
-}
-```
+This rule supports the following options:
 
 ### Allow computed values in components
 

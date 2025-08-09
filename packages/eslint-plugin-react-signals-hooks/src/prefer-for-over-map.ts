@@ -12,30 +12,28 @@ import {
   endPhase,
   startPhase,
   recordMetric,
-  stopTracking,
   startTracking,
   trackOperation,
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
 } from './utils/performance.js';
+import { buildSuffixRegex, hasSignalSuffix } from './utils/suffix.js';
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
 
+type MessageIds = 'preferForOverMap' | 'suggestForComponent' | 'addForImport';
+
 type Serenity = {
-  preferForOverMap?: 'error' | 'warn' | 'off';
-  suggestForComponent?: 'error' | 'warn' | 'off';
-  addForImport?: 'error' | 'warn' | 'off';
-  performanceLimitExceeded?: 'error' | 'warn' | 'off';
+  [key in MessageIds]?: 'error' | 'warn' | 'off';
 };
 
 type Option = {
   performance?: PerformanceBudget;
   severity?: Serenity;
+  suffix?: string;
 };
 
 type Options = [Option?];
-
-type MessageIds = 'preferForOverMap' | 'suggestForComponent' | 'addForImport';
 
 const REACT_HOOKS = new Set([
   'useEffect',
@@ -51,7 +49,6 @@ const REACT_HOOKS = new Set([
 
 function getSeverity(messageId: MessageIds, options: Option | undefined): 'error' | 'warn' | 'off' {
   if (!options?.severity) {
-    // Default to 'error' for all message types except performanceLimitExceeded
     return 'error';
   }
 
@@ -79,7 +76,68 @@ const signalMapCache = new WeakMap<
   { signalName: string; hasValueAccess: boolean } | null
 >();
 
-function isSignalArrayMap(node: TSESTree.CallExpression): {
+function getBaseIdentifierFromMemberChain(
+  node: TSESTree.MemberExpression
+): TSESTree.Identifier | null {
+  let current: TSESTree.Expression | TSESTree.PrivateIdentifier = node.object;
+
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  while (true) {
+    if (current.type === AST_NODE_TYPES.Identifier) {
+      return current;
+    }
+
+    if (current.type === AST_NODE_TYPES.MemberExpression) {
+      current = current.object;
+      continue;
+    }
+
+    return null;
+  }
+}
+
+function memberChainIncludesValue(node: TSESTree.MemberExpression): boolean {
+  let current: TSESTree.Expression | TSESTree.PrivateIdentifier = node;
+
+  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+  while (current && current.type === AST_NODE_TYPES.MemberExpression) {
+    if (current.property.type === AST_NODE_TYPES.Identifier && current.property.name === 'value') {
+      return true;
+    }
+
+    current = current.object;
+  }
+
+  return false;
+}
+
+function unwrapCalleeMember(
+  callee:
+    | TSESTree.MemberExpression
+    | TSESTree.ChainExpression
+    | TSESTree.CallExpression
+    | TSESTree.Identifier
+): TSESTree.MemberExpression | null {
+  // Handle ChainExpression wrapping a MemberExpression
+  if (callee.type === AST_NODE_TYPES.ChainExpression) {
+    const expr = callee.expression;
+    if (expr.type === AST_NODE_TYPES.MemberExpression) {
+      return expr;
+    }
+    return null;
+  }
+
+  if (callee.type === AST_NODE_TYPES.MemberExpression) {
+    return callee;
+  }
+
+  return null;
+}
+
+function isSignalArrayMap(
+  node: TSESTree.CallExpression,
+  suffixRegex: RegExp
+): {
   signalName: string;
   hasValueAccess: boolean;
 } | null {
@@ -89,36 +147,40 @@ function isSignalArrayMap(node: TSESTree.CallExpression): {
     return cached;
   }
 
-  const result: { signalName: string; hasValueAccess: boolean } | null = null;
-  // Check for signalName.value.map(...)
-  if (
-    node.callee.type === AST_NODE_TYPES.MemberExpression &&
-    node.callee.property.type === AST_NODE_TYPES.Identifier &&
-    node.callee.property.name === 'map' &&
-    node.callee.object.type === AST_NODE_TYPES.MemberExpression &&
-    node.callee.object.property.type === AST_NODE_TYPES.Identifier &&
-    node.callee.object.property.name === 'value' &&
-    node.callee.object.object.type === AST_NODE_TYPES.Identifier &&
-    node.callee.object.object.name.endsWith('Signal')
-  ) {
-    return {
-      signalName: node.callee.object.object.name,
-      hasValueAccess: true,
-    };
-  }
+  let result: { signalName: string; hasValueAccess: boolean } | null = null;
 
-  // Check for direct signal.map() (without .value)
+  const member = unwrapCalleeMember(
+    node.callee as
+      | TSESTree.MemberExpression
+      | TSESTree.ChainExpression
+      | TSESTree.CallExpression
+      | TSESTree.Identifier
+  );
+
   if (
-    node.callee.type === AST_NODE_TYPES.MemberExpression &&
-    node.callee.property.type === AST_NODE_TYPES.Identifier &&
-    node.callee.property.name === 'map' &&
-    node.callee.object.type === AST_NODE_TYPES.Identifier &&
-    node.callee.object.name.endsWith('Signal')
+    member &&
+    member.property.type === AST_NODE_TYPES.Identifier &&
+    member.property.name === 'map'
   ) {
-    return {
-      signalName: node.callee.object.name,
-      hasValueAccess: false,
-    };
+    const obj = member.object;
+
+    // Direct identifier receiver: fooSignal.map(...)
+    if (obj.type === AST_NODE_TYPES.Identifier) {
+      if (hasSignalSuffix(obj.name, suffixRegex)) {
+        result = { signalName: obj.name, hasValueAccess: false };
+      }
+    }
+
+    // Member chain receiver: may include .value and/or nested props
+    else if (obj.type === AST_NODE_TYPES.MemberExpression) {
+      const base = getBaseIdentifierFromMemberChain(obj);
+
+      if (base && hasSignalSuffix(base.name, suffixRegex)) {
+        const hasValue = memberChainIncludesValue(obj);
+
+        result = { signalName: base.name, hasValueAccess: hasValue };
+      }
+    }
   }
 
   signalMapCache.set(node, result);
@@ -294,10 +356,6 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator((name: string): stri
                 type: 'string',
                 enum: ['error', 'warn', 'off'],
               },
-              performanceLimitExceeded: {
-                type: 'string',
-                enum: ['error', 'warn', 'off'],
-              },
             },
             additionalProperties: false,
           },
@@ -316,14 +374,16 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator((name: string): stri
 
     startPhase(perfKey, 'ruleInit');
 
-    const perf = createPerformanceTracker<Options>(perfKey, option?.performance, context);
+    const perf = createPerformanceTracker(perfKey, option?.performance);
 
     if (option?.performance?.enableMetrics === true) {
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    // console.info(`${ruleName}: Rule configuration:`, option);
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
     recordMetric(perfKey, 'config', {
       performance: {
@@ -353,6 +413,10 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator((name: string): stri
       return true;
     }
 
+    const suffix =
+      typeof option?.suffix === 'string' && option.suffix.length > 0 ? option.suffix : 'Signal';
+    const suffixRegex = buildSuffixRegex(suffix);
+
     startPhase(perfKey, 'ruleExecution');
 
     return {
@@ -360,36 +424,45 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator((name: string): stri
         if (!shouldContinue()) {
           endPhase(perfKey, 'recordMetrics');
 
-          stopTracking(perfKey);
-
           return;
         }
 
         perf.trackNode(node);
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        const op =
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing;
+        trackOperation(perfKey, op);
       },
 
-      JSXElement(_node: TSESTree.Node): void {
+      [AST_NODE_TYPES.JSXElement](_node: TSESTree.Node): void {
         inJSX = true;
+
         jsxDepth++;
       },
-      'JSXElement:exit'(_node: TSESTree.Node): void {
+      [`${AST_NODE_TYPES.JSXElement}:exit`](_node: TSESTree.Node): void {
         jsxDepth--;
-        if (jsxDepth === 0) inJSX = false;
+
+        if (jsxDepth === 0) {
+          inJSX = false;
+        }
       },
 
-      JSXFragment(_node: TSESTree.Node): void {
+      [AST_NODE_TYPES.JSXFragment](_node: TSESTree.Node): void {
         inJSX = true;
+
         jsxDepth++;
       },
-      'JSXFragment:exit'(_node: TSESTree.Node): void {
+
+      [`${AST_NODE_TYPES.JSXFragment}:exit`](_node: TSESTree.Node): void {
         jsxDepth--;
-        if (jsxDepth === 0) inJSX = false;
+
+        if (jsxDepth === 0) {
+          inJSX = false;
+        }
       },
 
-      CallExpression(node: TSESTree.CallExpression): void {
-        // Track hook usage
+      [AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
         if (node.callee.type === AST_NODE_TYPES.Identifier && REACT_HOOKS.has(node.callee.name)) {
           hookDepth++;
 
@@ -400,12 +473,11 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator((name: string): stri
           return;
         }
 
-        // Only apply the rule if we're in JSX and NOT in a hook
         if (!inJSX || inHook || hookDepth > 0) {
           return;
         }
 
-        const signalMapInfo = isSignalArrayMap(node);
+        const signalMapInfo = isSignalArrayMap(node, suffixRegex);
 
         if (signalMapInfo === null) {
           return;
@@ -443,7 +515,6 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator((name: string): stri
 
             const fixes = [fixer.replaceText(node, replacementResult.replacement)];
 
-            // Add For import if needed
             if (!checkForImport(context) && getSeverity('addForImport', option) !== 'off') {
               const forImport = "import { For } from '@preact/signals-react';\n";
 
@@ -521,7 +592,8 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator((name: string): stri
                 ],
         });
       },
-      'CallExpression:exit'(node: TSESTree.CallExpression) {
+
+      [`${AST_NODE_TYPES.CallExpression}:exit`](node: TSESTree.CallExpression) {
         if (node.callee.type === AST_NODE_TYPES.Identifier && REACT_HOOKS.has(node.callee.name)) {
           hookDepth = Math.max(0, hookDepth - 1);
           if (hookDepth === 0) {
@@ -530,34 +602,8 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator((name: string): stri
         }
       },
 
-      // Clean up
-      'Program:exit'(): void {
+      [`${AST_NODE_TYPES.Program}:exit`](): void {
         startPhase(perfKey, 'programExit');
-
-        try {
-          startPhase(perfKey, 'recordMetrics');
-
-          const finalMetrics = stopTracking(perfKey);
-
-          if (finalMetrics) {
-            console.info(
-              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
-
-            if (finalMetrics.exceededBudget === true) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
-        }
 
         perf['Program:exit']();
 

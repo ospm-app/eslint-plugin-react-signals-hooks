@@ -4,706 +4,704 @@
 /* eslint-disable react-signals-hooks/restrict-signal-locations */
 /** biome-ignore-all lint/correctness/noUnusedVariables: off */
 /** biome-ignore-all lint/correctness/useExhaustiveDependencies:off */
-import { type JSX, useCallback, useEffect, useState } from "react";
-import { signal, batch } from "@preact/signals-react";
-import { useSignals } from "@preact/signals-react/runtime";
+import { type JSX, useCallback, useEffect, useState } from 'react';
+import { signal, batch } from '@preact/signals-react';
+import { useSignals } from '@preact/signals-react/runtime';
 
 // This component should trigger ESLint warning for multiple signal updates without batching
 export function TestMultipleSignalUpdates(): JSX.Element {
-	useSignals();
+  useSignals();
 
-	const countSignal = signal(0);
-	const nameSignal = signal("John");
-	const activeSignal = signal(false);
+  const countSignal = signal(0);
+  const nameSignal = signal('John');
+  const activeSignal = signal(false);
 
-	const handleClick = useCallback(() => {
-		// Should trigger warning - multiple signal updates without batching
-		countSignal.value += 1;
-		nameSignal.value = "Doe";
-		activeSignal.value = true;
-	}, []);
+  const handleClick = useCallback(() => {
+    // Should trigger warning - multiple signal updates without batching
+    countSignal.value += 1;
+    nameSignal.value = 'Doe';
+    activeSignal.value = true;
+  }, []);
 
-	return (
-		<div>
-			<div>Count: {countSignal}</div>
+  return (
+    <div>
+      <div>Count: {countSignal}</div>
 
-			<div>Name: {nameSignal}</div>
+      <div>Name: {nameSignal}</div>
 
-			<div>Active: {activeSignal.toString()}</div>
+      <div>Active: {activeSignal.toString()}</div>
 
-			<button type="button" onClick={handleClick}>
-				Update All
-			</button>
-		</div>
-	);
+      <button type='button' onClick={handleClick}>
+        Update All
+      </button>
+    </div>
+  );
 }
 
 // This component should NOT trigger warning - using batch for multiple signal updates
 export function TestBatchSignalUpdates(): JSX.Element {
-	useSignals();
+  useSignals();
 
-	const countSignal = signal(0);
-	const nameSignal = signal("John");
-	const activeSignal = signal(false);
+  const countSignal = signal(0);
+  const nameSignal = signal('John');
+  const activeSignal = signal(false);
 
-	const handleClick = useCallback(() => {
-		// Correct - using batch for multiple signal updates
-		batch(() => {
-			countSignal.value += 1;
+  const handleClick = useCallback(() => {
+    // Correct - using batch for multiple signal updates
+    batch(() => {
+      countSignal.value += 1;
 
-			nameSignal.value = "Doe";
+      nameSignal.value = 'Doe';
 
-			activeSignal.value = true;
-		});
-	}, []);
+      activeSignal.value = true;
+    });
+  }, []);
 
-	return (
-		<div>
-			<div>Count: {countSignal}</div>
+  return (
+    <div>
+      <div>Count: {countSignal}</div>
 
-			<div>Name: {nameSignal}</div>
+      <div>Name: {nameSignal}</div>
 
-			<div>Active: {activeSignal.toString()}</div>
+      <div>Active: {activeSignal.toString()}</div>
 
-			<button type="button" onClick={handleClick}>
-				Update All
-			</button>
-		</div>
-	);
+      <button type='button' onClick={handleClick}>
+        Update All
+      </button>
+    </div>
+  );
 }
 
 // This component should trigger warning for nested signal updates without batching
 export function TestNestedSignalUpdates(): JSX.Element {
-	useSignals();
+  useSignals();
 
-	const userSignal = signal<{ id: number; name: string; active: boolean }>({
-		id: 1,
-		name: "John",
-		active: false,
-	});
+  const userSignal = signal<{ id: number; name: string; active: boolean }>({
+    id: 1,
+    name: 'John',
+    active: false,
+  });
 
-	const countSignal = signal(0);
+  const countSignal = signal(0);
 
-	const handleClick = useCallback(() => {
-		// Should trigger warning - multiple signal updates without batching
-		userSignal.value = { ...userSignal.value, name: "Doe" };
+  const handleClick = useCallback(() => {
+    // Should trigger warning - multiple signal updates without batching
+    userSignal.value = { ...userSignal.value, name: 'Doe' };
 
-		countSignal.value += 1;
+    countSignal.value += 1;
 
-		userSignal.value = { ...userSignal.value, active: true };
-	}, [userSignal.value]);
+    userSignal.value = { ...userSignal.value, active: true };
+  }, [userSignal.value]);
 
-	return (
-		<div>
-			<div>User: {JSON.stringify(userSignal.value)}</div>
-			<div>Count: {countSignal}</div>
-			<button type="button" onClick={handleClick}>
-				Update User
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>User: {JSON.stringify(userSignal.value)}</div>
+      <div>Count: {countSignal}</div>
+      <button type='button' onClick={handleClick}>
+        Update User
+      </button>
+    </div>
+  );
 }
 
 // This component should NOT trigger warning - single signal update
 export function TestSingleSignalUpdate(): JSX.Element {
-	useSignals();
-	const countSignal = signal(0);
+  useSignals();
+  const countSignal = signal(0);
 
-	const handleClick = useCallback(() => {
-		// Correct - single signal update doesn't need batching
-		countSignal.value += 1;
-	}, []);
+  const handleClick = useCallback(() => {
+    // Correct - single signal update doesn't need batching
+    countSignal.value += 1;
+  }, []);
 
-	return (
-		<div>
-			<div>Count: {countSignal}</div>
-			<button type="button" onClick={handleClick}>
-				Increment
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>Count: {countSignal}</div>
+      <button type='button' onClick={handleClick}>
+        Increment
+      </button>
+    </div>
+  );
 }
 
 // This component should trigger warning for multiple signal updates in useEffect
 export function TestMultipleUpdatesInEffect(): JSX.Element {
-	useSignals();
-	const countSignal = signal(0);
-	const nameSignal = signal("John");
+  useSignals();
+  const countSignal = signal(0);
+  const nameSignal = signal('John');
 
-	// Should trigger warning - multiple signal updates in useEffect without batching
+  // Should trigger warning - multiple signal updates in useEffect without batching
 
-	useEffect(() => {
-		countSignal.value = 10;
-		nameSignal.value = "Doe";
-	}, []);
+  useEffect(() => {
+    countSignal.value = 10;
+    nameSignal.value = 'Doe';
+  }, []);
 
-	return (
-		<div>
-			<div>Count: {countSignal}</div>
-			<div>Name: {nameSignal}</div>
-		</div>
-	);
+  return (
+    <div>
+      <div>Count: {countSignal}</div>
+      <div>Name: {nameSignal}</div>
+    </div>
+  );
 }
 
 // This component should NOT trigger warning - multiple signal updates in batch callback
 export function TestBatchInCallback(): JSX.Element {
-	useSignals();
-	const countSignal = signal(0);
-	const nameSignal = signal("John");
+  useSignals();
+  const countSignal = signal(0);
+  const nameSignal = signal('John');
 
-	const updateSignals = useCallback(() => {
-		// Correct - using batch in a callback
-		batch(() => {
-			countSignal.value = 10;
-			nameSignal.value = "Doe";
-		});
-	}, []);
+  const updateSignals = useCallback(() => {
+    // Correct - using batch in a callback
+    batch(() => {
+      countSignal.value = 10;
+      nameSignal.value = 'Doe';
+    });
+  }, []);
 
-	return (
-		<div>
-			<div>Count: {countSignal}</div>
+  return (
+    <div>
+      <div>Count: {countSignal}</div>
 
-			<div>Name: {nameSignal}</div>
+      <div>Name: {nameSignal}</div>
 
-			<button type="button" onClick={updateSignals}>
-				Update
-			</button>
-		</div>
-	);
+      <button type='button' onClick={updateSignals}>
+        Update
+      </button>
+    </div>
+  );
 }
 
 // This component should trigger warning for multiple signal updates in a loop
 export function TestSignalUpdatesInLoop(): JSX.Element {
-	useSignals();
+  useSignals();
 
-	const itemsSignal = signal([1, 2, 3]);
+  const itemsSignal = signal([1, 2, 3]);
 
-	const doubleItems = useCallback(() => {
-		// Should trigger warning - multiple signal updates in loop without batching
-		for (let i = 0; i < itemsSignal.value.length; i++) {
-			itemsSignal.value[i] *= 2;
-		}
-	}, []);
+  const doubleItems = useCallback(() => {
+    // Should trigger warning - multiple signal updates in loop without batching
+    for (let i = 0; i < itemsSignal.value.length; i++) {
+      itemsSignal.value[i] *= 2;
+    }
+  }, []);
 
-	return (
-		<div>
-			<div>Items: {itemsSignal.value.join(", ")}</div>
+  return (
+    <div>
+      <div>Items: {itemsSignal.value.join(', ')}</div>
 
-			<button type="button" onClick={doubleItems}>
-				Double Items
-			</button>
-		</div>
-	);
+      <button type='button' onClick={doubleItems}>
+        Double Items
+      </button>
+    </div>
+  );
 }
 
 // This component should NOT trigger warning - single signal update with array mutation
 export function TestSingleArrayUpdate(): JSX.Element {
-	useSignals();
+  useSignals();
 
-	const itemsSignal = signal([1, 2, 3]);
+  const itemsSignal = signal([1, 2, 3]);
 
-	const addItem = useCallback(() => {
-		// Correct - single signal update with array mutation
-		itemsSignal.value = [...itemsSignal.value, itemsSignal.value.length + 1];
-	}, []);
+  const addItem = useCallback(() => {
+    // Correct - single signal update with array mutation
+    itemsSignal.value = [...itemsSignal.value, itemsSignal.value.length + 1];
+  }, []);
 
-	return (
-		<div>
-			<div>Items: {itemsSignal.value.join(", ")}</div>
+  return (
+    <div>
+      <div>Items: {itemsSignal.value.join(', ')}</div>
 
-			<button type="button" onClick={addItem}>
-				Add Item
-			</button>
-		</div>
-	);
+      <button type='button' onClick={addItem}>
+        Add Item
+      </button>
+    </div>
+  );
 }
 
 // This component should trigger warning for multiple signal updates in a conditional
 export function TestConditionalSignalUpdates(): JSX.Element {
-	useSignals();
+  useSignals();
 
-	const countSignal = signal(0);
-	const nameSignal = signal("John");
-	const [isAdmin, setIsAdmin] = useState(false);
+  const countSignal = signal(0);
+  const nameSignal = signal('John');
+  const [isAdmin, setIsAdmin] = useState(false);
 
-	const updateUser = useCallback(() => {
-		if (isAdmin) {
-			// Should trigger warning - multiple signal updates without batching
-			countSignal.value = 100;
-			nameSignal.value = "Admin";
-		} else {
-			countSignal.value = 1;
-			nameSignal.value = "User";
-		}
-	}, [isAdmin]);
+  const updateUser = useCallback(() => {
+    if (isAdmin) {
+      // Should trigger warning - multiple signal updates without batching
+      countSignal.value = 100;
+      nameSignal.value = 'Admin';
+    } else {
+      countSignal.value = 1;
+      nameSignal.value = 'User';
+    }
+  }, [isAdmin]);
 
-	return (
-		<div>
-			<div>Count: {countSignal}</div>
-			<div>Name: {nameSignal}</div>
-			<div>Is Admin: {isAdmin.toString()}</div>
-			<button type="button" onClick={() => setIsAdmin(!isAdmin)}>
-				Toggle Admin
-			</button>
-			<button type="button" onClick={updateUser}>
-				Update User
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>Count: {countSignal}</div>
+      <div>Name: {nameSignal}</div>
+      <div>Is Admin: {isAdmin.toString()}</div>
+      <button type='button' onClick={() => setIsAdmin(!isAdmin)}>
+        Toggle Admin
+      </button>
+      <button type='button' onClick={updateUser}>
+        Update User
+      </button>
+    </div>
+  );
 }
 
 // This component should NOT trigger warning - multiple signal updates in batch within conditional
 export function TestBatchInConditional(): JSX.Element {
-	useSignals();
-	const countSignal = signal(0);
-	const nameSignal = signal("John");
-	const [isAdmin, setIsAdmin] = useState(false);
+  useSignals();
+  const countSignal = signal(0);
+  const nameSignal = signal('John');
+  const [isAdmin, setIsAdmin] = useState(false);
 
-	const updateUser = useCallback(() => {
-		if (isAdmin) {
-			// Correct - using batch within conditional
-			batch(() => {
-				countSignal.value = 100;
-				nameSignal.value = "Admin";
-			});
-		} else {
-			// Single update doesn't need batching
-			countSignal.value = 1;
-			nameSignal.value = "User";
-		}
-	}, [isAdmin]);
+  const updateUser = useCallback(() => {
+    if (isAdmin) {
+      // Correct - using batch within conditional
+      batch(() => {
+        countSignal.value = 100;
+        nameSignal.value = 'Admin';
+      });
+    } else {
+      // Single update doesn't need batching, should warn, and offer autofix
+      batch(() => {
+        countSignal.value = 1;
+      });
+    }
+  }, [isAdmin]);
 
-	const toggleAdmin = useCallback(() => {
-		setIsAdmin((prev) => !prev);
-	}, []);
+  const toggleAdmin = useCallback(() => {
+    setIsAdmin((prev) => !prev);
+  }, []);
 
-	return (
-		<div>
-			<div>Count: {countSignal}</div>
+  return (
+    <div>
+      <div>Count: {countSignal}</div>
 
-			<div>Name: {nameSignal}</div>
+      <div>Name: {nameSignal}</div>
 
-			<div>Is Admin: {isAdmin.toString()}</div>
+      <div>Is Admin: {isAdmin.toString()}</div>
 
-			<button type="button" onClick={toggleAdmin}>
-				Toggle Admin
-			</button>
+      <button type='button' onClick={toggleAdmin}>
+        Toggle Admin
+      </button>
 
-			<button type="button" onClick={updateUser}>
-				Update User
-			</button>
-		</div>
-	);
+      <button type='button' onClick={updateUser}>
+        Update User
+      </button>
+    </div>
+  );
 }
 
 // Test component for custom batch function names
 export function TestCustomBatchFunction(): JSX.Element {
-	useSignals();
+  useSignals();
 
-	const countSignal = signal(0);
-	const nameSignal = signal("John");
+  const countSignal = signal(0);
+  const nameSignal = signal('John');
 
-	// This should use a custom batch function name
-	const handleClick = useCallback(() => {
-		customBatchFunction(() => {
-			countSignal.value += 1;
-			nameSignal.value = "Doe";
-		});
-	}, []);
+  // This should use a custom batch function name
+  const handleClick = useCallback(() => {
+    customBatchFunction(() => {
+      countSignal.value += 1;
+      nameSignal.value = 'Doe';
+    });
+  }, []);
 
-	return (
-		<div>
-			<div>Count: {countSignal}</div>
+  return (
+    <div>
+      <div>Count: {countSignal}</div>
 
-			<div>Name: {nameSignal}</div>
+      <div>Name: {nameSignal}</div>
 
-			<button type="button" onClick={handleClick}>
-				Update with Custom Batch
-			</button>
-		</div>
-	);
+      <button type='button' onClick={handleClick}>
+        Update with Custom Batch
+      </button>
+    </div>
+  );
 }
 
 // Mock custom batch function
 function customBatchFunction(fn: () => void): void {
-	fn();
+  fn();
 }
 
 // Test component for custom severity levels
 export function TestCustomSeverity(): JSX.Element {
-	useSignals();
+  useSignals();
 
-	const warningSignal1 = signal(0);
-	const warningSignal2 = signal(1);
-	const errorSignal1 = signal("a");
-	const errorSignal2 = signal("b");
+  const warningSignal1 = signal(0);
+  const warningSignal2 = signal(1);
+  const errorSignal1 = signal('a');
+  const errorSignal2 = signal('b');
 
-	// These should have different severity levels configured
-	const handleWarningClick = useCallback(() => {
-		warningSignal1.value += 1;
-		warningSignal2.value += 1; // Should be 'warn'
-	}, []);
+  // These should have different severity levels configured
+  const handleWarningClick = useCallback(() => {
+    warningSignal1.value += 1;
+    warningSignal2.value += 1; // Should be 'warn'
+  }, []);
 
-	const handleErrorClick = useCallback(() => {
-		errorSignal1.value += "x";
-		errorSignal2.value += "y"; // Should be 'error'
-	}, []);
+  const handleErrorClick = useCallback(() => {
+    errorSignal1.value += 'x';
+    errorSignal2.value += 'y'; // Should be 'error'
+  }, []);
 
-	return (
-		<div>
-			<div>
-				Warning Signals: {warningSignal1}, {warningSignal2}
-			</div>
-			<div>
-				Error Signals: {errorSignal1}, {errorSignal2}
-			</div>
-			<button type="button" onClick={handleWarningClick}>
-				Trigger Warning
-			</button>
-			<button type="button" onClick={handleErrorClick}>
-				Trigger Error
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>
+        Warning Signals: {warningSignal1}, {warningSignal2}
+      </div>
+      <div>
+        Error Signals: {errorSignal1}, {errorSignal2}
+      </div>
+      <button type='button' onClick={handleWarningClick}>
+        Trigger Warning
+      </button>
+      <button type='button' onClick={handleErrorClick}>
+        Trigger Error
+      </button>
+    </div>
+  );
 }
 
 // Test configuration for custom options
 export const customOptionsConfig = {
-	rules: {
-		"react-signals-hooks/prefer-batch-updates": [
-			"error",
-			{
-				batchFunctionNames: ["customBatchFunction", "anotherBatchFunction"],
-				severity: {
-					warning: "warn",
-					error: "error",
-				},
-				ignoreSingleUpdates: true,
-			},
-		],
-	},
+  rules: {
+    'react-signals-hooks/prefer-batch-updates': [
+      'error',
+      {
+        batchFunctionNames: ['customBatchFunction', 'anotherBatchFunction'],
+        severity: {
+          warning: 'warn',
+          error: 'error',
+        },
+        ignoreSingleUpdates: true,
+      },
+    ],
+  },
 };
 
 // Test component for file/pattern-based disabling
 export function TestFilePatternDisable(): JSX.Element {
-	useSignals();
+  useSignals();
 
-	const signal1 = signal(0);
-	const signal2 = signal(1);
+  const signal1 = signal(0);
+  const signal2 = signal(1);
 
-	// This would be ignored in test files
-	const handleClick = useCallback(() => {
-		signal1.value += 1;
-		signal2.value += 1;
-	}, []);
+  // This would be ignored in test files
+  const handleClick = useCallback(() => {
+    signal1.value += 1;
+    signal2.value += 1;
+  }, []);
 
-	return (
-		<div>
-			<div>Signal 1: {signal1}</div>
-			<div>Signal 2: {signal2}</div>
-			<button type="button" onClick={handleClick}>
-				Update Without Batch
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>Signal 1: {signal1}</div>
+      <div>Signal 2: {signal2}</div>
+      <button type='button' onClick={handleClick}>
+        Update Without Batch
+      </button>
+    </div>
+  );
 }
 
 export const filePatternConfig = {
-	rules: {
-		"react-signals-hooks/prefer-batch-updates": [
-			"error",
-			{
-				disableInTestFiles: true,
-			},
-		],
-	},
+  rules: {
+    'react-signals-hooks/prefer-batch-updates': [
+      'error',
+      {
+        disableInTestFiles: true,
+      },
+    ],
+  },
 };
 
 // Test component for minimum updates threshold
 export function TestMinimumUpdatesThreshold(): JSX.Element {
-	useSignals();
+  useSignals();
 
-	const signal1 = signal(0);
-	const signal2 = signal(1);
+  const signal1 = signal(0);
+  const signal2 = signal(1);
 
-	// This should not trigger the rule because of minimumUpdatesThreshold
-	const handleClick = useCallback(() => {
-		signal1.value += 1;
-		signal2.value += 1;
-	}, []);
+  // This should not trigger the rule because of minimumUpdatesThreshold
+  const handleClick = useCallback(() => {
+    signal1.value += 1;
+    signal2.value += 1;
+  }, []);
 
-	return (
-		<div>
-			<div>Signal 1: {signal1}</div>
-			<div>Signal 2: {signal2}</div>
-			<button type="button" onClick={handleClick}>
-				Update Signals
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>Signal 1: {signal1}</div>
+      <div>Signal 2: {signal2}</div>
+      <button type='button' onClick={handleClick}>
+        Update Signals
+      </button>
+    </div>
+  );
 }
 
 export const minimumUpdatesConfig = {
-	rules: {
-		"react-signals-hooks/prefer-batch-updates": [
-			"error",
-			{
-				minimumUpdatesThreshold: 3, // Require at least 3 updates before warning
-			},
-		],
-	},
+  rules: {
+    'react-signals-hooks/prefer-batch-updates': [
+      'error',
+      {
+        minimumUpdatesThreshold: 3, // Require at least 3 updates before warning
+      },
+    ],
+  },
 };
 
 // Test component for single update scenario (should not warn)
 export function TestSingleUpdateScenario(): JSX.Element {
-	useSignals();
-	const countSignal = signal(0);
+  useSignals();
+  const countSignal = signal(0);
 
-	// Single update - no batching needed
-	const handleClick = useCallback(() => {
-		countSignal.value += 1; // Single update - batching not needed
-	}, []);
+  // Single update - no batching needed
+  const handleClick = useCallback(() => {
+    countSignal.value += 1; // Single update - batching not needed
+  }, []);
 
-	return (
-		<div>
-			<div>Count: {countSignal}</div>
-			<button type="button" onClick={handleClick}>
-				Increment
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>Count: {countSignal}</div>
+      <button type='button' onClick={handleClick}>
+        Increment
+      </button>
+    </div>
+  );
 }
 
 // Test component for independent components scenario (should not warn)
 export function TestIndependentComponents(): JSX.Element {
-	return (
-		<div>
-			<ComponentA />
-			<ComponentB />
-		</div>
-	);
+  return (
+    <div>
+      <ComponentA />
+      <ComponentB />
+    </div>
+  );
 }
 
 function ComponentA() {
-	useSignals();
-	const aSignal = signal("A");
+  useSignals();
+  const aSignal = signal('A');
 
-	// Independent update - no need to batch with ComponentB's update
-	const handleClick = useCallback(() => {
-		aSignal.value = "Updated A";
-	}, []);
+  // Independent update - no need to batch with ComponentB's update
+  const handleClick = useCallback(() => {
+    aSignal.value = 'Updated A';
+  }, []);
 
-	return (
-		<div>
-			<div>Component A: {aSignal}</div>
-			<button type="button" onClick={handleClick}>
-				Update A
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>Component A: {aSignal}</div>
+      <button type='button' onClick={handleClick}>
+        Update A
+      </button>
+    </div>
+  );
 }
 
 function ComponentB() {
-	useSignals();
-	const bSignal = signal("B");
+  useSignals();
+  const bSignal = signal('B');
 
-	// Independent update - no need to batch with ComponentA's update
-	const handleClick = useCallback(() => {
-		bSignal.value = "Updated B";
-	}, []);
+  // Independent update - no need to batch with ComponentA's update
+  const handleClick = useCallback(() => {
+    bSignal.value = 'Updated B';
+  }, []);
 
-	return (
-		<div>
-			<div>Component B: {bSignal}</div>
-			<button type="button" onClick={handleClick}>
-				Update B
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>Component B: {bSignal}</div>
+      <button type='button' onClick={handleClick}>
+        Update B
+      </button>
+    </div>
+  );
 }
 
 // Test component for performance critical paths (should not warn)
 export function TestPerformanceCriticalPath(): JSX.Element {
-	useSignals();
-	const processedCount = signal(0);
+  useSignals();
+  const processedCount = signal(0);
 
-	// Performance critical loop - avoid batching overhead
-	const processBatch = useCallback(() => {
-		for (let i = 0; i < 1000; i++) {
-			// Avoid batching overhead in tight loops
-			processedCount.value = i;
-			// Simulate processing
-			const result = Math.sqrt(i) * Math.random();
-		}
-	}, []);
+  // Performance critical loop - avoid batching overhead
+  const processBatch = useCallback(() => {
+    for (let i = 0; i < 1000; i++) {
+      // Avoid batching overhead in tight loops
+      processedCount.value = i;
+      // Simulate processing
+      const result = Math.sqrt(i) * Math.random();
+    }
+  }, []);
 
-	return (
-		<div>
-			<div>Processed: {processedCount}</div>
-			<button type="button" onClick={processBatch}>
-				Process Batch
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>Processed: {processedCount}</div>
+      <button type='button' onClick={processBatch}>
+        Process Batch
+      </button>
+    </div>
+  );
 }
 
 // Test component for testing environments (should not warn)
 export function TestSignalInTestEnvironment(): JSX.Element {
-	useSignals();
-	const testSignal = signal("initial");
+  useSignals();
+  const testSignal = signal('initial');
 
-	// Test individual signal updates - no batching needed in tests
-	const runTest = useCallback(() => {
-		testSignal.value = "test";
-		console.assert(testSignal.value === "test", "Test failed");
+  // Test individual signal updates - no batching needed in tests
+  const runTest = useCallback(() => {
+    testSignal.value = 'test';
+    console.assert(testSignal.value === 'test', 'Test failed');
 
-		// Reset for next test
-		testSignal.value = "reset";
-	}, []);
+    // Reset for next test
+    testSignal.value = 'reset';
+  }, []);
 
-	return (
-		<div>
-			<div>Test Signal: {testSignal}</div>
-			<button type="button" onClick={runTest}>
-				Run Test
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>Test Signal: {testSignal}</div>
+      <button type='button' onClick={runTest}>
+        Run Test
+      </button>
+    </div>
+  );
 }
 
 // Test component for async operations (should not warn about missing batching across async)
 export function TestAsyncOperations(): JSX.Element {
-	useSignals();
+  useSignals();
 
-	const itemsSignal = signal([1, 2, 3]);
-	const loadingSignal = signal(false);
-	const errorSignal = signal<Error | null>(null);
+  const itemsSignal = signal([1, 2, 3]);
+  const loadingSignal = signal(false);
+  const errorSignal = signal<Error | null>(null);
 
-	const fetchData = useCallback(async () => {
-		try {
-			loadingSignal.value = true;
-			errorSignal.value = null;
+  const fetchData = useCallback(async () => {
+    try {
+      loadingSignal.value = true;
+      errorSignal.value = null;
 
-			// This is fine - these updates are not in the same tick
-			await new Promise((resolve) => setTimeout(resolve, 100));
+      // This is fine - these updates are not in the same tick
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
-			// This is also fine - it's a single update
-			itemsSignal.value = [4, 5, 6];
+      // This is also fine - it's a single update
+      itemsSignal.value = [4, 5, 6];
 
-			// This is fine - it's a single update
-			loadingSignal.value = false;
-		} catch (err) {
-			// This is fine - error handling is a separate concern
-			errorSignal.value =
-				err instanceof Error ? err : new Error("Unknown error");
-			loadingSignal.value = false;
-		}
-	}, []);
+      // This is fine - it's a single update
+      loadingSignal.value = false;
+    } catch (err) {
+      // This is fine - error handling is a separate concern
+      errorSignal.value = err instanceof Error ? err : new Error('Unknown error');
+      loadingSignal.value = false;
+    }
+  }, []);
 
-	return (
-		<div>
-			<div>Items: {JSON.stringify(itemsSignal.value)}</div>
-			<div>Loading: {loadingSignal.value.toString()}</div>
-			{errorSignal.value && <div>Error: {errorSignal.value.message}</div>}
-			<button type="button" onClick={fetchData}>
-				Fetch Data
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>Items: {JSON.stringify(itemsSignal.value)}</div>
+      <div>Loading: {loadingSignal.value.toString()}</div>
+      {errorSignal.value && <div>Error: {errorSignal.value.message}</div>}
+      <button type='button' onClick={fetchData}>
+        Fetch Data
+      </button>
+    </div>
+  );
 }
 
 // Test component for array updates in for loop (should warn)
 export function TestArrayUpdatesInForLoop(): JSX.Element {
-	useSignals();
+  useSignals();
 
-	const itemsSignal = signal([1, 2, 3, 4, 5]);
-	const handleDoubleValues = useCallback(() => {
-		// Should warn - array element updates in a loop
-		for (let i = 0; i < itemsSignal.value.length; i++) {
-			itemsSignal.value[i] *= 2; // This will trigger the warning
-		}
-	}, []);
+  const itemsSignal = signal([1, 2, 3, 4, 5]);
+  const handleDoubleValues = useCallback(() => {
+    // Should warn - array element updates in a loop
+    for (let i = 0; i < itemsSignal.value.length; i++) {
+      itemsSignal.value[i] *= 2; // This will trigger the warning
+    }
+  }, []);
 
-	return (
-		<div>
-			<div>Items: {JSON.stringify(itemsSignal.value)}</div>
-			<button type="button" onClick={handleDoubleValues}>
-				Double Values
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>Items: {JSON.stringify(itemsSignal.value)}</div>
+      <button type='button' onClick={handleDoubleValues}>
+        Double Values
+      </button>
+    </div>
+  );
 }
 
 // Test component for array updates with forEach (should warn)
 export function TestArrayUpdatesWithForEach(): JSX.Element {
-	useSignals();
+  useSignals();
 
-	const itemsSignal = signal([
-		{ id: 1, value: 1 },
-		{ id: 2, value: 2 },
-	]);
+  const itemsSignal = signal([
+    { id: 1, value: 1 },
+    { id: 2, value: 2 },
+  ]);
 
-	const handleIncrementValues = useCallback(() => {
-		// Should warn - array element updates in forEach
-		itemsSignal.value.forEach((item, index) => {
-			itemsSignal.value[index].value += 1; // This will trigger the warning
-		});
-	}, []);
+  const handleIncrementValues = useCallback(() => {
+    // Should warn - array element updates in forEach
+    itemsSignal.value.forEach((item, index) => {
+      itemsSignal.value[index].value += 1; // This will trigger the warning
+    });
+  }, []);
 
-	return (
-		<div>
-			<div>Items: {JSON.stringify(itemsSignal.value)}</div>
-			<button type="button" onClick={handleIncrementValues}>
-				Increment Values
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>Items: {JSON.stringify(itemsSignal.value)}</div>
+      <button type='button' onClick={handleIncrementValues}>
+        Increment Values
+      </button>
+    </div>
+  );
 }
 
 // Test component for correct batch update pattern (should not warn)
 export function TestBatchArrayUpdate(): JSX.Element {
-	useSignals();
+  useSignals();
 
-	const itemsSignal = signal([1, 2, 3, 4, 5]);
+  const itemsSignal = signal([1, 2, 3, 4, 5]);
 
-	const handleDoubleValues = useCallback(() => {
-		// Correct - using batch and array methods
-		batch(() => {
-			itemsSignal.value = itemsSignal.value.map((item) => item * 2);
-		});
-	}, []);
+  const handleDoubleValues = useCallback(() => {
+    // Correct - using batch and array methods
+    batch(() => {
+      itemsSignal.value = itemsSignal.value.map((item) => item * 2);
+    });
+  }, []);
 
-	return (
-		<div>
-			<div>Items: {JSON.stringify(itemsSignal.value)}</div>
-			<button type="button" onClick={handleDoubleValues}>
-				Double Values (Batched)
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>Items: {JSON.stringify(itemsSignal.value)}</div>
+      <button type='button' onClick={handleDoubleValues}>
+        Double Values (Batched)
+      </button>
+    </div>
+  );
 }
 
 // Test component for complex array updates (should warn)
 export function TestComplexArrayUpdates(): JSX.Element {
-	useSignals();
+  useSignals();
 
-	const itemsSignal = signal(
-		Array.from({ length: 5 }, (_, i) => ({ id: i, value: i * 10 })),
-	);
+  const itemsSignal = signal(Array.from({ length: 5 }, (_, i) => ({ id: i, value: i * 10 })));
 
-	const updateEvenItems = useCallback(() => {
-		// Should warn - array element updates in a loop with condition
-		for (let i = 0; i < itemsSignal.value.length; i += 2) {
-			itemsSignal.value[i].value += 1; // This will trigger the warning
-		}
-	}, []);
+  const updateEvenItems = useCallback(() => {
+    // Should warn - array element updates in a loop with condition
+    for (let i = 0; i < itemsSignal.value.length; i += 2) {
+      itemsSignal.value[i].value += 1; // This will trigger the warning
+    }
+  }, []);
 
-	return (
-		<div>
-			<div>Items: {JSON.stringify(itemsSignal.value)}</div>
-			<button type="button" onClick={updateEvenItems}>
-				Update Even Items
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <div>Items: {JSON.stringify(itemsSignal.value)}</div>
+      <button type='button' onClick={updateEvenItems}>
+        Update Even Items
+      </button>
+    </div>
+  );
 }

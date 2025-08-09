@@ -2,6 +2,11 @@
 
 This rule encourages using `useSignalRef` from `@preact/signals-react` instead of React's `useRef` when the ref's `.current` property is read in reactive contexts. `useSignalRef` provides a reactive alternative that automatically tracks dependencies when used in effects or computed values.
 
+## Plugin Scope
+
+- Only APIs from `@preact/signals-react` are considered for detection and autofix.
+- Autofixes add or augment imports from `@preact/signals-react`.
+
 ## Core Functionality
 
 This rule identifies `useRef` declarations where the `.current` property is read in reactive contexts (like effects, computed values, or during render) and suggests converting them to `useSignalRef`. This helps ensure proper reactivity when the ref's value is used in reactive computations.

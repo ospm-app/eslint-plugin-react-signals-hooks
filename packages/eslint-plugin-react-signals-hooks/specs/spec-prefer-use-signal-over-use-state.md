@@ -2,6 +2,11 @@
 
 This rule encourages using `useSignal` from `@preact/signals-react` instead of `useState` for primitive values and simple state management, providing better performance and ergonomics.
 
+## Plugin Scope
+
+- Only signals imported from `@preact/signals-react` are considered.
+- Autofix suggestions add or augment imports from `@preact/signals-react`.
+
 ## Core Functionality
 
 The `prefer-use-signal-over-use-state` rule detects `useState` hooks that could be replaced with `useSignal` for simpler and more efficient state management with signals.
@@ -28,17 +33,38 @@ The `prefer-use-signal-over-use-state` rule detects `useState` hooks that could 
 - When `true`, skips non-primitive initializers (objects, arrays, function calls)
 - When `false`, suggests `useSignal` for all `useState` usages
 
+### `suffix` (string)
+
+- Default: `"Signal"`
+- Appended to the new variable name in the suggestion that rewrites the declaration
+
+### `severity` (object)
+
+- Controls per-message severity
+- Keys: `{ "preferUseSignal": "error" | "warn" | "off" }`
+
+### `performance` (object)
+
+- Performance budgets and optional metrics logging
+- Keys include: `maxTime`, `maxMemory`, `maxNodes`, `enableMetrics`, `logMetrics`, and `maxOperations`
+
+## Scope and Heuristics
+
+- The rule only triggers inside components or custom hooks detected heuristically:
+  - Functions with Capitalized names are treated as components
+  - Variables with Capitalized names initialized to arrow/function expressions are treated as components
+  - Functions whose names match `^use[A-Z]` are treated as hooks
+
 ## Error Messages
 
 - `preferUseSignal`: "Prefer useSignal over useState for {{type}} values"
 
 ## Auto-fix Suggestions
 
-- Replaces `useState` with `useSignal`
-- Updates the variable name to include `Signal` suffix
-- Removes the setter function
-- Adds the `useSignal` import if missing
-- Preserves the initial value
+- Provides non-destructive suggestions instead of an automatic fix:
+  - Ensure `import { useSignal } from '@preact/signals-react'` exists (augment or insert)
+  - Optionally replace the entire variable declaration with `const name{suffix} = useSignal(init)` when safe
+- Note: This rule does not automatically remove setter usages elsewhere; follow-up refactors are required
 
 ## Benefits
 

@@ -1,4 +1,5 @@
 /** biome-ignore-all assist/source/organizeImports: off */
+import type { Definition } from '@typescript-eslint/scope-manager';
 import {
   ESLintUtils,
   type TSESLint,
@@ -12,29 +13,37 @@ import { PerformanceOperations } from './utils/performance-constants.js';
 import {
   endPhase,
   startPhase,
-  stopTracking,
   recordMetric,
   startTracking,
   trackOperation,
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
 } from './utils/performance.js';
+import { buildSuffixRegex } from './utils/suffix.js';
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
 
+type MessageIds =
+  | 'variableWithSignalSuffixNotSignal'
+  | 'parameterWithSignalSuffixNotSignal'
+  | 'propertyWithSignalSuffixNotSignal'
+  | 'suggestRenameWithoutSuffix'
+  | 'suggestConvertToSignal';
+
 type Severity = {
-  variableWithSignalSuffixNotSignal?: 'error' | 'warn' | 'off';
-  parameterWithSignalSuffixNotSignal?: 'error' | 'warn' | 'off';
-  propertyWithSignalSuffixNotSignal?: 'error' | 'warn' | 'off';
-  suggestRenameWithoutSuffix?: 'error' | 'warn' | 'off';
-  suggestConvertToSignal?: 'error' | 'warn' | 'off';
-  performanceLimitExceeded?: 'error' | 'warn' | 'off';
+  [key in MessageIds]?: 'error' | 'warn' | 'off';
 };
 
 type Option = {
   ignorePattern?: string;
   /** Custom signal function names to recognize (e.g., ['createSignal', 'customSignal']) */
   signalNames?: Array<string>;
+
+  /** Suffix to detect (configurable); default 'Signal' */
+  suffix?: string;
+
+  /** Whether to validate object properties that end with the suffix */
+  validateProperties?: boolean;
 
   /** Severity levels for different violation types */
   severity?: Severity;
@@ -44,14 +53,6 @@ type Option = {
 };
 
 type Options = [Option?];
-
-type MessageIds =
-  | 'variableWithSignalSuffixNotSignal'
-  | 'parameterWithSignalSuffixNotSignal'
-  | 'propertyWithSignalSuffixNotSignal'
-  | 'suggestRenameWithoutSuffix'
-  | 'suggestConvertToSignal'
-  | 'performanceLimitExceeded';
 
 function getSeverity(messageId: MessageIds, option: Option | undefined): 'error' | 'warn' | 'off' {
   if (!option?.severity) {
@@ -79,16 +80,12 @@ function getSeverity(messageId: MessageIds, option: Option | undefined): 'error'
       return option.severity.suggestConvertToSignal ?? 'error';
     }
 
-    case 'performanceLimitExceeded': {
-      return option.severity.performanceLimitExceeded ?? 'error';
-    }
-
     default:
       return 'error';
   }
 }
 
-const signalImports = new Set<string>();
+// moved into create() to avoid cross-file leakage
 
 function isSignalCreation(
   node:
@@ -99,47 +96,72 @@ function isSignalCreation(
     | TSESTree.TSEmptyBodyFunctionExpression
     | TSESTree.Expression,
   hasSignalsImport: boolean,
-  perfKey: string
+  perfKey: string,
+  creatorNames: ReadonlySet<string>,
+  signalImports: ReadonlySet<string>,
+  signalLocalNames: ReadonlySet<string>,
+  signalsNamespaceImports: ReadonlySet<string>
 ): boolean {
   trackOperation(perfKey, PerformanceOperations.isSignalCreation);
 
-  if (
-    node.type !== AST_NODE_TYPES.CallExpression ||
-    node.callee.type !== AST_NODE_TYPES.Identifier
-  ) {
+  if (node.type !== AST_NODE_TYPES.CallExpression) {
     return false;
   }
 
-  if (node.callee.name === 'signal' || signalImports.has(node.callee.name)) {
-    trackOperation(perfKey, PerformanceOperations.signalCreationFound);
+  // Identifier callee: direct or locally aliased creator
+  if (node.callee.type === AST_NODE_TYPES.Identifier) {
+    const name = node.callee.name;
+    if (
+      name === 'signal' ||
+      signalImports.has(name) ||
+      signalLocalNames.has(name) ||
+      creatorNames.has(name)
+    ) {
+      trackOperation(perfKey, PerformanceOperations.signalCreationFound);
 
-    return true;
+      return true;
+    }
+  }
+
+  // Namespaced call: e.g., Signals.signal(...)
+  if (
+    node.callee.type === AST_NODE_TYPES.MemberExpression &&
+    !node.callee.computed &&
+    node.callee.object.type === AST_NODE_TYPES.Identifier &&
+    node.callee.property.type === AST_NODE_TYPES.Identifier
+  ) {
+    const ns = node.callee.object.name;
+
+    const prop = node.callee.property.name;
+
+    if (signalsNamespaceImports.has(ns) && (prop === 'signal' || creatorNames.has(prop))) {
+      trackOperation(perfKey, PerformanceOperations.signalCreationFound);
+      return true;
+    }
   }
 
   if (hasSignalsImport) {
-    type SignalHookNames =
-      | 'useSignal'
-      | 'useComputed'
-      | 'useSignalEffect'
-      | 'useSignalState'
-      | 'useSignalRef';
+    if (
+      'name' in node.callee &&
+      ['useSignal', 'useComputed', 'useSignalEffect', 'useSignalState', 'useSignalRef'].includes(
+        node.callee.name
+      )
+    ) {
+      const op =
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        PerformanceOperations[
+          `signalHookFound:${node.callee.name as 'useSignal' | 'useComputed' | 'useSignalEffect' | 'useSignalState' | 'useSignalRef'}`
+        ] ?? PerformanceOperations.nodeProcessing;
 
-    const isSignalHook = [
-      'useSignal',
-      'useComputed',
-      'useSignalEffect',
-      'useSignalState',
-      'useSignalRef',
-    ].includes(node.callee.name);
-
-    if (isSignalHook) {
-      trackOperation(
-        perfKey,
-        PerformanceOperations[`signalHookFound:${node.callee.name as SignalHookNames}`]
-      );
+      trackOperation(perfKey, op);
     }
 
-    return isSignalHook;
+    return (
+      'name' in node.callee &&
+      ['useSignal', 'useComputed', 'useSignalEffect', 'useSignalState', 'useSignalRef'].includes(
+        node.callee.name
+      )
+    );
   }
 
   return false;
@@ -156,28 +178,26 @@ function isSignalExpression(
     | null,
   context: RuleContext<MessageIds, Options>,
   hasSignalsImport: boolean,
-  perfKey: string
+  perfKey: string,
+  creatorNames: ReadonlySet<string>,
+  signalImports: ReadonlySet<string>,
+  signalLocalNames: ReadonlySet<string>,
+  signalsNamespaceImports: ReadonlySet<string>
 ): boolean {
   if (node === null) {
     return false;
   }
 
-  if (isSignalCreation(node, hasSignalsImport, perfKey)) {
-    return true;
-  }
-
   if (
-    node.type === AST_NODE_TYPES.MemberExpression &&
-    node.property.type === AST_NODE_TYPES.Identifier &&
-    node.property.name.endsWith('Signal')
-  ) {
-    return true;
-  }
-
-  if (
-    node.type === AST_NODE_TYPES.MemberExpression &&
-    node.property.type === AST_NODE_TYPES.Identifier &&
-    node.property.name.endsWith('Signal')
+    isSignalCreation(
+      node,
+      hasSignalsImport,
+      perfKey,
+      creatorNames,
+      signalImports,
+      signalLocalNames,
+      signalsNamespaceImports
+    )
   ) {
     return true;
   }
@@ -188,9 +208,18 @@ function isSignalExpression(
     });
 
     if (variable) {
-      return variable.defs.some((def): boolean => {
+      return variable.defs.some((def: Definition): boolean => {
         if ('init' in def.node) {
-          return isSignalExpression(def.node.init, context, hasSignalsImport, perfKey);
+          return isSignalExpression(
+            def.node.init,
+            context,
+            hasSignalsImport,
+            perfKey,
+            creatorNames,
+            signalImports,
+            signalLocalNames,
+            signalsNamespaceImports
+          );
         }
 
         return false;
@@ -200,8 +229,6 @@ function isSignalExpression(
 
   return false;
 }
-
-let hasSignalsImport = false;
 
 const ruleName = 'no-non-signal-with-signal-suffix';
 
@@ -282,22 +309,21 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
     ],
     messages: {
       variableWithSignalSuffixNotSignal:
-        "Variable '{{ name }}' has 'Signal' suffix but is not a signal instance. Use a signal or rename to remove 'Signal' suffix.",
+        "Variable '{{ name }}' has a signal-like suffix but is not a signal instance. Use a signal or rename to remove the suffix.",
       parameterWithSignalSuffixNotSignal:
-        "Parameter '{{ name }}' has 'Signal' suffix but is not typed as a signal. Add proper signal type or rename to remove 'Signal' suffix.",
+        "Parameter '{{ name }}' has a signal-like suffix but is not a signal instance.",
       propertyWithSignalSuffixNotSignal:
-        "Property '{{ name }}' has 'Signal' suffix but is not a signal. Use a signal or rename to remove 'Signal' suffix.",
-      suggestRenameWithoutSuffix:
-        "Rename '{{ name }}' to '{{ newName }}' to remove 'Signal' suffix",
+        "Property '{{ name }}' has a signal-like suffix but is not a signal instance.",
+      suggestRenameWithoutSuffix: "Rename '{{ name }}' to '{{ newName }}' (remove suffix)",
       suggestConvertToSignal: "Convert '{{ name }}' to a signal using signal() or useSignal()",
-      performanceLimitExceeded:
-        'Performance limit exceeded for no-non-signal-with-signal-suffix rule {{ message }}',
     },
   },
   defaultOptions: [
     {
       ignorePattern: '',
       signalNames: ['signal', 'useSignal', 'createSignal'],
+      suffix: 'Signal',
+      validateProperties: true,
       severity: {
         variableWithSignalSuffixNotSignal: 'error',
         parameterWithSignalSuffixNotSignal: 'error',
@@ -311,14 +337,16 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
 
     startPhase(perfKey, 'ruleInit');
 
-    const perf = createPerformanceTracker<Options>(perfKey, option?.performance, context);
+    const perf = createPerformanceTracker(perfKey, option?.performance);
 
     if (option?.performance?.enableMetrics === true) {
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    // console.info(`${ruleName}: Rule configuration:`, option);
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
     recordMetric(perfKey, 'config', {
       performance: {
@@ -350,19 +378,34 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
 
     startPhase(perfKey, 'ruleExecution');
 
+    // Per-file mutable state
+    let hasSignalsImport = false;
+    const signalImports = new Set<string>();
+    const signalLocalNames = new Set<string>();
+    const signalsNamespaceImports = new Set<string>();
+
+    const suffixRegex = buildSuffixRegex(
+      typeof option?.suffix === 'string' && option.suffix.length > 0 ? option.suffix : 'Signal'
+    );
+
+    const creatorNames = new Set<string>(
+      option?.signalNames ?? ['signal', 'useSignal', 'createSignal']
+    );
+
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
           endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
 
           return;
         }
 
         perf.trackNode(node);
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        const dyn =
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing;
+        trackOperation(perfKey, dyn);
       },
       ImportDeclaration(node: TSESTree.ImportDeclaration): void {
         startPhase(perfKey, 'import-declaration');
@@ -379,16 +422,14 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
                 specifier.type === AST_NODE_TYPES.ImportSpecifier &&
                 'name' in specifier.imported
               ) {
-                type ImportSpecifierNames = 'signal' | 'useSignal';
-
-                trackOperation(
-                  perfKey,
-                  PerformanceOperations[
-                    `signalImport:${specifier.imported.name as ImportSpecifierNames}`
-                  ]
-                );
-
+                // Track imported names and local aliases
                 signalImports.add(specifier.imported.name);
+
+                signalLocalNames.add(specifier.local.name);
+              }
+
+              if (specifier.type === AST_NODE_TYPES.ImportNamespaceSpecifier) {
+                signalsNamespaceImports.add(specifier.local.name);
               }
             }
           );
@@ -409,8 +450,7 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
             return;
           }
 
-          const varName = node.id.name;
-          if (!varName.endsWith('Signal')) {
+          if (!suffixRegex.test(node.id.name)) {
             endPhase(perfKey, 'variable-declarator');
 
             return;
@@ -421,7 +461,7 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
             option.ignorePattern !== '' &&
             // User provided pattern
             // eslint-disable-next-line security/detect-non-literal-regexp
-            new RegExp(option.ignorePattern).test(varName)
+            new RegExp(option.ignorePattern).test(node.id.name)
           ) {
             trackOperation(perfKey, PerformanceOperations.ignoredByPattern);
 
@@ -432,7 +472,16 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
 
           if (
             node.init !== null &&
-            isSignalExpression(node.init, context, hasSignalsImport, perfKey)
+            isSignalExpression(
+              node.init,
+              context,
+              hasSignalsImport,
+              perfKey,
+              creatorNames,
+              signalImports,
+              signalLocalNames,
+              signalsNamespaceImports
+            )
           ) {
             trackOperation(perfKey, PerformanceOperations.validSignalFound);
 
@@ -449,23 +498,32 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
             return;
           }
 
-          const newName = varName.replace(/Signal$/, '');
+          const newName = node.id.name.replace(suffixRegex, '');
 
           const messageId = 'variableWithSignalSuffixNotSignal';
 
+          // Skip exported/public API names
+          const parentDecl =
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+            node.parent?.type === AST_NODE_TYPES.VariableDeclaration ? node.parent : null;
+
           trackOperation(perfKey, PerformanceOperations.reportingIssue);
 
-          if (getSeverity(messageId, option) !== 'off') {
+          if (
+            (parentDecl?.parent &&
+              parentDecl.parent.type === AST_NODE_TYPES.ExportNamedDeclaration) !== true &&
+            getSeverity(messageId, option) !== 'off'
+          ) {
             context.report({
               node: node.id,
               messageId,
-              data: { name: varName },
+              data: { name: node.id.name },
               suggest: [
                 {
                   messageId: 'suggestRenameWithoutSuffix',
                   data: {
-                    name: varName,
-                    newName: newName,
+                    name: node.id.name,
+                    newName,
                   },
                   fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
                     return fixer.replaceText(node.id, newName);
@@ -473,10 +531,18 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
                 },
                 {
                   messageId: 'suggestConvertToSignal',
-                  data: { name: varName },
+                  data: { name: node.id.name },
                   fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-                    const initText = node.init ? context.sourceCode.getText(node.init) : 'null';
-                    return fixer.replaceText(node, `const ${varName} = signal(${initText})`);
+                    if ('name' in node.id) {
+                      return fixer.replaceText(
+                        node,
+                        `const ${node.id.name} = signal(${
+                          node.init ? context.sourceCode.getText(node.init) : 'null'
+                        })`
+                      );
+                    }
+
+                    return null;
                   },
                 },
               ],
@@ -491,6 +557,7 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
         node: TSESTree.Node
       ): void {
         startPhase(perfKey, 'function-declaration');
+
         trackOperation(perfKey, PerformanceOperations.parameterCheck);
 
         try {
@@ -502,11 +569,7 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
 
           node.params.forEach(
             (param: TSESTree.TSTypeParameter | TSESTree.Parameter | TSESTree.TypeNode): void => {
-              if (param.type !== 'Identifier') {
-                return;
-              }
-
-              if (!param.name.endsWith('Signal')) {
+              if (!(param.type === AST_NODE_TYPES.Identifier && suffixRegex.test(param.name))) {
                 return;
               }
 
@@ -518,6 +581,7 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
                 new RegExp(option.ignorePattern).test(param.name)
               ) {
                 trackOperation(perfKey, PerformanceOperations.ignoredByPattern);
+
                 return;
               }
 
@@ -532,15 +596,15 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
                 if (
                   'type' in typeAnnotation &&
                   typeof typeAnnotation.type === 'string' &&
-                  typeAnnotation.type === 'TSTypeReference' &&
+                  typeAnnotation.type === AST_NODE_TYPES.TSTypeReference &&
                   'typeName' in typeAnnotation &&
                   typeof typeAnnotation.typeName === 'object' &&
                   'type' in typeAnnotation.typeName &&
                   typeof typeAnnotation.typeName.type === 'string' &&
-                  typeAnnotation.typeName.type === 'Identifier' &&
+                  typeAnnotation.typeName.type === AST_NODE_TYPES.Identifier &&
                   'name' in typeAnnotation.typeName &&
                   typeof typeAnnotation.typeName.name === 'string' &&
-                  typeAnnotation.typeName.name.endsWith('Signal')
+                  suffixRegex.test(typeAnnotation.typeName.name)
                 ) {
                   return;
                 }
@@ -548,7 +612,9 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
 
               const messageId = 'parameterWithSignalSuffixNotSignal';
 
-              const newName = param.name.replace(/Signal$/, '');
+              const newName = param.name.replace(suffixRegex, '');
+
+              trackOperation(perfKey, PerformanceOperations.reportingIssue);
 
               if (getSeverity(messageId, option) !== 'off') {
                 context.report({
@@ -576,40 +642,69 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
         }
       },
 
-      Property(node: TSESTree.Property): void {
+      [AST_NODE_TYPES.Property](node: TSESTree.Property): void {
         startPhase(perfKey, 'property');
 
         trackOperation(perfKey, PerformanceOperations.propertyCheck);
 
         try {
+          if (option?.validateProperties !== true) {
+            endPhase(perfKey, 'property');
+            return;
+          }
+
           if (
-            node.key.type === 'Identifier' &&
-            node.key.name.endsWith('Signal') &&
+            node.key.type === AST_NODE_TYPES.Identifier &&
+            suffixRegex.test(node.key.name) &&
             !node.computed
           ) {
             if (
               node.shorthand &&
-              node.value.type === 'Identifier' &&
-              isSignalExpression(node.value, context, hasSignalsImport, perfKey)
+              node.value.type === AST_NODE_TYPES.Identifier &&
+              isSignalExpression(
+                node.value,
+                context,
+                hasSignalsImport,
+                perfKey,
+                creatorNames,
+                signalImports,
+                signalLocalNames,
+                signalsNamespaceImports
+              )
             ) {
               trackOperation(perfKey, PerformanceOperations.validSignalFound);
+
               endPhase(perfKey, 'property');
+
               return;
             }
 
             if (
-              typeof option?.ignorePattern !== 'undefined' &&
+              typeof option.ignorePattern !== 'undefined' &&
               option.ignorePattern !== '' &&
               // User provided pattern
               // eslint-disable-next-line security/detect-non-literal-regexp
               new RegExp(option.ignorePattern).test(node.key.name)
             ) {
               trackOperation(perfKey, PerformanceOperations.ignoredByPattern);
+
               endPhase(perfKey, 'property');
+
               return;
             }
 
-            if (isSignalExpression(node.value, context, hasSignalsImport, perfKey)) {
+            if (
+              isSignalExpression(
+                node.value,
+                context,
+                hasSignalsImport,
+                perfKey,
+                creatorNames,
+                signalImports,
+                signalLocalNames,
+                signalsNamespaceImports
+              )
+            ) {
               trackOperation(perfKey, PerformanceOperations.validSignalFound);
 
               endPhase(perfKey, 'property');
@@ -619,7 +714,7 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
 
             const messageId = 'propertyWithSignalSuffixNotSignal';
 
-            const newName = node.key.name.replace(/Signal$/, '');
+            const newName = node.key.name.replace(suffixRegex, '');
 
             trackOperation(perfKey, PerformanceOperations.reportingIssue);
 
@@ -648,39 +743,8 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
         }
       },
 
-      'Program:exit'(node: TSESTree.Program): void {
-        if (!shouldContinue()) {
-          return;
-        }
-
+      [`${AST_NODE_TYPES.Program}:exit`]() {
         startPhase(perfKey, 'programExit');
-
-        perf.trackNode(node);
-
-        try {
-          startPhase(perfKey, 'recordMetrics');
-
-          const finalMetrics = stopTracking(perfKey);
-
-          if (finalMetrics) {
-            console.info(
-              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
-
-            if (finalMetrics.exceededBudget === true) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
-        }
 
         perf['Program:exit']();
 

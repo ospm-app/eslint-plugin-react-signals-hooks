@@ -1,7 +1,6 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 /** biome-ignore-all assist/source/organizeImports: off */
 /** biome-ignore-all lint/correctness/noUnusedVariables: off */
-import { ESLintUtils, type TSESTree } from '@typescript-eslint/utils';
+import { AST_NODE_TYPES, ESLintUtils, type TSESTree } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
 import { PerformanceOperations } from './utils/performance-constants.js';
@@ -9,7 +8,6 @@ import {
   endPhase,
   startPhase,
   recordMetric,
-  stopTracking,
   startTracking,
   trackOperation,
   createPerformanceTracker,
@@ -18,20 +16,22 @@ import {
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
 
+type MessageIds = 'exampleMessageId';
+
 type Severity = {
-  exampleMessageId?: 'error' | 'warn' | 'off';
+  [key in MessageIds]?: 'error' | 'warn' | 'off';
 };
 
 type Option = {
   // Add your rule-specific options here
   performance?: PerformanceBudget;
   severity?: Severity;
+  suffix?: string;
 };
 
 type Options = [Option?];
 
-type MessageIds = 'exampleMessageId';
-
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function getSeverity(messageId: MessageIds, options: Option | undefined): 'error' | 'warn' | 'off' {
   if (!options?.severity) {
     return 'error';
@@ -84,6 +84,7 @@ export const rule = ESLintUtils.RuleCreator((name: string) => {
             },
             additionalProperties: false,
           },
+          suffix: { type: 'string', minLength: 1 },
         },
         additionalProperties: false,
       },
@@ -102,14 +103,16 @@ export const rule = ESLintUtils.RuleCreator((name: string) => {
 
     startPhase(perfKey, 'ruleInit');
 
-    const perf = createPerformanceTracker<Options>(perfKey, option?.performance, context);
+    const perf = createPerformanceTracker(perfKey, option?.performance);
 
     if (option?.performance?.enableMetrics === true) {
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    // console.info(`${ruleName}: Rule configuration:`, option);
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
     recordMetric(perfKey, 'config', {
       performance: {
@@ -146,8 +149,6 @@ export const rule = ESLintUtils.RuleCreator((name: string) => {
         if (!shouldContinue()) {
           endPhase(perfKey, 'recordMetrics');
 
-          stopTracking(perfKey);
-
           return;
         }
 
@@ -163,34 +164,8 @@ export const rule = ESLintUtils.RuleCreator((name: string) => {
       //   });
       // },
 
-      // Clean up
-      'Program:exit'(): void {
+      [`${AST_NODE_TYPES.Program}:exit`](): void {
         startPhase(perfKey, 'programExit');
-
-        try {
-          startPhase(perfKey, 'recordMetrics');
-
-          const finalMetrics = stopTracking(perfKey);
-
-          if (finalMetrics) {
-            console.info(
-              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
-
-            if (finalMetrics.exceededBudget === true) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
-        }
 
         perf['Program:exit']();
 

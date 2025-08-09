@@ -6,6 +6,11 @@ This rule enforces direct usage of signals in JSX without explicit `.value` acce
 
 This rule identifies instances where `.value` is used to access signal values within JSX and suggests removing the explicit `.value` access. This makes the code more concise and leverages the automatic `.value` access that happens in JSX expressions.
 
+## Plugin Scope
+
+- Signal creator detection is scoped to `@preact/signals-react` only.
+- The rule recognizes signals created in-file via `signal()` / `computed()` (direct, aliased, or namespace imports) from `@preact/signals-react`.
+
 ### When to use direct signal access in JSX
 
 - **Use direct signal access when:**
@@ -197,8 +202,19 @@ interface Options {
   severity?: {
     preferDirectSignalUsage?: 'error' | 'warn' | 'off';
   };
+  performance?: PerformanceBudget;
+  suffix?: string;
 }
 ```
+
+- `performance`: Enables performance tracking/budgeting.
+- `severity`: Per-message severity control. Defaults to `error`.
+- `suffix`: Custom suffix for detecting signal variable names.
+
+## Autofix and Suggestions
+
+- Autofix: Yes (fixable: `code`).
+- Suggestions: No (`hasSuggestions: false`).
 
 ## TypeScript Support
 

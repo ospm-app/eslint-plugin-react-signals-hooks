@@ -103,8 +103,6 @@ interface Options {
     suggestShowComponent?: 'error' | 'warn' | 'off';
     // Severity for adding Show import
     addShowImport?: 'error' | 'warn' | 'off';
-    // Severity for performance limit exceeded
-    performanceLimitExceeded?: 'error' | 'warn' | 'off';
   };
 }
 ```

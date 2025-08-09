@@ -71,25 +71,32 @@ effect(() => {
 
 ## Auto-fix
 
-This rule provides auto-fix suggestions that can:
+This rule provides suggestions (no unconditional automatic fixes). When applied by the user, suggestions will:
 
-1. Remove unnecessary `untracked()` wrappers, keeping the inner function body
-2. Replace unnecessary `.peek()` calls with direct `.value` access
-3. Preserve any comments and formatting
+1. Remove unnecessary `untracked(() => body)` wrappers by replacing the entire call with `body`.
+2. Replace the entire `X.value.peek()` call with exactly `X.value` (no extra `.value` is appended).
+3. Preserve comments and formatting where possible.
 
 ## Options
 
 This rule accepts an options object with the following properties:
 
-```typescript
+```json
 {
   "rules": {
     "react-signals-hooks/warn-on-unnecessary-untracked": [
       "warn",
       {
+        "suffix": "Signal",
         "allowInEffects": true,        // Allow in useSignalEffect callbacks
         "allowInEventHandlers": true,  // Allow in DOM event handlers
         "allowForSignalWrites": true,  // Allow when used to prevent circular deps
+        "severity": {
+          "unnecessaryUntracked": "warn",
+          "unnecessaryPeek": "warn",
+          "suggestRemoveUntracked": "warn",
+          "suggestRemovePeek": "warn"
+        },
         "performance": {               // Performance tuning options
           "maxTime": 100,              // Max time in ms to spend analyzing a file
           "maxMemory": 100,            // Max memory in MB to use
@@ -223,19 +230,12 @@ const value2 = someSignal.value.peek();
 
 Note that `.peek()` is a type-safe operation that returns the same type as `.value`.
 
-## Migration Guide
+## Detection notes
 
-### From v1.x to v2.x
-
-- The `performance` option is now optional with sensible defaults
-- All boolean options now default to `true` for better developer experience
-- The rule now provides more specific error messages and suggestions
-
-### From v0.x to v1.x
-
-- The rule was renamed from `no-unnecessary-untracked` to `warn-on-unnecessary-untracked`
-- Added support for `.peek()` detection
-- Added TypeScript type checking support
+- Reactive context is detected heuristically: functions/components whose names are Capitalized or start with `use` (custom hooks). Event handlers in JSX and `useSignalEffect` callbacks can be allowed via options.
+- Only creators/imports from `@preact/signals-react` are considered for tracking in this plugin.
+- Support for `.peek()` detection
+- TypeScript type checking support
 - Improved auto-fix capabilities
 
 ## Common False Positives

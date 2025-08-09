@@ -13,21 +13,19 @@ import {
   endPhase,
   startPhase,
   recordMetric,
-  stopTracking,
   startTracking,
   trackOperation,
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
-  PerformanceLimitExceededError,
 } from './utils/performance.js';
+import { buildSuffixRegex, hasSignalSuffix } from './utils/suffix.js';
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
 
+type MessageIds = 'preferShowOverTernary' | 'suggestShowComponent' | 'addShowImport';
+
 type Severity = {
-  preferShowOverTernary?: 'error' | 'warn' | 'off';
-  suggestShowComponent?: 'error' | 'warn' | 'off';
-  addShowImport?: 'error' | 'warn' | 'off';
-  performanceLimitExceeded?: 'error' | 'warn' | 'off';
+  [key in MessageIds]?: 'error' | 'warn' | 'off';
 };
 
 type Option = {
@@ -35,26 +33,23 @@ type Option = {
   minComplexity?: number;
   /** Custom signal function names (e.g., ['createSignal', 'useSignal']) */
   signalNames?: Array<string>;
+  /** Configurable suffix to recognize as signals (default: 'Signal') */
+  suffix?: string;
   performance?: PerformanceBudget;
   severity?: Severity;
 };
 
 type Options = [Option?];
 
-type MessageIds =
-  | 'preferShowOverTernary'
-  | 'suggestShowComponent'
-  | 'addShowImport'
-  | 'performanceLimitExceeded';
-
 function isJSXNode(node: TSESTree.Node): boolean {
   return (
-    node.type === 'JSXElement' ||
-    node.type === 'JSXFragment' ||
-    (node.type === 'ExpressionStatement' &&
+    node.type === AST_NODE_TYPES.JSXElement ||
+    node.type === AST_NODE_TYPES.JSXFragment ||
+    (node.type === AST_NODE_TYPES.ExpressionStatement &&
       'expression' in node &&
       'type' in node.expression &&
-      (node.expression.type === 'JSXElement' || node.expression.type === 'JSXFragment'))
+      (node.expression.type === AST_NODE_TYPES.JSXElement ||
+        node.expression.type === AST_NODE_TYPES.JSXFragment))
   );
 }
 
@@ -72,9 +67,9 @@ function getComplexity(
 
   if (isJSXNode(node)) {
     complexity++;
-  } else if ('type' in node && node.type === 'CallExpression') {
+  } else if ('type' in node && node.type === AST_NODE_TYPES.CallExpression) {
     complexity++;
-  } else if ('type' in node && node.type === 'ConditionalExpression') {
+  } else if ('type' in node && node.type === AST_NODE_TYPES.ConditionalExpression) {
     complexity += 2;
   }
 
@@ -135,10 +130,6 @@ function getSeverity(messageId: MessageIds, options: Option | undefined): 'error
       return options.severity.addShowImport ?? 'error';
     }
 
-    case 'performanceLimitExceeded': {
-      return options.severity.performanceLimitExceeded ?? 'error';
-    }
-
     default: {
       return 'error';
     }
@@ -162,7 +153,6 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
         'Prefer using the `<Show>` component instead of ternary for better performance with signal conditions.',
       suggestShowComponent: 'Replace ternary with `<Show>` component',
       addShowImport: 'Add `Show` import from @preact/signals-react',
-      performanceLimitExceeded: 'Performance limit exceeded ',
     },
     schema: [
       {
@@ -213,12 +203,14 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
                 type: 'string',
                 enum: ['error', 'warn', 'off'],
               },
-              performanceLimitExceeded: {
-                type: 'string',
-                enum: ['error', 'warn', 'off'],
-              },
             },
             additionalProperties: false,
+          },
+          suffix: {
+            description:
+              "Configurable suffix used to detect signal identifiers (default: 'Signal')",
+            type: 'string',
+            default: 'Signal',
           },
         },
         additionalProperties: false,
@@ -229,6 +221,7 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
     {
       minComplexity: 2,
       signalNames: ['signal', 'useSignal', 'createSignal'],
+      suffix: 'Signal',
       performance: DEFAULT_PERFORMANCE_BUDGET,
     },
   ],
@@ -237,14 +230,16 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
 
     startPhase(perfKey, 'ruleInit');
 
-    const perf = createPerformanceTracker<Options>(perfKey, option?.performance, context);
+    const perf = createPerformanceTracker(perfKey, option?.performance);
 
     if (option?.performance?.enableMetrics === true) {
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    // console.info(`${ruleName}: Rule configuration:`, option);
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
     recordMetric(perfKey, 'config', {
       performance: {
@@ -300,14 +295,16 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
         if (!shouldContinue()) {
           endPhase(perfKey, 'recordMetrics');
 
-          stopTracking(perfKey);
-
           return;
         }
 
         perf.trackNode(node);
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        const dynamicOp =
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing;
+
+        trackOperation(perfKey, dynamicOp);
 
         // Handle function declarations and variables
         if (
@@ -315,49 +312,29 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
           node.type === AST_NODE_TYPES.FunctionExpression ||
           node.type === AST_NODE_TYPES.ArrowFunctionExpression
         ) {
-          try {
-            const scope = context.sourceCode.getScope(node);
+          const scope = context.sourceCode.getScope(node);
 
-            for (const variable of scope.variables) {
-              if (
-                variable.defs.some((def: Definition) => {
-                  trackOperation(perfKey, PerformanceOperations.signalCheck);
-                  return (
-                    'init' in def.node &&
-                    def.node.init?.type === AST_NODE_TYPES.CallExpression &&
-                    def.node.init.callee.type === AST_NODE_TYPES.Identifier &&
-                    new Set(option?.signalNames ?? ['signal', 'useSignal', 'createSignal']).has(
-                      def.node.init.callee.name
-                    )
-                  );
-                })
-              ) {
-                signalVariables.add(variable.name);
-              }
-            }
-          } catch (error: unknown) {
-            if (error instanceof PerformanceLimitExceededError) {
-              if (getSeverity('performanceLimitExceeded', option) === 'off') {
-                return;
-              }
-
-              context.report({
-                node,
-                messageId: 'performanceLimitExceeded',
-                data: { message: error.message, ruleName },
-              });
-            } else {
-              throw error;
+          for (const variable of scope.variables) {
+            if (
+              variable.defs.some((def: Definition) => {
+                trackOperation(perfKey, PerformanceOperations.signalCheck);
+                return (
+                  'init' in def.node &&
+                  def.node.init?.type === AST_NODE_TYPES.CallExpression &&
+                  def.node.init.callee.type === AST_NODE_TYPES.Identifier &&
+                  new Set(option?.signalNames ?? ['signal', 'useSignal', 'createSignal']).has(
+                    def.node.init.callee.name
+                  )
+                );
+              })
+            ) {
+              signalVariables.add(variable.name);
             }
           }
         }
       },
 
-      Program(node: TSESTree.Program): void {
-        // Track node processing
-        perf.trackNode(node);
-
-        // Start analysis phase
+      [AST_NODE_TYPES.Program](node: TSESTree.Program): void {
         startPhase(perfKey, 'importAnalysis');
 
         const hasJSX = node.body.some((n: TSESTree.ProgramStatement): boolean => {
@@ -369,16 +346,16 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
           return;
         }
 
-        // Check if Show is already imported
         hasShowImport = node.body.some(
           (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
             return (
               n.type === 'ImportDeclaration' &&
               n.source.value === '@preact/signals-react' &&
-              n.specifiers.some(
-                (s) =>
+              n.specifiers.some((s: TSESTree.ImportClause): boolean => {
+                return (
                   s.type === 'ImportSpecifier' && 'name' in s.imported && s.imported.name === 'Show'
-              )
+                );
+              })
             );
           }
         );
@@ -386,20 +363,101 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
         endPhase(perfKey, 'importAnalysis');
       },
 
-      ConditionalExpression(node: TSESTree.ConditionalExpression): void {
+      [AST_NODE_TYPES.ConditionalExpression](node: TSESTree.ConditionalExpression): void {
         perf.trackNode(node);
 
         if (!('type' in node.parent) || !isJSXNode(node.parent)) {
           return;
         }
 
-        // Check if the condition contains any signal variables
+        // Check if the condition contains signal reads by either:
+        // 1) previously recorded local signal variables (init via known creators)
+        // 2) identifiers or member chains whose base has the configured suffix
         const testText = context.sourceCode.getText(node.test);
 
-        const containsSignal = [...signalVariables].some((signal: string): boolean => {
+        const containsSignalFromVars = [...signalVariables].some((signal: string): boolean => {
           // eslint-disable-next-line security/detect-non-literal-regexp
           return new RegExp(`\\b${signal}\\b`).test(testText);
         });
+
+        const suffixRegex = buildSuffixRegex(option?.suffix);
+
+        function hasSuffixSignalInExpr(expr: TSESTree.Node): boolean {
+          if (expr.type === AST_NODE_TYPES.Identifier) {
+            return hasSignalSuffix(expr.name, suffixRegex);
+          }
+
+          if (expr.type === AST_NODE_TYPES.MemberExpression) {
+            let obj: TSESTree.Expression | TSESTree.PrivateIdentifier = expr.object;
+
+            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+            while (obj && obj.type === AST_NODE_TYPES.MemberExpression) {
+              obj = obj.object as TSESTree.Expression;
+            }
+
+            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+            if (obj && obj.type === AST_NODE_TYPES.Identifier) {
+              return hasSignalSuffix(obj.name, suffixRegex);
+            }
+
+            return false;
+          }
+
+          if (
+            expr.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+            expr.type === AST_NODE_TYPES.FunctionExpression
+          ) {
+            return false;
+          }
+
+          for (const key of [
+            'left',
+            'right',
+            'argument',
+            'callee',
+            'object',
+            'property',
+            'test',
+            'consequent',
+            'alternate',
+            'expression',
+          ] as const) {
+            const v = expr[key as keyof typeof expr];
+            if (
+              typeof v !== 'undefined' &&
+              typeof v === 'object' &&
+              'type' in v &&
+              hasSuffixSignalInExpr(v)
+            ) {
+              return true;
+            }
+          }
+
+          // Arrays and call args
+          if ('elements' in expr && Array.isArray(expr.elements)) {
+            for (const e of expr.elements) {
+              if (e && typeof e === 'object' && 'type' in e && hasSuffixSignalInExpr(e)) {
+                return true;
+              }
+            }
+          }
+          if ('arguments' in expr && Array.isArray(expr.arguments)) {
+            for (const a of expr.arguments) {
+              if (
+                typeof a !== 'undefined' &&
+                typeof a === 'object' &&
+                'type' in a &&
+                hasSuffixSignalInExpr(a)
+              ) {
+                return true;
+              }
+            }
+          }
+
+          return false;
+        }
+
+        const containsSignal = containsSignalFromVars || hasSuffixSignalInExpr(node.test);
 
         // Skip if no signal variables are found in the condition
         if (!containsSignal) {
@@ -453,7 +511,8 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
             suggestions.push({
               messageId: 'addShowImport',
               fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
-                const signalsImport = context.sourceCode.ast.body.find(
+                const body = context.sourceCode.ast.body;
+                const signalsImport = body.find(
                   (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
                     return (
                       n.type === AST_NODE_TYPES.ImportDeclaration &&
@@ -463,18 +522,19 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
                 );
 
                 if (!signalsImport) {
+                  // Insert a new import at the top (before the first statement)
+                  const first = body[0];
+                  const importText = "import { Show } from '@preact/signals-react';\n";
+                  if (first) {
+                    return [fixer.insertTextBefore(first, importText)];
+                  }
+                  // If no body, cannot safely insert
                   return null;
                 }
 
                 const last = signalsImport.specifiers[signalsImport.specifiers.length - 1];
 
                 if (!last) {
-                  return null;
-                }
-
-                const b = context.sourceCode.ast.body[0];
-
-                if (!b) {
                   return null;
                 }
 
@@ -491,35 +551,10 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
         }
       },
 
-      'Program:exit'(node: TSESTree.Node): void {
+      [`${AST_NODE_TYPES.Program}:exit`](node: TSESTree.Node): void {
         startPhase(perfKey, 'programExit');
 
         perf.trackNode(node);
-
-        try {
-          startPhase(perfKey, 'recordMetrics');
-
-          const finalMetrics = stopTracking(perfKey);
-
-          if (finalMetrics) {
-            console.info(
-              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
-
-            if (finalMetrics.exceededBudget === true) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
-        }
 
         perf['Program:exit']();
 

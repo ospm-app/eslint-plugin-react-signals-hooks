@@ -7,62 +7,117 @@ import {
 } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
+import { isInJSXContext, isInJSXAttribute } from './utils/jsx.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import {
   endPhase,
   startPhase,
-  stopTracking,
   recordMetric,
   startTracking,
   trackOperation,
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
 } from './utils/performance.js';
+import { buildSuffixRegex, hasSignalSuffix } from './utils/suffix.js';
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
 
+type MessageIds = 'useValueInNonJSX';
+
 type Severity = {
-  useValueInNonJSX?: 'error' | 'warn' | 'off';
+  [key in MessageIds]?: 'error' | 'warn' | 'off';
 };
 
 type Option = {
   performance?: PerformanceBudget;
   severity?: Severity;
+  suffix?: string;
 };
 
 type Options = [Option?];
 
-type MessageIds = 'useValueInNonJSX';
+function getSeverity(messageId: MessageIds, options: Option | undefined): 'error' | 'warn' | 'off' {
+  if (!options?.severity) {
+    return 'error';
+  }
 
-function isInJSXContext(node: TSESTree.Node): boolean {
-  let parent: TSESTree.Node | undefined = node.parent;
-
-  while (parent) {
-    if (parent.type === AST_NODE_TYPES.JSXElement || parent.type === AST_NODE_TYPES.JSXFragment) {
-      return true;
+  switch (messageId) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    case 'useValueInNonJSX': {
+      return options.severity.useValueInNonJSX ?? 'error';
     }
 
-    parent = parent.parent;
+    default: {
+      return 'error';
+    }
+  }
+}
+
+function isBindingOrWritePosition(node: TSESTree.Identifier): boolean {
+  const p = node.parent;
+
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
+  if (!p) {
+    return false;
+  }
+
+  // Direct writes like: fooSignal = ..., ++fooSignal, --fooSignal
+  if (
+    (p.type === AST_NODE_TYPES.AssignmentExpression && p.left === node) ||
+    (p.type === AST_NODE_TYPES.UpdateExpression && p.argument === node)
+  ) {
+    return true;
+  }
+
+  // Function parameters: function f(fooSignal) {}
+  if (
+    (p.type === AST_NODE_TYPES.FunctionDeclaration ||
+      p.type === AST_NODE_TYPES.FunctionExpression ||
+      p.type === AST_NODE_TYPES.ArrowFunctionExpression) &&
+    p.params.includes(node)
+  ) {
+    return true;
+  }
+
+  // Catch clause parameter
+  if (p.type === AST_NODE_TYPES.CatchClause && p.param === node) {
+    return true;
+  }
+
+  // Destructuring/binding patterns: const { fooSignal } = obj; const [fooSignal] = arr;
+  // Identifier as value of Property within ObjectPattern
+  if (
+    p.type === AST_NODE_TYPES.Property &&
+    p.value === node &&
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+    p.parent &&
+    p.parent.type === AST_NODE_TYPES.ObjectPattern
+  ) {
+    return true;
+  }
+
+  // Array pattern element
+  if (p.type === AST_NODE_TYPES.ArrayPattern) {
+    return true;
+  }
+
+  // Rest element within patterns
+  if (p.type === AST_NODE_TYPES.RestElement) {
+    return true;
+  }
+
+  // AssignmentPattern on the left side (default param or destructuring default)
+  if (p.type === AST_NODE_TYPES.AssignmentPattern && p.left === node) {
+    return true;
+  }
+
+  // VariableDeclarator with simple id
+  if (p.type === AST_NODE_TYPES.VariableDeclarator && p.id === node) {
+    return true;
   }
 
   return false;
 }
-
-function isInJSXAttribute(node: TSESTree.Node): boolean {
-  let parent: TSESTree.Node | undefined = node.parent;
-
-  while (parent) {
-    if (parent.type === AST_NODE_TYPES.JSXAttribute) {
-      return true;
-    }
-
-    parent = parent.parent;
-  }
-
-  return false;
-}
-
-let isInJSX = false;
 
 const ruleName = 'prefer-signal-reads';
 
@@ -72,7 +127,7 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
   name: ruleName,
   meta: {
     type: 'suggestion',
-    hasSuggestions: true,
+    hasSuggestions: false,
     docs: {
       description:
         'Enforces using `.value` when reading signal values in non-JSX contexts. In JSX, signals are automatically unwrapped, but in regular JavaScript/TypeScript code, you must explicitly access the `.value` property to read the current value of a signal. This rule helps catch cases where you might have forgotten to use `.value` when needed.',
@@ -105,6 +160,18 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
             },
             additionalProperties: false,
           },
+          suffix: { type: 'string', minLength: 1 },
+          severity: {
+            type: 'object',
+            properties: {
+              useValueInNonJSX: {
+                type: 'string',
+                enum: ['error', 'warn', 'off'],
+                default: 'error',
+              },
+            },
+            additionalProperties: false,
+          },
         },
         additionalProperties: false,
       },
@@ -121,14 +188,16 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
 
     startPhase(perfKey, 'ruleInit');
 
-    const perf = createPerformanceTracker<Options>(perfKey, option?.performance, context);
+    const perf = createPerformanceTracker(perfKey, option?.performance);
 
     if (option?.performance?.enableMetrics === true) {
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    // console.info(`${ruleName}: Rule configuration:`, option);
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
     recordMetric(perfKey, 'config', {
       performance: {
@@ -158,60 +227,86 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
       return true;
     }
 
+    const suffix =
+      typeof option?.suffix === 'string' && option.suffix.length > 0 ? option.suffix : 'Signal';
+    const suffixRegex = buildSuffixRegex(suffix);
+
     startPhase(perfKey, 'ruleExecution');
+    // Track local names and namespaces for signal/computed creators
+    const signalCreatorLocals = new Set<string>(['signal']);
+    const computedCreatorLocals = new Set<string>(['computed']);
+    const creatorNamespaces = new Set<string>();
+
+    // Track variables initialized from signal/computed creators
+    const signalVariables = new Set<string>();
 
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
           endPhase(perfKey, 'recordMetrics');
 
-          stopTracking(perfKey);
-
           return;
         }
 
         perf.trackNode(node);
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        const dynamicOp =
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing;
+
+        trackOperation(perfKey, dynamicOp);
       },
 
-      JSXElement(): void {
-        isInJSX = true;
-      },
-      'JSXElement:exit'(): void {
-        isInJSX = false;
-      },
-
-      JSXFragment(): void {
-        isInJSX = true;
-      },
-      'JSXFragment:exit'(): void {
-        isInJSX = false;
-      },
-
-      'Identifier:matches([name$="Signal"], [name$="signal"])'(node: TSESTree.Node): void {
-        if (
-          !(
-            node.type === 'Identifier' &&
-            (node.name.endsWith('Signal') || node.name.endsWith('signal'))
-          )
-        ) {
+      [AST_NODE_TYPES.Identifier](node: TSESTree.Node): void {
+        if (node.type !== AST_NODE_TYPES.Identifier) {
           return;
         }
 
-        // Skip if in JSX context
-        if (isInJSX || isInJSXContext(node) || isInJSXAttribute(node)) {
+        const isSignalIdent =
+          hasSignalSuffix(node.name, suffixRegex) || signalVariables.has(node.name);
+        if (!isSignalIdent) {
           return;
         }
 
-        // Skip if already using .value
+        // Skip inside JSX elements/attributes
+        if (isInJSXContext(node) || isInJSXAttribute(node)) {
+          return;
+        }
+
         if (
           node.parent.type === AST_NODE_TYPES.MemberExpression &&
           node.parent.object === node &&
           'property' in node.parent &&
           node.parent.property.type === AST_NODE_TYPES.Identifier &&
-          node.parent.property.name === 'value'
+          (node.parent.property.name === 'value' || node.parent.property.name === 'peek')
         ) {
+          return;
+        }
+
+        // Skip if identifier is being written to or bound (not a read context)
+        if (isBindingOrWritePosition(node)) {
+          return;
+        }
+
+        const p = node.parent;
+
+        if (
+          (p.type === AST_NODE_TYPES.CallExpression && p.callee === node) ||
+          (p.type === AST_NODE_TYPES.NewExpression && p.callee === node) ||
+          (p.type === AST_NODE_TYPES.Property && p.key === node) ||
+          (p.type === AST_NODE_TYPES.MemberExpression && p.property === node && !p.computed) ||
+          p.type === AST_NODE_TYPES.ImportSpecifier ||
+          p.type === AST_NODE_TYPES.ExportSpecifier ||
+          p.type === AST_NODE_TYPES.LabeledStatement ||
+          p.type === AST_NODE_TYPES.TSTypeReference ||
+          p.type === AST_NODE_TYPES.TSQualifiedName ||
+          p.type === AST_NODE_TYPES.TSTypeQuery ||
+          p.type === AST_NODE_TYPES.TSTypeOperator
+        ) {
+          return;
+        }
+
+        if (getSeverity('useValueInNonJSX', option) === 'off') {
           return;
         }
 
@@ -224,34 +319,68 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
         });
       },
 
-      // Clean up
-      'Program:exit'(): void {
-        startPhase(perfKey, 'programExit');
+      [AST_NODE_TYPES.VariableDeclarator](node: TSESTree.VariableDeclarator): void {
+        if (node.id.type !== AST_NODE_TYPES.Identifier) {
+          return;
+        }
 
-        try {
-          startPhase(perfKey, 'recordMetrics');
+        if (!node.init || node.init.type !== AST_NODE_TYPES.CallExpression) {
+          return;
+        }
 
-          const finalMetrics = stopTracking(perfKey);
+        const callee = node.init.callee;
+        let isCreator = false;
+        if (callee.type === AST_NODE_TYPES.Identifier) {
+          if (signalCreatorLocals.has(callee.name) || computedCreatorLocals.has(callee.name)) {
+            isCreator = true;
+          }
+        } else if (
+          callee.type === AST_NODE_TYPES.MemberExpression &&
+          callee.object.type === AST_NODE_TYPES.Identifier &&
+          creatorNamespaces.has(callee.object.name) &&
+          callee.property.type === AST_NODE_TYPES.Identifier &&
+          (callee.property.name === 'signal' || callee.property.name === 'computed')
+        ) {
+          isCreator = true;
+        }
 
-          if (finalMetrics) {
-            console.info(
-              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+        if (isCreator) {
+          signalVariables.add(node.id.name);
+        }
+      },
 
-            if (finalMetrics.exceededBudget === true) {
-              console.warn('\n⚠️  Performance budget exceeded!');
+      [AST_NODE_TYPES.Program](node: TSESTree.Program): void {
+        for (const stmt of node.body) {
+          if (stmt.type !== AST_NODE_TYPES.ImportDeclaration) {
+            continue;
+          }
+          if (
+            typeof stmt.source.value === 'string' &&
+            stmt.source.value === '@preact/signals-react'
+          ) {
+            for (const spec of stmt.specifiers) {
+              if (spec.type === AST_NODE_TYPES.ImportSpecifier) {
+                if (
+                  spec.imported.type === AST_NODE_TYPES.Identifier &&
+                  spec.imported.name === 'signal'
+                ) {
+                  signalCreatorLocals.add(spec.local.name);
+                } else if (
+                  spec.imported.type === AST_NODE_TYPES.Identifier &&
+                  spec.imported.name === 'computed'
+                ) {
+                  computedCreatorLocals.add(spec.local.name);
+                }
+              } else if (spec.type === AST_NODE_TYPES.ImportNamespaceSpecifier) {
+                creatorNamespaces.add(spec.local.name);
+              }
             }
           }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
         }
+      },
+
+      [`${AST_NODE_TYPES.Program}:exit`](): void {
+        startPhase(perfKey, 'programExit');
 
         perf['Program:exit']();
 

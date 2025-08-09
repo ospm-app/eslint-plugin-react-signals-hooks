@@ -12,25 +12,25 @@ import {
   endPhase,
   startPhase,
   recordMetric,
-  stopTracking,
   startTracking,
   trackOperation,
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
 } from './utils/performance.js';
+import { buildSuffixRegex, hasSignalSuffix } from './utils/suffix.js';
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
 
-type Severity = {
-  invalidSignalName?: 'error' | 'warn' | 'off';
-  invalidComputedName?: 'error' | 'warn' | 'off';
-};
-
 type MessageIds = 'invalidSignalName' | 'invalidComputedName';
+
+type Severity = {
+  [key in MessageIds]?: 'error' | 'warn' | 'off';
+};
 
 type Option = {
   performance?: PerformanceBudget;
   severity?: Severity;
+  suffix?: string;
 };
 
 type Options = [Option?];
@@ -55,8 +55,8 @@ function getSeverity(messageId: MessageIds, options: Option | undefined): 'error
   }
 }
 
-function isValidSignalName(name: string): boolean {
-  if (!name.endsWith('Signal')) {
+function isValidSignalName(name: string, suffixRegex: RegExp): boolean {
+  if (!hasSignalSuffix(name, suffixRegex)) {
     return false;
   }
 
@@ -76,7 +76,7 @@ function isValidSignalName(name: string): boolean {
   return true;
 }
 
-function getFixedName(originalName: string): string {
+function getFixedName(originalName: string, suffix: string): string {
   let fixedName = originalName;
 
   if (fixedName.startsWith('use') && fixedName.length > 3) {
@@ -87,8 +87,8 @@ function getFixedName(originalName: string): string {
     fixedName = fixedName.charAt(0).toLowerCase() + fixedName.slice(1);
   }
 
-  if (!fixedName.endsWith('Signal')) {
-    fixedName += 'Signal';
+  if (!fixedName.endsWith(suffix)) {
+    fixedName += suffix;
   }
 
   return fixedName;
@@ -103,7 +103,7 @@ export const signalVariableNameRule = ESLintUtils.RuleCreator((name: string): st
   meta: {
     type: 'suggestion',
     fixable: 'code',
-    hasSuggestions: true,
+    hasSuggestions: false,
     docs: {
       description:
         'Enforces consistent naming conventions for signal and computed variables. Signal variables should end with "Signal" (e.g., `countSignal`), start with a lowercase letter, and not use the "use" prefix to avoid confusion with React hooks. This improves code readability and maintainability by making signal usage immediately obvious.',
@@ -111,9 +111,9 @@ export const signalVariableNameRule = ESLintUtils.RuleCreator((name: string): st
     },
     messages: {
       invalidSignalName:
-        "Signal variable '{{name}}' should end with 'Signal', start with lowercase, and not start with 'use'",
+        "Signal variable '{{name}}' should end with '{{expectedSuffix}}', start with lowercase, and not start with 'use'",
       invalidComputedName:
-        "Computed variable '{{name}}' should end with 'Signal', start with lowercase, and not start with 'use'",
+        "Computed variable '{{name}}' should end with '{{expectedSuffix}}', start with lowercase, and not start with 'use'",
     },
     schema: [
       {
@@ -139,6 +139,15 @@ export const signalVariableNameRule = ESLintUtils.RuleCreator((name: string): st
             },
             additionalProperties: false,
           },
+          severity: {
+            type: 'object',
+            properties: {
+              invalidSignalName: { type: 'string', enum: ['error', 'warn', 'off'] },
+              invalidComputedName: { type: 'string', enum: ['error', 'warn', 'off'] },
+            },
+            additionalProperties: false,
+          },
+          suffix: { type: 'string', minLength: 1 },
         },
         additionalProperties: false,
       },
@@ -154,14 +163,16 @@ export const signalVariableNameRule = ESLintUtils.RuleCreator((name: string): st
 
     startPhase(perfKey, 'ruleInit');
 
-    const perf = createPerformanceTracker<Options>(perfKey, option?.performance, context);
+    const perf = createPerformanceTracker(perfKey, option?.performance);
 
     if (option?.performance?.enableMetrics === true) {
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    // console.info(`${ruleName}: Rule configuration:`, option);
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
     recordMetric(perfKey, 'config', {
       performance: {
@@ -191,126 +202,167 @@ export const signalVariableNameRule = ESLintUtils.RuleCreator((name: string): st
       return true;
     }
 
+    const suffix =
+      typeof option?.suffix === 'string' && option.suffix.length > 0 ? option.suffix : 'Signal';
+
+    const suffixRegex = buildSuffixRegex(suffix);
+
     startPhase(perfKey, 'ruleExecution');
+
+    // Track local identifiers and namespaces for creators
+    const signalCreatorLocals = new Set<string>(['signal']);
+    const computedCreatorLocals = new Set<string>(['computed']);
+    const creatorNamespaces = new Set<string>();
 
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
           endPhase(perfKey, 'recordMetrics');
 
-          stopTracking(perfKey);
-
           return;
         }
 
         perf.trackNode(node);
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        trackOperation(
+          perfKey,
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing
+        );
+      },
+
+      [AST_NODE_TYPES.Program](node: TSESTree.Program): void {
+        for (const stmt of node.body) {
+          if (
+            stmt.type === AST_NODE_TYPES.ImportDeclaration &&
+            typeof stmt.source.value === 'string' &&
+            stmt.source.value === '@preact/signals-react'
+          ) {
+            for (const spec of stmt.specifiers) {
+              if (spec.type === AST_NODE_TYPES.ImportSpecifier) {
+                if ('name' in spec.imported) {
+                  if (spec.imported.name === 'signal') {
+                    signalCreatorLocals.add(spec.local.name);
+                  } else if (spec.imported.name === 'computed') {
+                    computedCreatorLocals.add(spec.local.name);
+                  }
+                }
+              } else if (spec.type === AST_NODE_TYPES.ImportNamespaceSpecifier) {
+                creatorNamespaces.add(spec.local.name);
+              }
+            }
+          }
+        }
       },
 
       [AST_NODE_TYPES.VariableDeclarator](node: TSESTree.VariableDeclarator): void {
-        if (
-          node.id.type === AST_NODE_TYPES.Identifier &&
-          node.init &&
-          node.init.type === AST_NODE_TYPES.CallExpression &&
-          node.init.callee.type === AST_NODE_TYPES.Identifier &&
-          (node.init.callee.name === 'signal' || node.init.callee.name === 'computed') &&
-          !isValidSignalName(node.id.name) &&
-          getSeverity(
-            node.init.callee.name === 'signal' ? 'invalidSignalName' : 'invalidComputedName',
-            option
-          ) !== 'off'
+        if (node.id.type !== AST_NODE_TYPES.Identifier) {
+          return;
+        }
+
+        if (!node.init || node.init.type !== AST_NODE_TYPES.CallExpression) {
+          return;
+        }
+
+        let kind: 'signal' | 'computed' | null = null;
+
+        const callee = node.init.callee;
+
+        if (callee.type === AST_NODE_TYPES.Identifier) {
+          if (signalCreatorLocals.has(callee.name)) {
+            kind = 'signal';
+          } else if (computedCreatorLocals.has(callee.name)) {
+            kind = 'computed';
+          }
+        } else if (
+          callee.type === AST_NODE_TYPES.MemberExpression &&
+          callee.object.type === AST_NODE_TYPES.Identifier &&
+          creatorNamespaces.has(callee.object.name) &&
+          callee.property.type === AST_NODE_TYPES.Identifier &&
+          (callee.property.name === 'signal' || callee.property.name === 'computed')
         ) {
-          context.report({
-            node: node.id,
-            messageId:
-              node.init.callee.name === 'signal' ? 'invalidSignalName' : 'invalidComputedName',
-            data: {
-              name: node.id.name,
-            },
-            fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> {
-              const fixes: Array<TSESLint.RuleFix> = [];
+          kind = callee.property.name as 'signal' | 'computed';
+        }
 
-              try {
-                if (!('name' in node.id)) {
-                  return [];
-                }
+        if (kind === null) {
+          return;
+        }
 
-                const variableName = node.id.name;
-                const fixedName = getFixedName(variableName);
+        if (!isValidSignalName(node.id.name, suffixRegex)) {
+          const messageId = kind === 'signal' ? 'invalidSignalName' : 'invalidComputedName';
 
-                if (fixedName === variableName) {
-                  return [];
-                }
+          if (getSeverity(messageId, option) !== 'off') {
+            context.report({
+              node: node.id,
+              messageId,
+              data: {
+                name: node.id.name,
+                expectedSuffix: suffix,
+              },
+              fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> {
+                const fixes: Array<TSESLint.RuleFix> = [];
 
-                // Fix the declaration
-                fixes.push(fixer.replaceText(node.id, fixedName));
-
-                // Get all references to fix
-                const sourceCode = context.sourceCode;
-                const scope = sourceCode.getScope(node);
-                const variable = scope.set.get(variableName);
-
-                if (variable) {
-                  for (const reference of variable.references) {
-                    const ref = reference.identifier;
-
-                    // Skip the declaration itself
-                    if (ref.range[0] === node.id.range[0] && ref.range[1] === node.id.range[1]) {
-                      continue;
-                    }
-
-                    // Skip property accesses (e.g., obj.prop)
-                    if (
-                      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-                      ref.parent?.type === AST_NODE_TYPES.MemberExpression &&
-                      ref.parent.property === ref &&
-                      !ref.parent.computed
-                    ) {
-                      continue;
-                    }
-
-                    fixes.push(fixer.replaceText(ref, fixedName));
+                try {
+                  if (!('name' in node.id)) {
+                    return [];
                   }
-                }
 
-                return fixes;
-              } catch (error: unknown) {
-                console.error('Error in fixer:', error);
-                return [];
-              }
-            },
-          });
+                  const fixedName = getFixedName(node.id.name, suffix);
+
+                  if (fixedName === node.id.name) {
+                    return [];
+                  }
+
+                  const currentScope = context.sourceCode.getScope(node);
+
+                  if (currentScope.set.has(fixedName)) {
+                    return [];
+                  }
+
+                  fixes.push(fixer.replaceText(node.id, fixedName));
+
+                  const variable = context.sourceCode.getScope(node).set.get(node.id.name);
+
+                  if (variable) {
+                    for (const reference of variable.references) {
+                      const ref = reference.identifier;
+
+                      if (ref.range[0] === node.id.range[0] && ref.range[1] === node.id.range[1]) {
+                        continue;
+                      }
+
+                      if (
+                        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+                        ref.parent?.type === AST_NODE_TYPES.MemberExpression &&
+                        ref.parent.property === ref &&
+                        !ref.parent.computed
+                      ) {
+                        continue;
+                      }
+
+                      fixes.push(fixer.replaceText(ref, fixedName));
+                    }
+                  }
+
+                  return fixes;
+                } catch (error: unknown) {
+                  if (
+                    option?.performance?.enableMetrics === true &&
+                    option.performance.logMetrics === true
+                  ) {
+                    console.error(`${ruleName}: Error in fixer:`, error);
+                  }
+
+                  return [];
+                }
+              },
+            });
+          }
         }
       },
 
       [`${AST_NODE_TYPES.Program}:exit`](): void {
         startPhase(perfKey, 'programExit');
-
-        try {
-          startPhase(perfKey, 'recordMetrics');
-
-          const finalMetrics = stopTracking(perfKey);
-
-          if (finalMetrics) {
-            console.info(
-              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
-
-            if (finalMetrics.exceededBudget === true) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
-          }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
-        }
 
         perf['Program:exit']();
 

@@ -35,6 +35,11 @@ const useCount = signal(0);
 const fullName = computed(() => `${firstName} ${lastName}`);
 ```
 
+## Notes
+
+- Detection of creators is limited to imports from `@preact/signals-react` (direct, aliased, or namespace).
+- A collision guard prevents renaming when the target name already exists in scope.
+
 ### ✅ Correct
 
 ```typescript
@@ -51,7 +56,7 @@ const doubleCount = countSignal.value * 2;
 
 ## Auto-fix
 
-This rule provides an auto-fix that can automatically rename signal variables to follow the convention. The fix will:
+This rule provides an autofix (no separate suggestions) that can automatically rename signal variables to follow the convention when safe. The fix will:
 
 1. Add 'Signal' suffix if missing
 2. Convert the first character to lowercase
@@ -69,21 +74,35 @@ const countSignal = signal(0);
 
 ## Options
 
-This rule currently doesn't have any configuration options, but future versions might include:
-
-```typescript
+```json
 {
   "rules": {
     "react-signals-hooks/signal-variable-name": [
       "error",
       {
-        "suffix": "Signal",  // Custom suffix (default: 'Signal')
-        "ignorePattern": "^_" // Ignore variables matching this pattern
+        "suffix": "Signal",
+        "severity": {
+          "invalidSignalName": "error",
+          "invalidComputedName": "error"
+        },
+        "performance": {
+          "maxTime": 200,
+          "maxMemory": 256,
+          "maxNodes": 100000,
+          "enableMetrics": false,
+          "logMetrics": false
+        }
       }
     ]
   }
 }
 ```
+
+### Option details
+
+- `suffix` (string, default `"Signal"`): required suffix for names.
+- `severity` (object): per-message severity overrides (`invalidSignalName`, `invalidComputedName`).
+- `performance` (object): performance budgets and optional metrics logging.
 
 ## When Not To Use It
 

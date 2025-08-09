@@ -12,7 +12,6 @@ import {
   endPhase,
   startPhase,
   recordMetric,
-  stopTracking,
   startTracking,
   trackOperation,
   createPerformanceTracker,
@@ -21,19 +20,20 @@ import {
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
 
+type MessageIds = 'preferUseSignal';
+
 type Severity = {
-  preferUseSignal?: 'error' | 'warn' | 'off';
+  [key in MessageIds]?: 'error' | 'warn' | 'off';
 };
 
 type Option = {
   ignoreComplexInitializers?: boolean;
   performance?: PerformanceBudget;
   severity?: Severity;
+  suffix?: string;
 };
 
 type Options = [Option?];
-
-type MessageIds = 'preferUseSignal';
 
 const ruleName = 'prefer-use-signal-over-use-state';
 
@@ -98,6 +98,14 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
             },
             additionalProperties: false,
           },
+          severity: {
+            type: 'object',
+            properties: {
+              preferUseSignal: { type: 'string', enum: ['error', 'warn', 'off'] },
+            },
+            additionalProperties: false,
+          },
+          suffix: { type: 'string', minLength: 1 },
         },
         additionalProperties: false,
       },
@@ -115,14 +123,16 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
 
     startPhase(perfKey, 'ruleInit');
 
-    const perf = createPerformanceTracker<Options>(perfKey, option?.performance, context);
+    const perf = createPerformanceTracker(perfKey, option?.performance);
 
     if (option?.performance?.enableMetrics === true) {
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    // console.info(`${ruleName}: Rule configuration:`, option);
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
     recordMetric(perfKey, 'config', {
       performance: {
@@ -137,10 +147,19 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
 
     let nodeCount = 0;
 
+    const useStateLocalNames = new Set<string>(['useState']);
+
+    const reactNamespaces = new Set<string>();
+
+    let inComponentOrHook: boolean = false;
+
     function shouldContinue(): boolean {
       nodeCount++;
 
-      if (nodeCount > (option?.performance?.maxNodes ?? 2_000)) {
+      if (
+        typeof option?.performance?.maxNodes === 'number' &&
+        nodeCount > option.performance.maxNodes
+      ) {
         trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
         return false;
@@ -156,88 +175,158 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
         if (!shouldContinue()) {
           endPhase(perfKey, 'recordMetrics');
 
-          stopTracking(perfKey);
-
           return;
         }
 
         perf.trackNode(node);
 
-        trackOperation(perfKey, PerformanceOperations[`${node.type}Processing`]);
+        const dynamicOp =
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing;
+
+        trackOperation(perfKey, dynamicOp);
       },
 
-      VariableDeclarator(node: TSESTree.VariableDeclarator) {
+      [AST_NODE_TYPES.Program](node: TSESTree.Program): void {
+        for (const stmt of node.body) {
+          if (stmt.type === AST_NODE_TYPES.ImportDeclaration && stmt.source.value === 'react') {
+            for (const spec of stmt.specifiers) {
+              if (
+                spec.type === AST_NODE_TYPES.ImportSpecifier &&
+                spec.imported.type === AST_NODE_TYPES.Identifier &&
+                spec.imported.name === 'useState'
+              ) {
+                useStateLocalNames.add(spec.local.name);
+              } else if (
+                spec.type === AST_NODE_TYPES.ImportNamespaceSpecifier ||
+                spec.type === AST_NODE_TYPES.ImportDefaultSpecifier
+              ) {
+                reactNamespaces.add(spec.local.name);
+              }
+            }
+          }
+        }
+      },
+
+      [AST_NODE_TYPES.FunctionDeclaration](node: TSESTree.FunctionDeclaration): void {
+        if (node.id && /^[A-Z]/.test(node.id.name)) {
+          inComponentOrHook = true;
+        }
+      },
+      [`${AST_NODE_TYPES.FunctionDeclaration}:exit`]() {
+        inComponentOrHook = false;
+      },
+
+      [AST_NODE_TYPES.VariableDeclarator](node: TSESTree.VariableDeclarator): void {
         if (
-          node.init?.type === AST_NODE_TYPES.CallExpression &&
-          node.init.callee.type === AST_NODE_TYPES.Identifier &&
-          node.init.callee.name === 'useState' &&
-          node.id.type === AST_NODE_TYPES.ArrayPattern &&
-          node.id.elements.length === 2
+          (node.init?.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+            node.init?.type === AST_NODE_TYPES.FunctionExpression) &&
+          node.id.type === AST_NODE_TYPES.Identifier &&
+          /^[A-Z]/.test(node.id.name)
         ) {
-          if (
-            context.options[0]?.ignoreComplexInitializers !== false &&
-            ![
-              'Literal',
-              'Identifier',
-              'MemberExpression',
-              'UnaryExpression',
-              'BinaryExpression',
-              'ConditionalExpression',
-              'TemplateLiteral',
-            ].includes(node.type)
-          ) {
+          inComponentOrHook = true;
+        }
+
+        if (
+          !(
+            node.init?.type === AST_NODE_TYPES.CallExpression &&
+            ((node.init.callee.type === AST_NODE_TYPES.Identifier &&
+              useStateLocalNames.has(node.init.callee.name)) ||
+              (node.init.callee.type === AST_NODE_TYPES.MemberExpression &&
+                node.init.callee.object.type === AST_NODE_TYPES.Identifier &&
+                reactNamespaces.has(node.init.callee.object.name) &&
+                node.init.callee.property.type === AST_NODE_TYPES.Identifier &&
+                node.init.callee.property.name === 'useState')) &&
+            node.id.type === AST_NODE_TYPES.ArrayPattern &&
+            node.id.elements.length === 2
+          ) ||
+          !inComponentOrHook ||
+          // If ignoring complex initializers (default), only allow simple initializer node types
+          (context.options[0]?.ignoreComplexInitializers !== false &&
+          typeof node.init.arguments[0] === 'undefined'
+            ? false
+            : ![
+                AST_NODE_TYPES.Literal,
+                AST_NODE_TYPES.Identifier,
+                AST_NODE_TYPES.MemberExpression,
+                AST_NODE_TYPES.UnaryExpression,
+                AST_NODE_TYPES.BinaryExpression,
+                AST_NODE_TYPES.ConditionalExpression,
+                AST_NODE_TYPES.TemplateLiteral,
+              ].includes(node.init.arguments[0]?.type ?? ''))
+        ) {
+          return;
+        }
+
+        const [stateVar, setterVar] = node.id.elements;
+
+        const initialValue: TSESTree.CallExpressionArgument | undefined = node.init.arguments[0];
+
+        if (
+          stateVar?.type === AST_NODE_TYPES.Identifier &&
+          setterVar?.type === AST_NODE_TYPES.Identifier &&
+          setterVar.name.startsWith('set')
+        ) {
+          if (getSeverity('preferUseSignal', option) === 'off') {
             return;
           }
 
-          const [stateVar, setterVar] = node.id.elements;
+          const suffix =
+            typeof option?.suffix === 'string' && option.suffix.length > 0
+              ? option.suffix
+              : 'Signal';
 
-          const initialValue: TSESTree.CallExpressionArgument | undefined = node.init.arguments[0];
+          const suggestions: TSESLint.ReportSuggestionArray<MessageIds> = [];
 
-          if (
-            stateVar?.type === AST_NODE_TYPES.Identifier &&
-            setterVar?.type === AST_NODE_TYPES.Identifier &&
-            setterVar.name.startsWith('set')
-          ) {
-            if (getSeverity('preferUseSignal', option) === 'off') {
-              return;
-            }
-
-            context.report({
-              node: node.init,
-              messageId: 'preferUseSignal',
-              data: {
-                type: initialValue
-                  ? initialValue.type === 'Literal'
-                    ? typeof initialValue.value
-                    : 'state'
-                  : 'state',
-              },
-              fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
-                const fixes = [];
-                //  addUseSignalImport(context.sourceCode, fixer);
-
-                const importDeclarations = context.sourceCode.ast.body.filter(
-                  (node): node is TSESTree.ImportDeclaration =>
-                    node.type === AST_NODE_TYPES.ImportDeclaration
-                );
-
-                const hasSignalImport = importDeclarations.some((node) => {
-                  return (
-                    node.source.value === '@preact/signals-react' &&
-                    node.specifiers.some((s) => {
-                      return (
-                        'imported' in s && 'name' in s.imported && s.imported.name === 'useSignal'
-                      );
-                    })
-                  );
-                });
-
-                if (hasSignalImport) {
-                  return null;
+          // Suggestion 1: add import only (non-destructive)
+          suggestions.push({
+            messageId: 'preferUseSignal',
+            fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+              const fixes: Array<TSESLint.RuleFix> = [];
+              const importDeclarations = context.sourceCode.ast.body.filter(
+                (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
+                  return n.type === AST_NODE_TYPES.ImportDeclaration;
                 }
+              );
 
+              const signalsImport = importDeclarations.find(
+                (d: TSESTree.ImportDeclaration): d is TSESTree.ImportDeclaration => {
+                  return d.source.value === '@preact/signals-react';
+                }
+              );
+
+              if (signalsImport) {
+                if (
+                  !signalsImport.specifiers.some(
+                    (s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
+                      return (
+                        s.type === AST_NODE_TYPES.ImportSpecifier &&
+                        s.imported.type === AST_NODE_TYPES.Identifier &&
+                        s.imported.name === 'useSignal'
+                      );
+                    }
+                  )
+                ) {
+                  const lastNamed = [...signalsImport.specifiers]
+                    .reverse()
+                    .find((s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
+                      return s.type === AST_NODE_TYPES.ImportSpecifier;
+                    });
+                  if (lastNamed) {
+                    fixes.push(fixer.insertTextAfter(lastNamed, ', useSignal'));
+                  } else {
+                    fixes.push(
+                      fixer.insertTextAfter(
+                        signalsImport,
+                        "\nimport { useSignal } from '@preact/signals-react';\n"
+                      )
+                    );
+                  }
+                }
+              } else {
                 const lastImport = importDeclarations[importDeclarations.length - 1];
-                const importText = "import { useSignal } from '@preact/signals-react'\n";
+
+                const importText = "import { useSignal } from '@preact/signals-react';\n";
 
                 const b = context.sourceCode.ast.body[0];
 
@@ -250,13 +339,88 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
                     ? fixer.insertTextBefore(b, importText)
                     : fixer.insertTextAfter(lastImport, importText)
                 );
+              }
+
+              return fixes.length > 0 ? fixes : null;
+            },
+          });
+
+          if (
+            (typeof initialValue === 'undefined' ||
+              initialValue.type === AST_NODE_TYPES.Literal ||
+              initialValue.type === AST_NODE_TYPES.Identifier) &&
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+            stateVar.type === AST_NODE_TYPES.Identifier
+          ) {
+            suggestions.push({
+              messageId: 'preferUseSignal',
+              fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+                const fixes: Array<TSESLint.RuleFix> = [];
+
+                const importDeclarations = context.sourceCode.ast.body.filter(
+                  (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
+                    return n.type === AST_NODE_TYPES.ImportDeclaration;
+                  }
+                );
+
+                const signalsImport = importDeclarations.find(
+                  (d: TSESTree.ImportDeclaration): d is TSESTree.ImportDeclaration => {
+                    return d.source.value === '@preact/signals-react';
+                  }
+                );
+
+                if (signalsImport) {
+                  const hasSpecifier = signalsImport.specifiers.some(
+                    (s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
+                      return (
+                        s.type === AST_NODE_TYPES.ImportSpecifier &&
+                        s.imported.type === AST_NODE_TYPES.Identifier &&
+                        s.imported.name === 'useSignal'
+                      );
+                    }
+                  );
+
+                  if (!hasSpecifier) {
+                    const lastNamed = [...signalsImport.specifiers]
+                      .reverse()
+                      .find(
+                        (s): s is TSESTree.ImportSpecifier =>
+                          s.type === AST_NODE_TYPES.ImportSpecifier
+                      );
+
+                    if (lastNamed) {
+                      fixes.push(fixer.insertTextAfter(lastNamed, ', useSignal'));
+                    } else {
+                      fixes.push(
+                        fixer.insertTextAfter(
+                          signalsImport,
+                          "\nimport { useSignal } from '@preact/signals-react';\n"
+                        )
+                      );
+                    }
+                  }
+                } else {
+                  const lastImport = importDeclarations[importDeclarations.length - 1];
+
+                  const importText = "import { useSignal } from '@preact/signals-react';\n";
+
+                  const b = context.sourceCode.ast.body[0];
+
+                  if (!b) {
+                    return null;
+                  }
+
+                  fixes.push(
+                    typeof lastImport === 'undefined'
+                      ? fixer.insertTextBefore(b, importText)
+                      : fixer.insertTextAfter(lastImport, importText)
+                  );
+                }
 
                 fixes.push(
                   fixer.replaceText(
                     node,
-                    `const ${stateVar.name}Signal = useSignal(${
-                      initialValue ? context.sourceCode.getText(initialValue) : 'undefined'
-                    })`
+                    `const ${stateVar.name}${suffix} = useSignal(${initialValue ? context.sourceCode.getText(initialValue) : 'undefined'})`
                   )
                 );
 
@@ -264,37 +428,36 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
               },
             });
           }
+
+          context.report({
+            node: node.init,
+            messageId: 'preferUseSignal',
+            data: {
+              type:
+                typeof initialValue !== 'undefined'
+                  ? initialValue.type === AST_NODE_TYPES.Literal
+                    ? typeof initialValue.value
+                    : 'state'
+                  : 'state',
+            },
+            suggest: suggestions,
+          });
         }
       },
 
-      // Clean up
-      'Program:exit'(): void {
-        startPhase(perfKey, 'programExit');
-
-        try {
-          startPhase(perfKey, 'recordMetrics');
-
-          const finalMetrics = stopTracking(perfKey);
-
-          if (finalMetrics) {
-            console.info(
-              `\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? 'EXCEEDED' : 'OK'}):`
-            );
-            console.info(`  File: ${context.filename}`);
-            console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-            console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
-
-            if (finalMetrics.exceededBudget === true) {
-              console.warn('\n⚠️  Performance budget exceeded!');
-            }
+      [`${AST_NODE_TYPES.VariableDeclarator}:exit`](node: TSESTree.VariableDeclarator): void {
+        if (
+          node.init?.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+          node.init?.type === AST_NODE_TYPES.FunctionExpression
+        ) {
+          if (node.id.type === AST_NODE_TYPES.Identifier && /^[A-Z]/.test(node.id.name)) {
+            inComponentOrHook = false;
           }
-        } catch (error: unknown) {
-          console.error('Error recording metrics:', error);
-        } finally {
-          endPhase(perfKey, 'recordMetrics');
-
-          stopTracking(perfKey);
         }
+      },
+
+      [`${AST_NODE_TYPES.Program}:exit`](): void {
+        startPhase(perfKey, 'programExit');
 
         perf['Program:exit']();
 

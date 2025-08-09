@@ -1,6 +1,11 @@
 # Prefer Signal Effect Rule Specification
 
-This rule encourages using `effect()` from `@preact/signals` instead of `useEffect` when working with signal dependencies, providing better performance and automatic dependency tracking.
+This rule encourages using `effect()` from `@preact/signals-react` instead of `useEffect` when working with signal dependencies, providing better performance and automatic dependency tracking.
+
+## Plugin Scope
+
+- Signal sources are detected only from `@preact/signals-react`.
+- Autofixes add/augment imports from `@preact/signals-react`.
 
 ## Core Functionality
 
@@ -20,13 +25,15 @@ The `prefer-signal-effect` rule detects `useEffect` hooks that only depend on si
 ### 3. Auto-import of `effect`
 
 - Automatically adds the `effect` import if missing
-- Preserves existing imports from `@preact/signals`
+- Preserves existing imports from `@preact/signals-react`
+
+Import source: `@preact/signals-react`.
 
 ## Error Messages
 
 - `preferSignalEffect`: "Prefer using `effect()` instead of `useEffect` for signal-only dependencies"
 - `suggestEffect`: "Replace `useEffect` with `effect()`"
-- `addEffectImport`: "Add `effect` import from @preact/signals"
+- `addEffectImport`: "Add `effect` import from @preact/signals-react"
 
 ## Auto-fix Suggestions
 
@@ -60,3 +67,32 @@ Using `effect()` with signals can improve performance by:
 2. Leveraging fine-grained reactivity
 3. Minimizing dependency tracking overhead
 4. Optimizing updates with signal batching
+
+## Options
+
+```jsonc
+{
+  "rules": {
+    "react-signals-hooks/prefer-signal-effect": [
+      "warn",
+      {
+        // Per-message severity overrides
+        "severity": {
+          "preferSignalEffect": "error" | "warn" | "off",
+          "suggestEffect": "error" | "warn" | "off",
+          "addEffectImport": "error" | "warn" | "off"
+        },
+        // Performance budgets/metrics
+        "performance": {
+          "maxTime": 1000,
+          "maxMemory": 100,
+          "maxNodes": 5000,
+          "maxOperations": {},
+          "enableMetrics": false,
+          "logMetrics": false
+        }
+      }
+    ]
+  }
+}
+```

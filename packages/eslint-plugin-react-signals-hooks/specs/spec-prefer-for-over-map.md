@@ -2,6 +2,11 @@
 
 This rule encourages using the `<For>` component from `@preact/signals-react` instead of `.map()` for rendering signal arrays, providing better performance and reactivity.
 
+## Plugin Scope
+
+- Signal sources are detected only from `@preact/signals-react`.
+- Autofixes add/augment imports from `@preact/signals-react`.
+
 ## Core Functionality
 
 The `prefer-for-over-map` rule detects `.map()` calls on signal arrays and suggests replacing them with the `<For>` component for more efficient rendering of reactive arrays.
@@ -57,7 +62,7 @@ While `<For>` is preferred for signal arrays, `.map()` is still useful for:
 
 ## Auto-import
 
-The rule can automatically add the `For` import if it's not already present
+The rule can automatically add the `For` import if it's not already present. The import source is `@preact/signals-react`.
 
 ## Performance Considerations
 
@@ -67,3 +72,34 @@ Using `<For>` with signals can significantly improve performance by:
 2. Minimizing DOM operations
 3. Leveraging fine-grained reactivity
 4. Optimizing list updates with keyed reconciliation
+
+## Options
+
+```jsonc
+{
+  "rules": {
+    "react-signals-hooks/prefer-for-over-map": [
+      "warn",
+      {
+        // Per-message severity overrides
+        "severity": {
+          "preferForOverMap": "error" | "warn" | "off",
+          "suggestForComponent": "error" | "warn" | "off",
+          "addForImport": "error" | "warn" | "off"
+        },
+        // Suffix used by identifier heuristic (if applicable)
+        "suffix": "Signal",
+        // Performance budgets/metrics
+        "performance": {
+          "maxTime": 1000,
+          "maxMemory": 100,
+          "maxNodes": 5000,
+          "maxOperations": {},
+          "enableMetrics": false,
+          "logMetrics": false
+        }
+      }
+    ]
+  }
+}
+```

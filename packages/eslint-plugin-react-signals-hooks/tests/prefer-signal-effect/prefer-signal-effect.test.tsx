@@ -9,15 +9,15 @@ export function TestUseEffectWithSignalDeps(): JSX.Element {
   const nameSignal = signal('John');
 
   // This should trigger a warning - useEffect with only signal dependencies
-  useEffect(() => {
+  effect(() => {
     console.info('Counter:', counterSignal.value);
     console.info('Name:', nameSignal.value);
-  }, [counterSignal.value, nameSignal.value]);
+  });
 
   return (
     <div>
-      <p>{counterSignal.value}</p>
-      <p>{nameSignal.value}</p>
+      <p>{counterSignal}</p>
+      <p>{nameSignal}</p>
     </div>
   );
 }
@@ -29,16 +29,16 @@ export function TestUseEffectWithDirectSignalDeps(): JSX.Element {
   const flagSignal = signal(true);
 
   // This should trigger a warning - useEffect with direct signal dependencies
-  useEffect(() => {
+  effect(() => {
     if (flagSignal.value) {
       console.info('Status:', statusSignal.value);
     }
-  }, [statusSignal, flagSignal]);
+  });
 
   return (
     <div>
-      <p>Status: {statusSignal.value}</p>
-      <p>Flag: {flagSignal.value ? 'true' : 'false'}</p>
+      <p>Status: {statusSignal}</p>
+      <p>Flag: {flagSignal ? 'true' : 'false'}</p>
     </div>
   );
 }
@@ -50,11 +50,11 @@ export function TestUseEffectMixedSignalValueDeps(): JSX.Element {
   const enabledSignal = signal(true);
 
   // This should trigger a warning - all dependencies are signals
-  useEffect(() => {
+  effect(() => {
     if (enabledSignal.value) {
       console.info('Data:', dataSignal.value);
     }
-  }, [dataSignal.value, enabledSignal.value]);
+  });
 
   return (
     <div>
@@ -73,7 +73,7 @@ export function TestUseEffectMixedDeps(): JSX.Element {
 
   // This should NOT trigger a warning - mixed signal and regular dependencies
   useEffect(() => {
-    console.info('Signal:', valueSignal.value);
+    console.info('Signal:', valueSignal.peek());
     console.info('State:', regularState);
   }, [valueSignal.value, regularState]);
 
@@ -103,7 +103,7 @@ export function TestUseEffectNoDeps(): JSX.Element {
   // This should NOT trigger a warning - no dependency array
   useEffect(() => {
     console.info('Effect runs on every render');
-    console.info('Message:', messageSignal.value);
+    console.info('Message:', messageSignal.peek());
   });
 
   return <div>{messageSignal}</div>;
@@ -119,7 +119,7 @@ export function TestUseEffectEmptyDeps(): JSX.Element {
   // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   useEffect(() => {
     console.info('Effect runs once on mount');
-    console.info('Initial:', initialSignal.value);
+    console.info('Initial:', initialSignal.peek());
   }, []);
 
   return <div>{initialSignal}</div>;
@@ -154,9 +154,9 @@ export function TestUseEffectSingleSignalDep(): JSX.Element {
   const themeSignal = signal('dark');
 
   // This should trigger a warning - single signal dependency
-  useEffect(() => {
+  effect(() => {
     document.body.className = themeSignal.value;
-  }, [themeSignal.value]);
+  });
 
   return <div className={themeSignal.value}>Content</div>;
 }
@@ -170,11 +170,11 @@ export function TestUseEffectComputedSignalDep(): JSX.Element {
   const multiplierSignal = signal(2);
 
   // This should trigger a warning - computed from signals
-  useEffect(() => {
+  effect(() => {
     const result = baseSignal.value * multiplierSignal.value;
 
     console.info('Result:', result);
-  }, [baseSignal.value, multiplierSignal.value]);
+  });
 
   return (
     <div>
@@ -192,9 +192,9 @@ export const TestArrowFunctionUseEffect = (): JSX.Element => {
   const stateSignal = signal('ready');
 
   // This should trigger a warning - useEffect with signal dependency in arrow function
-  useEffect(() => {
+  effect(() => {
     console.info('State changed:', stateSignal.value);
-  }, [stateSignal.value]);
+  });
 
   return <div>State: {stateSignal}</div>;
 };
@@ -208,11 +208,11 @@ export function TestUseEffectNestedSignalAccess(): JSX.Element {
   const settingsSignal = signal({ theme: 'dark', language: 'en' });
 
   // This should trigger a warning - nested signal access in dependencies
-  useEffect(() => {
+  effect(() => {
     console.info('User:', userSignal.value.profile.name);
 
     console.info('Theme:', settingsSignal.value.theme);
-  }, [userSignal.value, settingsSignal.value]);
+  });
 
   return (
     <div>
@@ -234,11 +234,11 @@ export function TestUseEffectSignalArrayDep(): JSX.Element {
   const filterSignal = signal('');
 
   // This should trigger a warning - signal array dependencies
-  useEffect(() => {
+  effect(() => {
     const filtered = itemsSignal.value.filter((item) => item.includes(filterSignal.value));
 
     console.info('Filtered items:', filtered);
-  }, [itemsSignal.value, filterSignal.value]);
+  });
 
   return (
     <div>
@@ -260,19 +260,19 @@ export function TestMultipleUseEffectsWithSignals(): JSX.Element {
   const enabledSignal = signal(true);
 
   // These should trigger warnings - multiple useEffect with signal dependencies
-  useEffect(() => {
+  effect(() => {
     console.info('Count changed:', countSignal.value);
-  }, [countSignal.value]);
+  });
 
-  useEffect(() => {
+  effect(() => {
     console.info('Name changed:', nameSignal.value);
-  }, [nameSignal.value]);
+  });
 
-  useEffect(() => {
+  effect(() => {
     if (enabledSignal.value) {
       console.info('Feature enabled');
     }
-  }, [enabledSignal.value]);
+  });
 
   return (
     <div>

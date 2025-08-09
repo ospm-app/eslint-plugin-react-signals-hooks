@@ -23,8 +23,6 @@ interface Options {
     signalAssignmentInEffect?: 'error' | 'warn' | 'off';
     // Severity for signal assignments in useLayoutEffect hooks
     signalAssignmentInLayoutEffect?: 'error' | 'warn' | 'off';
-    // Severity for performance limit exceeded warnings
-    performanceLimitExceeded?: 'error' | 'warn' | 'off';
   };
   
   /** Performance tuning options */
@@ -47,8 +45,7 @@ interface Options {
   "allowedPatterns": [],
   "severity": {
     "signalAssignmentInEffect": "error",
-    "signalAssignmentInLayoutEffect": "error",
-    "performanceLimitExceeded": "warn"
+    "signalAssignmentInLayoutEffect": "error"
   },
   "performance": {
     "maxTime": 1000,
@@ -349,7 +346,7 @@ For large codebases, consider these optimizations:
 3. **Multiple signal updates with batch**
 
    ```tsx
-   import { batch } from '@preact/signals';
+   import { batch } from '@preact/signals-react';
    
    function MultiUpdateComponent() {
      const aSignal = useSignal(0);
