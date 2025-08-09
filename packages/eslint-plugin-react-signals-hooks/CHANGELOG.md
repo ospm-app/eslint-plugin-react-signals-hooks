@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.6] - 2025-08-10
+
+### Added
+
+- prefer-batch-updates: new diagnostic `nonUpdateSignalInBatch` to warn on signal reads inside `batch` callbacks without updates.
+- Tests: comprehensive fixtures locking `prefer-batch-updates` behaviors (unnecessary batch unwrapping, nonUpdateSignalInBatch), plugin scope, and import augmentation across rules.
+
+### Changed
+
+- prefer-batch-updates: autofix for `removeUnnecessaryBatch` now replaces the enclosing `ExpressionStatement` and unwraps multi-statement batch bodies, preserving all inner statements.
+- prefer-batch-updates: import-aware signal detection is the only supported mechanism; deprecated `suffix` option fully removed from rule types and schema.
+- Docs/Specs: updated to reflect React-only scope (`@preact/signals-react`) and new/updated diagnostics and autofixes.
+
+### Fixed
+
+- prefer-batch-updates: resolved inflated "useBatch" counts by resetting analysis accumulators per top-level pass.
+- Minor type cleanliness in signal read detection helpers.
+
 ## [1.2.5] - 2025-08-08
 
 ### Fixed
