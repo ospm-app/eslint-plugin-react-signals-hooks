@@ -705,6 +705,9 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
+    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+    // console.info(`${ruleName}: Rule configuration:`, option);
+
     let nodeCount = 0;
 
     function shouldContinue(): boolean {

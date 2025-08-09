@@ -24,11 +24,6 @@ import {
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
 
-// Gated debug logger for exhaustive-deps debugging
-function debugLog(...args: Array<unknown>): void {
-  console.info(...args);
-}
-
 interface Dependency {
   node:
     | TSESTree.Node
@@ -395,9 +390,7 @@ function analyzePropertyChain(
       if (optionalChains) {
         optionalChains.set(result, false);
       }
-      debugLog('[react-signals-hooks/exhaustive-deps][debug] analyzePropertyChain:Identifier', {
-        result,
-      });
+
       return result;
     }
 
@@ -415,14 +408,9 @@ function analyzePropertyChain(
         const objectPath = analyzePropertyChain(node.object, optionalChains, context, perfKey);
 
         if (isCalleeMethodCall) {
-          const result = objectPath;
+          markNode(node, optionalChains, objectPath, perfKey);
 
-          markNode(node, optionalChains, result, perfKey);
-          debugLog(
-            '[react-signals-hooks/exhaustive-deps][debug] analyzePropertyChain:Member.methodCallee',
-            { result }
-          );
-          return result;
+          return objectPath;
         }
 
         const result = `${objectPath}.${analyzePropertyChain(
@@ -433,14 +421,10 @@ function analyzePropertyChain(
         )}`;
 
         markNode(node, optionalChains, result, perfKey);
-        debugLog(
-          '[react-signals-hooks/exhaustive-deps][debug] analyzePropertyChain:Member.nonComputed',
-          { result }
-        );
+
         return result;
       }
 
-      // Computed property access (obj[prop])
       const object = analyzePropertyChain(node.object, optionalChains, context, perfKey);
 
       let computedResult: string | undefined;
@@ -464,29 +448,20 @@ function analyzePropertyChain(
       const result = `${object}[${computedResult}]`;
 
       markNode(node, optionalChains, result, perfKey);
-      debugLog(
-        '[react-signals-hooks/exhaustive-deps][debug] analyzePropertyChain:Member.computed',
-        { result }
-      );
+
       return result;
     }
 
     const fallback = context.sourceCode.getText(node);
-    debugLog('[react-signals-hooks/exhaustive-deps][debug] analyzePropertyChain:fallback', {
-      type: node.type,
-      fallback,
-    });
+
     return fallback;
   } catch (error: unknown) {
     if (error instanceof PerformanceLimitExceededError) {
       trackOperation(perfKey, PerformanceOperations.analyzePropertyChainFailed);
-      const message = error instanceof Error ? error.message : 'unknown';
-      debugLog('[react-signals-hooks/exhaustive-deps][debug] analyzePropertyChain:perf-error', {
-        message,
-      });
-      return message;
+
+      return error instanceof Error ? error.message : JSON.stringify(error);
     }
-    debugLog('[react-signals-hooks/exhaustive-deps][debug] analyzePropertyChain:error', error);
+
     throw error;
   }
 }
@@ -1130,11 +1105,6 @@ function collectRecommendations({
     }
   );
 
-  console.info(
-    '[react-signals-hooks/exhaustive-deps][debug] dependencies',
-    JSON.stringify(depDump, null, 2)
-  );
-
   const bases = new Set<string>(
     depDump
       .map(
@@ -1158,11 +1128,6 @@ function collectRecommendations({
     // eslint-disable-next-line security/detect-object-injection
     treeDump[b] = Array.from(node.children.keys());
   });
-
-  console.info(
-    '[react-signals-hooks/exhaustive-deps][debug] depTree.children',
-    JSON.stringify(treeDump, null, 2)
-  );
 
   scanTreeRecursively(
     depTree,
@@ -1264,15 +1229,9 @@ function collectRecommendations({
           satisfyingPaths.add(path);
         }
 
-        // If this path is already satisfied, do NOT mark it missing.
-        // Only short-circuit for signal-related paths; for non-signal bases,
-        // continue recursion so we can detect missing deep properties.
         if (isAnySignalType) {
-          console.info('short-circuit for signal-related paths');
           return;
         }
-
-        console.info('continue recursion for non-signal bases');
       } else if (
         child.isUsed ||
         (isAnySignalType && child.isSubtreeUsed) ||
@@ -1284,15 +1243,6 @@ function collectRecommendations({
             return;
           }
         }
-
-        console.info('[react-signals-hooks/exhaustive-deps][debug] add-missing', {
-          path,
-          isAnySignalType,
-          isUsed: child.isUsed,
-          isSubtreeUsed: child.isSubtreeUsed,
-          isSatisfiedRecursively: child.isSatisfiedRecursively,
-          children: Array.from(child.children.keys()),
-        });
 
         missingPaths.add(path);
 
@@ -1462,10 +1412,6 @@ function collectRecommendations({
     }
   });
 
-  // If a non-signal base dependency is declared and directly read (e.g., in sentinel guards),
-  // do not require deep properties under that base. Remove such deep entries from missingDependencies.
-  // Example: selectedTrip is declared and used in guards; accessing selectedTrip.travelPoints later
-  // should not force adding selectedTrip.travelPoints to deps.
   if (missingDependencies.size > 0) {
     const toDelete: Array<string> = [];
 
@@ -1483,8 +1429,8 @@ function collectRecommendations({
       if (isBaseDeclared && baseDep && baseDep.hasReads === true) {
         toDelete.push(m);
 
-        // Mark base as satisfying to avoid it being considered incomplete
         satisfyingDependencies.add(base);
+
         incompleteDependencies.delete(base);
       }
     });
@@ -1525,19 +1471,9 @@ function collectRecommendations({
     };
 
     for (const base of baseMissing) {
-      const deepMissing = Array.from(missingDependencies).filter((m: string): boolean => {
-        return m.startsWith(`${base}.`);
-      });
-
-      const deepDeclared = declaredDependencies
-        .map(({ key }) => {
-          return key;
-        })
-        .filter((k) => k.startsWith(`${base}.`));
-
       const deepReads: Array<string> = [];
 
-      dependencies.forEach((dep, key) => {
+      dependencies.forEach((dep: Dependency, key: string): void => {
         if (key.startsWith(`${base}.`) && dep.hasReads === true) deepReads.push(key);
       });
 
@@ -1548,24 +1484,6 @@ function collectRecommendations({
       baseNode.children.forEach((child, key) => {
         collectUsedLeaves(child, `${base}.${key}`, leafUsage);
       });
-
-      console.info(
-        '[react-signals-hooks/exhaustive-deps][debug]',
-        JSON.stringify(
-          {
-            perfKey,
-            isEffect,
-            base,
-            deepMissing: deepMissing.sort(),
-            deepDeclared: deepDeclared.sort(),
-            deepReads: deepReads.sort(),
-            leafUsage,
-            suggestedDependencies,
-          },
-          null,
-          2
-        )
-      );
     }
   }
 
@@ -2690,12 +2608,14 @@ function visitFunctionWithDependencies(
         let allReferencesAreComputedAssignments = true;
 
         for (const ref of currentScope.references) {
-          if (ref.identifier.name === reference.identifier.name) {
-            // @ts-expect-error reading isComputedAssignmentOnly from Reference
-            if (ref.isComputedAssignmentOnly !== true) {
-              allReferencesAreComputedAssignments = false;
-              break;
-            }
+          if (
+            ref.identifier.name === reference.identifier.name &&
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-expect-error
+            ref.isComputedAssignmentOnly !== true
+          ) {
+            allReferencesAreComputedAssignments = false;
+            break;
           }
         }
 
@@ -2723,14 +2643,6 @@ function visitFunctionWithDependencies(
         currentNode = currentNode.parent;
       }
 
-      // Skip function calls, but still track function references as dependencies
-      if (
-        currentNode.parent.type === AST_NODE_TYPES.CallExpression &&
-        currentNode.parent.callee === currentNode
-      ) {
-        // Don't continue - let it fall through to process the function reference as a dependency
-      }
-
       let dependencyNode = getDependency(referenceNode, optionalChains, perfKey);
 
       try {
@@ -2747,7 +2659,6 @@ function visitFunctionWithDependencies(
         console.error(`Property chain analysis failed:`, error);
       }
 
-      // Promote non-signal identifiers to their outermost member expression to capture deep reads
       if (
         dependencyNode.type === AST_NODE_TYPES.Identifier &&
         !dependencyNode.name.endsWith('Signal') &&
@@ -2769,135 +2680,114 @@ function visitFunctionWithDependencies(
           outermost = outermost.parent;
         }
 
-        // Only promote if still a MemberExpression rooted at the identifier
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (outermost.type === AST_NODE_TYPES.MemberExpression) {
-          debugLog(
-            '[react-signals-hooks/exhaustive-deps][debug] gatherDeps:promoteIdentifierToMember',
-            {
-              base: dependencyNode.name,
-              promoted: analyzePropertyChain(outermost, optionalChains, context, perfKey),
-            }
-          );
           dependencyNode = outermost;
         }
       }
 
       if (
         dependencyNode.type === AST_NODE_TYPES.Identifier &&
-        dependencyNode.name.endsWith('Signal')
+        dependencyNode.name.endsWith('Signal') &&
+        referenceNode.parent?.type === AST_NODE_TYPES.MemberExpression &&
+        referenceNode.parent.object === referenceNode &&
+        referenceNode.parent.property.type === AST_NODE_TYPES.Identifier &&
+        referenceNode.parent.property.name === 'value'
       ) {
         if (
-          referenceNode.parent?.type === AST_NODE_TYPES.MemberExpression &&
-          referenceNode.parent.object === referenceNode &&
-          referenceNode.parent.property.type === AST_NODE_TYPES.Identifier &&
-          referenceNode.parent.property.name === 'value'
+          referenceNode.parent.parent.type === AST_NODE_TYPES.MemberExpression &&
+          referenceNode.parent.parent.object === referenceNode.parent
         ) {
-          if (
-            referenceNode.parent.parent.type === AST_NODE_TYPES.MemberExpression &&
-            referenceNode.parent.parent.object === referenceNode.parent
+          let isAssignmentOnly = false;
+
+          let outermostNode = referenceNode.parent.parent;
+
+          while (
+            outermostNode.parent.type === AST_NODE_TYPES.MemberExpression &&
+            outermostNode.parent.object === outermostNode
           ) {
-            let isAssignmentOnly = false;
+            outermostNode = outermostNode.parent;
+          }
 
-            let outermostNode = referenceNode.parent.parent;
+          if (
+            outermostNode.parent.type === AST_NODE_TYPES.AssignmentExpression &&
+            outermostNode.parent.left === outermostNode
+          ) {
+            isAssignmentOnly = true;
+          }
 
-            while (
-              outermostNode.parent.type === AST_NODE_TYPES.MemberExpression &&
-              outermostNode.parent.object === outermostNode
+          dependencyNode = outermostNode;
+
+          if (referenceNode.parent.parent.computed) {
+            const propertyNode = referenceNode.parent.parent.property;
+
+            let propertyName = null;
+
+            if (propertyNode.type === AST_NODE_TYPES.Identifier) {
+              propertyName = propertyNode.name;
+            } else if (
+              propertyNode.type === AST_NODE_TYPES.TSAsExpression &&
+              propertyNode.expression.type === AST_NODE_TYPES.Identifier
             ) {
-              outermostNode = outermostNode.parent;
+              propertyName = propertyNode.expression.name;
             }
 
-            if (
-              outermostNode.parent.type === AST_NODE_TYPES.AssignmentExpression &&
-              outermostNode.parent.left === outermostNode
-            ) {
-              isAssignmentOnly = true;
-            }
+            if (typeof propertyName === 'string' && propertyName !== '') {
+              let isInnerScopeProperty = false;
 
-            dependencyNode = outermostNode;
+              let propertyRef = null;
 
-            if (referenceNode.parent.parent.computed) {
-              const propertyNode = referenceNode.parent.parent.property;
+              let searchScope: Scope | null = currentScope;
 
-              let propertyName = null;
+              while (searchScope && searchScope !== scope?.upper) {
+                propertyRef = searchScope.references.find((ref: Reference): boolean => {
+                  return ref.identifier.name === propertyName;
+                });
 
-              if (propertyNode.type === AST_NODE_TYPES.Identifier) {
-                propertyName = propertyNode.name;
-              } else if (
-                propertyNode.type === AST_NODE_TYPES.TSAsExpression &&
-                propertyNode.expression.type === AST_NODE_TYPES.Identifier
-              ) {
-                propertyName = propertyNode.expression.name;
+                if (propertyRef) {
+                  break;
+                }
+
+                searchScope = searchScope.upper;
               }
 
-              if (typeof propertyName === 'string' && propertyName !== '') {
-                let isInnerScopeProperty = false;
+              if (propertyRef?.resolved) {
+                let checkScope: Scope | null = propertyRef.resolved.scope;
 
-                let propertyRef = null;
+                while (checkScope) {
+                  if (checkScope === scope) {
+                    isInnerScopeProperty = true;
 
-                let searchScope: Scope | null = currentScope;
-
-                while (searchScope && searchScope !== scope?.upper) {
-                  propertyRef = searchScope.references.find(
-                    (ref) => ref.identifier.name === propertyName
-                  );
-
-                  if (propertyRef) {
                     break;
                   }
 
-                  searchScope = searchScope.upper;
+                  checkScope = checkScope.upper;
                 }
 
-                if (propertyRef?.resolved) {
-                  let checkScope: Scope | null = propertyRef.resolved.scope;
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                // @ts-expect-error
+                reference.isInnerScopeComputedProperty = isInnerScopeProperty;
 
-                  while (checkScope) {
-                    if (checkScope === scope) {
-                      isInnerScopeProperty = true;
+                const baseValueKey = `${reference.identifier.name}.value`;
 
-                      break;
-                    }
-                    checkScope = checkScope.upper;
-                  }
+                const baseValueDep = dependencies.get(baseValueKey);
 
-                  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                  // @ts-expect-error
-                  reference.isInnerScopeComputedProperty = isInnerScopeProperty;
-
-                  const baseValueKey = `${reference.identifier.name}.value`;
-
-                  const baseValueDep = dependencies.get(baseValueKey);
-
-                  if (baseValueDep) {
-                    baseValueDep.hasInnerScopeComputedProperty = isInnerScopeProperty;
-                  }
-
-                  debugLog(
-                    '[react-signals-hooks/exhaustive-deps][debug] gatherDeps:inner-scope-computed',
-                    {
-                      path: analyzePropertyChain(dependencyNode, optionalChains, context, perfKey),
-                      isInnerScope: isInnerScopeProperty,
-                    }
-                  );
+                if (baseValueDep) {
+                  baseValueDep.hasInnerScopeComputedProperty = isInnerScopeProperty;
                 }
               }
             }
-
-            if (isAssignmentOnly) {
-              // @ts-expect-error passing isComputedAssignmentOnly to Reference
-              reference.isComputedAssignmentOnly = true;
-            }
-          } else {
-            dependencyNode = referenceNode.parent;
           }
+
+          if (isAssignmentOnly) {
+            // @ts-expect-error passing isComputedAssignmentOnly to Reference
+            reference.isComputedAssignmentOnly = true;
+          }
+        } else {
+          dependencyNode = referenceNode.parent;
         }
       }
 
-      // For non-signal computed member expressions like options[index], determine if the index/key
-      // identifier comes from the inner scope of the hook callback. If yes, mark the reference so
-      // downstream logic can normalize/skip deps accordingly.
       if (
         dependencyNode.type === AST_NODE_TYPES.MemberExpression &&
         dependencyNode.computed === true
@@ -2924,21 +2814,27 @@ function visitFunctionWithDependencies(
 
           while (searchScope && searchScope !== scope?.upper) {
             propertyRef =
-              searchScope.references.find((ref) => ref.identifier.name === propertyName) ?? null;
+              searchScope.references.find((ref: Reference): boolean => {
+                return ref.identifier.name === propertyName;
+              }) ?? null;
 
             if (propertyRef) {
               break;
             }
+
             searchScope = searchScope.upper;
           }
 
           if (propertyRef?.resolved) {
             let checkScope: Scope | null = propertyRef.resolved.scope;
+
             while (checkScope) {
               if (checkScope === scope) {
                 isInnerScopeProperty = true;
+
                 break;
               }
+
               checkScope = checkScope.upper;
             }
 
@@ -2948,7 +2844,6 @@ function visitFunctionWithDependencies(
         }
       }
 
-      // Scan the entire member chain for inner-scope computed indexes and collect base identifiers
       if (dependencyNode.type === AST_NODE_TYPES.MemberExpression) {
         let cursor: TSESTree.Node | null = dependencyNode;
 
@@ -2974,7 +2869,7 @@ function visitFunctionWithDependencies(
 
               while (search && search !== scope?.upper) {
                 propertyRef =
-                  search.references.find((ref): boolean => {
+                  search.references.find((ref: Reference): boolean => {
                     return ref.identifier.name === propIdent.name;
                   }) ?? null;
 
@@ -2999,21 +2894,20 @@ function visitFunctionWithDependencies(
                 }
               }
 
-              // @ts-expect-error annotate reference for later normalization
-              if (isInner) reference.isInnerScopeComputedProperty = true;
+              if (isInner) {
+                // @ts-expect-error annotate reference for later normalization
+                reference.isInnerScopeComputedProperty = true;
+              }
+
               if (isEffect === true && isInner === true) {
-                // Find left-most base identifier
                 let left: TSESTree.Node | null = cursor.object;
+
                 while (left.type === AST_NODE_TYPES.MemberExpression) {
                   left = left.object;
                 }
+
                 if (left.type === AST_NODE_TYPES.Identifier) {
                   skipEffectBases.add(left.name);
-
-                  debugLog(
-                    '[react-signals-hooks/exhaustive-deps][debug] gatherDeps:effect-skip-base',
-                    { base: left.name }
-                  );
                 }
               }
             }
@@ -3023,15 +2917,9 @@ function visitFunctionWithDependencies(
         }
       }
 
-      // Always use analyzePropertyChain to avoid duplication issues
       const dependency = analyzePropertyChain(dependencyNode, optionalChains, context, perfKey);
-      // Normalized key we will operate on
-      let depKey: string = dependency;
 
-      debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:dependency', {
-        dependency,
-        nodeType: dependencyNode.type,
-      });
+      let depKey: string = dependency;
 
       if (
         'parent' in dependencyNode &&
@@ -3039,10 +2927,10 @@ function visitFunctionWithDependencies(
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         dependencyNode.parent !== null &&
         'type' in dependencyNode.parent &&
-        dependencyNode.type === 'Identifier' &&
-        dependencyNode.parent.type === 'MemberExpression' &&
+        dependencyNode.type === AST_NODE_TYPES.Identifier &&
+        dependencyNode.parent.type === AST_NODE_TYPES.MemberExpression &&
         !dependencyNode.parent.computed &&
-        dependencyNode.parent.property.type === 'Identifier' &&
+        dependencyNode.parent.property.type === AST_NODE_TYPES.Identifier &&
         dependencyNode.parent.property.name === 'current' &&
         isInsideEffectCleanup(reference, node)
       ) {
@@ -3053,8 +2941,8 @@ function visitFunctionWithDependencies(
       }
 
       if (
-        dependencyNode.parent?.type === 'TSTypeQuery' ||
-        dependencyNode.parent?.type === 'TSTypeReference'
+        dependencyNode.parent?.type === AST_NODE_TYPES.TSTypeQuery ||
+        dependencyNode.parent?.type === AST_NODE_TYPES.TSTypeReference
       ) {
         continue;
       }
@@ -3118,21 +3006,10 @@ function visitFunctionWithDependencies(
           depKey.startsWith(`${reference.identifier.name}.current`) ||
           depKey.startsWith(`${reference.identifier.name}?.current`);
 
-        // Skip dependencies for React refs:
-        // - Accesses to `.current` (including optional chaining)
-        // - Passing/using the ref object identity itself (stable)
         const isRefNameHeuristic = /(?:Ref|ref)$/.test(reference.identifier.name);
         const isRefLike = isUseRefVariable(def) || isRefTypeAnnotated(def) || isRefNameHeuristic;
 
         if (isRefLike && (isCurrentAccess || depKey === reference.identifier.name)) {
-          debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:skip-ref-like', {
-            depKey,
-            baseName: reference.identifier.name,
-            isCurrentAccess,
-            isBareRef: depKey === reference.identifier.name,
-            isRefNameHeuristic,
-          });
-
           continue;
         }
       }
@@ -3142,40 +3019,23 @@ function visitFunctionWithDependencies(
         reference.isInnerScopeComputedProperty === true
       ) {
         if (isEffect === true) {
-          // Skip tracking to avoid forcing effect autofix
-          debugLog(
-            '[react-signals-hooks/exhaustive-deps][debug] gatherDeps:skip-inner-scope-effect',
-            {
-              depKey,
-            }
-          );
           continue;
         }
 
         if (typeof depKey === 'string') {
           const bracketIdx = depKey.indexOf('[');
+
           if (bracketIdx > 0) {
             depKey = depKey.slice(0, bracketIdx);
-            debugLog(
-              '[react-signals-hooks/exhaustive-deps][debug] gatherDeps:normalize-inner-scope',
-              {
-                normalized: depKey,
-              }
-            );
           }
         }
       }
 
-      // If the dependency is exactly a RefObject variable itself (bare identifier),
-      // skip requiring it in the array (passing ref objects is stable and `.current` is mutable).
       if (
         typeof depKey === 'string' &&
         depKey === reference.identifier.name &&
         (isUseRefVariable(def) || isRefTypeAnnotated(def))
       ) {
-        debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:skip-bare-ref', {
-          depKey,
-        });
         continue;
       }
 
@@ -3184,7 +3044,6 @@ function visitFunctionWithDependencies(
           return false;
         }
 
-        // Variable declarator with TS type annotation
         if (definition.type === 'Variable') {
           const decl = definition.node;
 
@@ -3209,10 +3068,6 @@ function visitFunctionWithDependencies(
       }
 
       if (dependencies.has(depKey)) {
-        debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:update', {
-          dependency: depKey,
-          isOnlyAssignment: isOnlyAssignmentReference(reference),
-        });
         dependencies.get(depKey)?.references.push(reference);
 
         if (!isOnlyAssignmentReference(reference) && !isComputedAssignmentOnly) {
@@ -3227,10 +3082,8 @@ function visitFunctionWithDependencies(
           depKey.endsWith('Signal') ||
           (depKey.includes('.') && depKey.split('.')[0]?.endsWith('Signal'));
 
-        // Only treat '.value' as a signal value access if the AST identifies it as such
         const isSignalValueAccessBool = isSignalValueAccess(reference.identifier, context);
 
-        // Maintain externalDependencies appropriately for true signal cases only
         if (isImportedSignal === true) {
           const toDelete = depKey.includes('.') ? depKey.split('.')[0] : depKey;
 
@@ -3246,13 +3099,6 @@ function visitFunctionWithDependencies(
           externalDependencies.delete(depKey.slice(0, -'.value'.length));
         }
 
-        debugLog('[react-signals-hooks/exhaustive-deps][debug] gatherDeps:add', {
-          dependency: depKey,
-          isImportedSignal,
-          isSignalValueAccess: isSignalValueAccessBool,
-        });
-
-        // Compute and record observed formatted variant for this exact usage
         const formattedVariant = formatDependency(
           depKey,
           projectOptionalChains(depKey, optionalChains)
@@ -3276,7 +3122,7 @@ function visitFunctionWithDependencies(
                   !depKey.endsWith('Signal') &&
                   reference.resolved.defs.length > 0 &&
                   !memoizedIsStableKnownHookValue(reference.resolved, componentScope, pureScopes)
-                ? false // Function dependencies should not be marked as stable
+                ? false
                 : memoizedIsStableKnownHookValue(reference.resolved, componentScope, pureScopes) ||
                   memoizedIsFunctionWithoutCapturedValues(
                     reference.resolved,
@@ -3425,7 +3271,6 @@ function visitFunctionWithDependencies(
         const isDirectlyInsideEffect = fnScope?.block === node;
 
         if (isDirectlyInsideEffect) {
-          // TODO: we could potentially ignore early returns.
           setStateInsideEffectWithoutDeps = key;
         }
       }
@@ -5355,7 +5200,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
     }
 
     console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    console.info(`${ruleName}: Rule configuration:`, option);
+    // console.info(`${ruleName}: Rule configuration:`, option);
 
     recordMetric(perfKey, 'config', {
       additionalHooks:

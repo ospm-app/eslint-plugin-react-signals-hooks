@@ -191,8 +191,7 @@ export const preferSignalInJsxRule = ESLintUtils.RuleCreator((name: string): str
     }
 
     console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-
-    console.info(`${ruleName}: Rule configuration:`, option);
+    // console.info(`${ruleName}: Rule configuration:`, option);
 
     recordMetric(perfKey, 'config', {
       performance: {
@@ -308,9 +307,7 @@ export const preferSignalInJsxRule = ESLintUtils.RuleCreator((name: string): str
           return;
         }
 
-        const severity = getSeverity('preferDirectSignalUsage', option);
-
-        if (severity === 'off') {
+        if (getSeverity('preferDirectSignalUsage', option) === 'off') {
           return;
         }
 
