@@ -589,6 +589,11 @@ function containsSignalRead(node: TSESTree.Node, trackedSignalVars: Set<string>)
     }
 
     if (typeof value === 'object') {
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if (value === null) {
+        continue;
+      }
+
       if (Array.isArray(value)) {
         for (const item of value) {
           // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -601,7 +606,12 @@ function containsSignalRead(node: TSESTree.Node, trackedSignalVars: Set<string>)
             }
           }
         }
-      } else if ('type' in value && containsSignalRead(value, trackedSignalVars)) {
+      } else if (
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        value !== null &&
+        'type' in value &&
+        containsSignalRead(value, trackedSignalVars)
+      ) {
         return true;
       }
     }

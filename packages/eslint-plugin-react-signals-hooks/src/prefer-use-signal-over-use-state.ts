@@ -20,7 +20,7 @@ import {
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
 
-type MessageIds = 'preferUseSignal';
+type MessageIds = 'preferUseSignal' | 'addUseSignalImport' | 'convertToUseSignal';
 
 type Severity = {
   [key in MessageIds]?: 'error' | 'warn' | 'off';
@@ -43,9 +43,16 @@ function getSeverity(messageId: MessageIds, options: Option | undefined): 'error
   }
 
   switch (messageId) {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     case 'preferUseSignal': {
       return options.severity.preferUseSignal ?? 'error';
+    }
+
+    case 'addUseSignalImport': {
+      return options.severity.addUseSignalImport ?? 'error';
+    }
+
+    case 'convertToUseSignal': {
+      return options.severity.convertToUseSignal ?? 'error';
     }
 
     default: {
@@ -68,6 +75,8 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
     },
     messages: {
       preferUseSignal: 'Prefer useSignal over useState for {{type}} values',
+      addUseSignalImport: "Add `useSignal` import from '@preact/signals-react'",
+      convertToUseSignal: 'Convert this useState to useSignal',
     },
     schema: [
       {
@@ -102,6 +111,8 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
             type: 'object',
             properties: {
               preferUseSignal: { type: 'string', enum: ['error', 'warn', 'off'] },
+              addUseSignalImport: { type: 'string', enum: ['error', 'warn', 'off'] },
+              convertToUseSignal: { type: 'string', enum: ['error', 'warn', 'off'] },
             },
             additionalProperties: false,
           },
@@ -116,6 +127,12 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
     {
       ignoreComplexInitializers: true,
       performance: DEFAULT_PERFORMANCE_BUDGET,
+      severity: {
+        preferUseSignal: 'error',
+        addUseSignalImport: 'error',
+        convertToUseSignal: 'error',
+      },
+      suffix: 'Signal',
     } satisfies Option,
   ],
   create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
@@ -280,7 +297,7 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
 
           // Suggestion 1: add import only (non-destructive)
           suggestions.push({
-            messageId: 'preferUseSignal',
+            messageId: 'addUseSignalImport',
             fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
               const fixes: Array<TSESLint.RuleFix> = [];
               const importDeclarations = context.sourceCode.ast.body.filter(
@@ -353,7 +370,7 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
             stateVar.type === AST_NODE_TYPES.Identifier
           ) {
             suggestions.push({
-              messageId: 'preferUseSignal',
+              messageId: 'convertToUseSignal',
               fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
                 const fixes: Array<TSESLint.RuleFix> = [];
 
@@ -434,11 +451,17 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
             messageId: 'preferUseSignal',
             data: {
               type:
-                typeof initialValue !== 'undefined'
-                  ? initialValue.type === AST_NODE_TYPES.Literal
-                    ? typeof initialValue.value
-                    : 'state'
-                  : 'state',
+                typeof initialValue === 'undefined'
+                  ? 'state'
+                  : initialValue.type === AST_NODE_TYPES.Literal
+                    ? initialValue.value === null
+                      ? 'null'
+                      : typeof initialValue.value
+                    : initialValue.type === AST_NODE_TYPES.TemplateLiteral
+                      ? 'string'
+                      : initialValue.type === AST_NODE_TYPES.Identifier
+                        ? 'identifier'
+                        : 'state',
             },
             suggest: suggestions,
           });
