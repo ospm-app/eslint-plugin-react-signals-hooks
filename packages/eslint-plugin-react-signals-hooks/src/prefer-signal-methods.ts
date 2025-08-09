@@ -272,17 +272,24 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator((name: string): s
           return;
         }
 
-        // Do not flag writes: if this MemberExpression is being assigned to or updated, skip
+        // Do not flag writes: if this MemberExpression (or its chained parent MemberExpressions)
+        // is used as the left-hand side of an assignment or as the argument of an update, skip.
         {
           const memberExpr = node.parent;
-          const parentExpr = memberExpr.parent;
+          // Bubble up through chained MemberExpressions: signal.value[...].foo...
+          let topMember: TSESTree.MemberExpression = memberExpr;
+          let p = topMember.parent;
+          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+          while (p && p.type === AST_NODE_TYPES.MemberExpression && p.object === topMember) {
+            topMember = p;
+            p = topMember.parent;
+          }
+
           if (
             // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-            parentExpr &&
-            ((parentExpr.type === AST_NODE_TYPES.AssignmentExpression &&
-              parentExpr.left === memberExpr) ||
-              (parentExpr.type === AST_NODE_TYPES.UpdateExpression &&
-                parentExpr.argument === memberExpr))
+            p &&
+            ((p.type === AST_NODE_TYPES.AssignmentExpression && p.left === topMember) ||
+              (p.type === AST_NODE_TYPES.UpdateExpression && p.argument === topMember))
           ) {
             return;
           }

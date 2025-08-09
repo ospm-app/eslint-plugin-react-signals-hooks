@@ -4821,7 +4821,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
     },
     messages: {
       missingDependencies:
-        'React Hook {{hookName}} is missing {{dependenciesCount}} dependencies: {{dependencies}}. ' +
+        "React Hook {{hookName}} is missing {{dependenciesCount}} dependencies: '{{dependencies}}'. " +
         'Including all dependencies ensures your effect runs when expected. ' +
         'Either add the missing dependencies or remove the dependency array if this effect should run on every render.\n' +
         '\n' +
@@ -4831,7 +4831,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         '• The effect may run more or less often than intended',
 
       missingDependency:
-        'React Hook {{hookName}} is missing the dependency: {{dependency}}. ' +
+        "React Hook '{{hookName}}' is missing the dependency: '{{dependency}}'. " +
         'This dependency is used inside the effect but not listed in the dependency array.\n' +
         '\n' +
         'Impact:\n' +
@@ -4839,20 +4839,20 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         '• The effect could use stale values from previous renders\n' +
         '• This can lead to UI inconsistencies\n' +
         '\n' +
-        '{{missingMessage}}',
+        "'{{missingMessage}}'",
 
       unnecessaryDependencies:
-        'React Hook {{hookName}} has {{count}} unnecessary dependencies: {{dependencies}}. ' +
+        "React Hook '{{hookName}}' has {{count}} unnecessary dependencies: '{{dependencies}}'. " +
         'These values are either constants or defined outside the component and will never change.\n' +
         '\n' +
         'Recommendation:\n' +
         '• Remove these dependencies to make the effect more maintainable\n' +
         '• This helps React optimize re-renders\n' +
         '\n' +
-        '{{message}}',
+        "'{{message}}'",
 
       unnecessaryDependency:
-        'React Hook {{hookName}} has an unnecessary dependency: {{dependency}}. ' +
+        "React Hook '{{hookName}}' has an unnecessary dependency: '{{dependency}}'. " +
         'This value is either a constant or defined outside the component and will never change.\n' +
         '\n' +
         'Why remove it?\n' +
@@ -4860,10 +4860,10 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         '• Helps React optimize re-renders\n' +
         '• Reduces unnecessary effect re-runs\n' +
         '\n' +
-        '{{message}}',
+        "'{{message}}'",
 
       duplicateDependencies:
-        'React Hook {{hookName}} has {{count}} duplicate dependencies: {{dependencies}}. ' +
+        "React Hook '{{hookName}}' has {{count}} duplicate dependencies: '{{dependencies}}'. " +
         'This can cause unexpected behavior and unnecessary re-renders.\n' +
         '\n' +
         'Impact:\n' +
@@ -4872,7 +4872,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         '• Makes the code harder to reason about',
 
       duplicateDependency:
-        'React Hook {{hookName}} has a duplicate dependency: {{dependency}} ({{position}} of {{total}}). ' +
+        "React Hook '{{hookName}}' has a duplicate dependency: '{{dependency}}' ({{position}} of {{total}}) " +
         'This can cause unexpected behavior and unnecessary re-renders.\n' +
         '\n' +
         'Why remove duplicates?\n' +
@@ -4881,7 +4881,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         '• Makes the code more maintainable',
 
       unknownDependencies:
-        'React Hook {{hookName}} has dependencies that cannot be statically analyzed. ' +
+        "React Hook '{{hookName}}' has dependencies that cannot be statically analyzed. " +
         'This can happen when using dynamic property access or function calls in the dependency array.\n' +
         '\n' +
         'How to fix:\n' +
@@ -4890,7 +4890,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         '• Consider using useCallback or useMemo for dynamic values',
 
       asyncEffect:
-        'React Hook {{hookName}} has an async effect callback. ' +
+        "React Hook '{{hookName}}' has an async effect callback. " +
         'Async effects can lead to race conditions and memory leaks.\n' +
         '\n' +
         'Recommended pattern:\n' +
@@ -4913,7 +4913,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         '}, [/* dependencies */]);',
 
       missingEffectCallback:
-        'React Hook {{hookName}} is missing its effect callback function. ' +
+        "React Hook '{{hookName}}' is missing its effect callback function. " +
         'The first argument must be a function that contains the effect logic.\n' +
         '\n' +
         'Correct usage:\n' +
@@ -4925,28 +4925,28 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         '}, [dependencies]);',
 
       staleAssignmentDependency:
-        'The variable "{{dependency}}" is used in the dependency array for {{hookName}} but may not be properly tracked.\n\n' +
+        "The variable '{{dependency}}' is used in the dependency array for '{{hookName}}' but may not be properly tracked.\n\n" +
         'Why this is problematic:\n' +
         '• The effect might use outdated values\n' +
         '• Changes to this variable might not trigger effect re-runs\n\n' +
         'Solution: Ensure the variable is properly included in the dependency array or wrap it with useMemo/useCallback.',
 
       staleAssignmentLiteral:
-        'The literal value {{dependency}} is used in the dependency array for {{hookName}}.\n\n' +
+        "The literal value '{{dependency}}' is used in the dependency array for '{{hookName}}'.\n\n" +
         'Why this is problematic:\n' +
         '• Literal values create new references on each render\n' +
         '• This can cause the effect to re-run on every render\n\n' +
         'Solution: Move the value outside the component or memoize it with useMemo if needed.',
 
       staleAssignmentUnstable:
-        'The value {{dependency}} is used in the dependency array for {{hookName}} but may change on every render.\n\n' +
+        "The value '{{dependency}}' is used in the dependency array for '{{hookName}}' but may change on every render.\n\n" +
         'Why this is problematic:\n' +
         '• This can cause the effect to re-run on every render\n' +
         '• May lead to performance issues\n\n' +
         'Solution: Move the value outside the component or memoize it with useMemo.',
 
       staleAssignmentExpression:
-        'The expression "{{dependency}}" is used in the dependency array for {{hookName}}.\n\n' +
+        "The expression '{{dependency}}' is used in the dependency array for '{{hookName}}'.\n\n" +
         'Why this is problematic:\n' +
         '• Complex expressions are re-evaluated on every render\n' +
         '• This can lead to unnecessary effect re-runs\n\n' +
@@ -4963,7 +4963,7 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         'useEffect(() => { ... }, [...deps, extraDep]); // Explicitly list all dependencies',
 
       useEffectEventInDependencyArray:
-        'The useEffectEvent function "{{eventName}}" should not be included in the dependency array. ' +
+        "The useEffectEvent function '{{eventName}}' should not be included in the dependency array. " +
         'useEffectEvent functions are stable and never change between re-renders.\n' +
         '\n' +
         'Correct usage:\n' +
@@ -4977,19 +4977,19 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         '  return () => subscription.unsubscribe();\n' +
         '}, []); // No need to include onEvent here',
 
-      addDependencies: 'Add {{count}} missing dependencies ({{dependencies}})',
-      addAllDependencies: 'Add all {{count}} missing dependencies ({{dependencies}})',
-      addSingleDependency: 'Add missing dependency: {{dependency}}',
+      addDependencies: "Add '{{count}}' missing dependencies ('{{dependencies}}')",
+      addAllDependencies: "Add all '{{count}}' missing dependencies ('{{dependencies}}')",
+      addSingleDependency: "Add missing dependency: '{{dependency}}'",
       removeDependencyArray: 'Remove dependency array to run effect on every render',
 
-      removeDependency: 'Remove the "{{dependency}}" dependency from the dependency array.',
-      removeSingleDependency: 'Remove the "{{dependency}}" dependency',
+      removeDependency: "Remove the '{{dependency}}' dependency from the dependency array. ",
+      removeSingleDependency: "Remove the '{{dependency}}' dependency",
       removeAllUnnecessaryDependencies:
-        'Remove all {{count}} unnecessary dependencies ({{dependencies}})',
-      removeThisDuplicate: 'Remove this duplicate "{{dependency}}"',
-      removeAllDuplicates: 'Remove all {{count}} duplicate dependencies',
+        "Remove all '{{count}}' unnecessary dependencies ('{{dependencies}}')",
+      removeThisDuplicate: "Remove this duplicate '{{dependency}}'",
+      removeAllDuplicates: "Remove all '{{count}}' duplicate dependencies",
 
-      dependencyWithoutSignal: '{{message}}',
+      dependencyWithoutSignal: "'{{message}}'",
 
       moveInsideEffect: "Move '{{call}}' inside the effect",
 
