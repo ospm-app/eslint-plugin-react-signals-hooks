@@ -316,6 +316,24 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
           return;
         }
 
+        if (p.type === AST_NODE_TYPES.CallExpression && p.arguments.includes(node)) {
+          const callee = p.callee;
+          let calleeName: string | null = null;
+          if (callee.type === AST_NODE_TYPES.Identifier) {
+            calleeName = callee.name;
+          } else if (
+            callee.type === AST_NODE_TYPES.MemberExpression &&
+            callee.property.type === AST_NODE_TYPES.Identifier
+          ) {
+            calleeName = callee.property.name;
+          }
+
+          // Known APIs that accept a Signal instance
+          if (calleeName === 'useSignal') {
+            return;
+          }
+        }
+
         if (getSeverity('useValueInNonJSX', option) === 'off') {
           return;
         }

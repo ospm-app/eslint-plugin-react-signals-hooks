@@ -577,8 +577,11 @@ function containsSignalRead(node: TSESTree.Node, trackedSignalVars: Set<string>)
     );
   }
 
-  // Generic recursive descent for any child node/arrays
   for (const key of Object.keys(node)) {
+    if (key === 'parent') {
+      continue;
+    }
+
     const value = node[key as keyof typeof node];
 
     if (typeof value === 'undefined') {
