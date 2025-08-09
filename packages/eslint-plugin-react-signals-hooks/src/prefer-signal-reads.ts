@@ -116,6 +116,16 @@ function isBindingOrWritePosition(node: TSESTree.Identifier): boolean {
     return true;
   }
 
+  // Declaration identifiers (names) are bindings too
+  // e.g. function Foo() {}, const Foo = () => {}, class Bar {}
+  if (
+    (p.type === AST_NODE_TYPES.FunctionDeclaration && p.id === node) ||
+    (p.type === AST_NODE_TYPES.FunctionExpression && p.id === node) ||
+    (p.type === AST_NODE_TYPES.ClassDeclaration && p.id === node)
+  ) {
+    return true;
+  }
+
   return false;
 }
 
