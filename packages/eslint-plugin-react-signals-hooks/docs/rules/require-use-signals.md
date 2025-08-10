@@ -67,10 +67,46 @@ function Counter() {
 
 This rule provides an auto-fix that can automatically add the `useSignals()` hook and the necessary import. The fix will:
 
-1. Add `useSignals();` at the beginning of the component body
-2. Add or augment `import { useSignals } from '@preact/signals-react/runtime'`
-3. Preserve existing code formatting
-4. For expression-bodied arrow components, convert to a block and insert `useSignals(); return <expr>;`
+1. Insert `const store = useSignals();` as the first statement in the component body
+2. Wrap the component body in a `try { ... } finally { store.f(); }` to ensure proper lifecycle cleanup
+3. Add or augment `import { useSignals } from '@preact/signals-react/runtime'`
+4. Preserve existing code formatting and any directive prologues (e.g., `'use client'`)
+5. For expression-bodied arrow components, convert to a block and insert `const store = useSignals(); try { return <expr>; } finally { store.f(); }`
+
+### Auto-fix example
+
+Before:
+
+```tsx
+function F_NotificationDebugButton(): JSX.Element {
+  // Missing lifecycle-safe useSignals usage
+  return (
+    <Fragment>
+      {/* ... */}
+    </Fragment>
+  );
+}
+```
+
+After auto-fix:
+
+```tsx
+import { useSignals } from '@preact/signals-react/runtime';
+
+function F_AsyncStorageDebugButton(): JSX.Element {
+  const store = useSignals();
+  try {
+    // component logic
+    return (
+      <Fragment>
+        {/* ... */}
+      </Fragment>
+    );
+  } finally {
+    store.f();
+  }
+}
+```
 
 ## Options
 

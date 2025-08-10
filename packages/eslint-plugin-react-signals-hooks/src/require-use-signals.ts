@@ -551,10 +551,20 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator((name: string): str
                 componentNode.type === AST_NODE_TYPES.ArrowFunctionExpression &&
                 componentNode.body.type !== AST_NODE_TYPES.BlockStatement
               ) {
+                const exprText = context.sourceCode.getText(componentNode.body);
+
                 fixes.push(
                   fixer.replaceText(
                     componentNode.body,
-                    `{ useSignals(); return ${context.sourceCode.getText(componentNode.body)}; }`
+                    `{
+                        const store = useSignals();
+
+                        try {
+                          return ${exprText};
+                        } finally {
+                          store.f();
+                        }
+                     }`
                   )
                 );
               } else if (
@@ -562,11 +572,11 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator((name: string): str
                   componentNode.type === AST_NODE_TYPES.ArrowFunctionExpression) &&
                 componentNode.body.type === AST_NODE_TYPES.BlockStatement
               ) {
-                let beforeNode: TSESTree.Statement | null = null;
+                const body = componentNode.body;
 
+                // Preserve directive prologues (e.g., 'use client')
                 let lastDirectiveEnd: number | null = null;
-
-                for (const stmt of componentNode.body.body) {
+                for (const stmt of body.body) {
                   if (
                     stmt.type === AST_NODE_TYPES.ExpressionStatement &&
                     stmt.expression.type === AST_NODE_TYPES.Literal &&
@@ -575,30 +585,18 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator((name: string): str
                     lastDirectiveEnd = stmt.range[1];
                     continue;
                   }
-
-                  beforeNode = stmt;
                   break;
                 }
 
-                if (beforeNode === null) {
-                  if (lastDirectiveEnd === null) {
-                    fixes.push(
-                      fixer.insertTextAfterRange(
-                        [componentNode.body.range[0], componentNode.body.range[0] + 1],
-                        '\n\tuseSignals();\n'
-                      )
-                    );
-                  } else {
-                    fixes.push(
-                      fixer.insertTextAfterRange(
-                        [lastDirectiveEnd, lastDirectiveEnd],
-                        '\n\tuseSignals();\n'
-                      )
-                    );
-                  }
-                } else {
-                  fixes.push(fixer.insertTextBefore(beforeNode, '\tuseSignals();\n'));
-                }
+                const innerStart = lastDirectiveEnd ?? body.range[0] + 1;
+                const innerEnd = body.range[1] - 1;
+
+                fixes.push(
+                  fixer.replaceTextRange(
+                    [innerStart, innerEnd],
+                    `\n\tconst store = useSignals();\n\ttry {${context.sourceCode.text.slice(innerStart, innerEnd)}} finally { store.f(); }`
+                  )
+                );
               }
 
               const signalsImport = context.sourceCode.ast.body.find(

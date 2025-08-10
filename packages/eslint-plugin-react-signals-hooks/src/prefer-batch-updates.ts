@@ -3,6 +3,7 @@ import type { Definition, Variable } from '@typescript-eslint/scope-manager';
 import { ESLintUtils, AST_NODE_TYPES } from '@typescript-eslint/utils';
 import type { TSESLint, TSESTree } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
+import ts from 'typescript';
 
 import { PerformanceOperations } from './utils/performance-constants.js';
 import {
@@ -25,6 +26,30 @@ type SignalUpdate = {
   scopeDepth: number;
 };
 
+/**
+ * Returns true if the slice between start and end contains only whitespace, semicolons, or comments.
+ * Used to ensure autofix doesn't remove or move non-update statements (e.g., awaited calls) between updates.
+ */
+function isSafeAutofixRange(
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
+  start: number,
+  end: number
+): boolean {
+  if (end <= start) {
+    return true;
+  }
+
+  const text = context.sourceCode.text.slice(start, end);
+  // Strip block comments
+  // eslint-disable-next-line optimize-regex/optimize-regex
+  const noBlock = text.replace(/\/\*[\s\S]*?\*\//g, '');
+  // Strip line comments
+  const noComments = noBlock.replace(/(^|\n)\s*\/\/.*(?=\n|$)/g, '\n');
+  // Remove whitespace and semicolons
+  const stripped = noComments.replace(/[\s;]+/g, '');
+  return stripped.length === 0;
+}
+
 type MessageIds =
   | 'useBatch'
   | 'suggestUseBatch'
@@ -32,7 +57,8 @@ type MessageIds =
   | 'wrapWithBatch'
   | 'useBatchSuggestion'
   | 'removeUnnecessaryBatch'
-  | 'nonUpdateSignalInBatch';
+  | 'nonUpdateSignalInBatch'
+  | 'updatesSeparatedByCode';
 
 type Severity = {
   [key in MessageIds]?: 'error' | 'warn' | 'off';
@@ -78,6 +104,10 @@ function getSeverity(messageId: MessageIds, options: Option | undefined): 'error
 
     case 'nonUpdateSignalInBatch': {
       return options.severity.nonUpdateSignalInBatch ?? 'warn';
+    }
+
+    case 'updatesSeparatedByCode': {
+      return options.severity.updatesSeparatedByCode ?? 'warn';
     }
 
     default: {
@@ -171,7 +201,7 @@ function processBlock(
       continue;
     }
 
-    if (isSignalUpdate(stmt.expression, trackedSignalVars)) {
+    if (isSignalUpdate(stmt.expression, context)) {
       const updateType = getUpdateType(stmt.expression);
 
       const signalName = getSignalName(stmt.expression);
@@ -235,138 +265,173 @@ function processBlock(
 
   const messageId = 'useBatch';
 
-  if (
-    getSeverity(messageId, context.options[0]) !== 'off' &&
-    updatesInScope.length >= minUpdates &&
-    !isInsideBatchCall(firstNode, context)
-  ) {
-    context.report({
-      node: firstNode,
-      messageId,
-      data: {
-        count: updatesInScope.length,
-        signals: Array.from(
-          new Set(
-            allUpdates.map((update: SignalUpdate): string => {
-              return update.signalName;
-            })
-          )
-        ).join(', '),
-      },
-      suggest: [
-        {
-          messageId: 'useBatchSuggestion',
+  if (updatesInScope.length >= minUpdates && !isInsideBatchCall(firstNode, context)) {
+    // If there is any non-update code between first and last updates in this scope, warn separately
+    const firstUpdateNode = updatesInScope[0]?.node;
+
+    const lastUpdateNode = updatesInScope[updatesInScope.length - 1]?.node;
+
+    const unsafeSeparation =
+      !!firstUpdateNode &&
+      !!lastUpdateNode &&
+      !isSafeAutofixRange(context, firstUpdateNode.range[1], lastUpdateNode.range[0]);
+
+    if (unsafeSeparation) {
+      if (getSeverity('updatesSeparatedByCode', context.options[0]) !== 'off') {
+        context.report({
+          node: firstNode,
+          messageId: 'updatesSeparatedByCode',
           data: { count: updatesInScope.length },
-          *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
-            const updatesText = allUpdates
-              .map(({ node }: SignalUpdate): string => {
-                return context.sourceCode.getText(node);
+        });
+      }
+    } else if (getSeverity(messageId, context.options[0]) !== 'off') {
+      context.report({
+        node: firstNode,
+        messageId,
+        data: {
+          count: updatesInScope.length,
+          signals: Array.from(
+            new Set(
+              allUpdates.map((update: SignalUpdate): string => {
+                return update.signalName;
               })
-              .join('; ');
-
-            const firstUpdate = updatesInScope[0]?.node;
-
-            const lastUpdate = updatesInScope[updatesInScope.length - 1]?.node;
-
-            if (!firstUpdate || !lastUpdate) {
-              return null;
-            }
-
-            const range: TSESTree.Range = [firstUpdate.range[0], lastUpdate.range[1]];
-
-            const b = context.sourceCode.ast.body[0];
-
-            if (!b) {
-              return null;
-            }
-
-            if (!hasBatchImport) {
-              yield fixer.insertTextBefore(b, "import { batch } from '@preact/signals-react';\n\n");
-            }
-
-            yield fixer.replaceTextRange(range, `batch(() => {\n  ${updatesText}\n});`);
-
-            recordMetric(perfKey, 'batchFixApplied', {
-              updateCount: updatesInScope.length,
-            });
-
-            return null;
-          },
+            )
+          ).join(', '),
         },
-        {
-          messageId: 'useBatchSuggestion',
-          data: { count: updatesInScope.length },
-          *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
-            if (!hasBatchImport) {
+        suggest: [
+          {
+            messageId: 'useBatchSuggestion',
+            data: { count: updatesInScope.length },
+            *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
+              const firstUpdate = updatesInScope[0]?.node;
+
+              const lastUpdate = updatesInScope[updatesInScope.length - 1]?.node;
+
+              if (!firstUpdate || !lastUpdate) {
+                return null;
+              }
+
+              const range: TSESTree.Range = [firstUpdate.range[0], lastUpdate.range[1]];
+
+              // Guard: ensure no non-update code exists between updates
+              if (!isSafeAutofixRange(context, firstUpdate.range[1], lastUpdate.range[0])) {
+                return null;
+              }
+
+              const b = context.sourceCode.ast.body[0];
+
+              if (!b) {
+                return null;
+              }
+
+              if (!hasBatchImport) {
+                yield fixer.insertTextBefore(
+                  b,
+                  "import { batch } from '@preact/signals-react';\n\n"
+                );
+              }
+
+              const updatesText = updatesInScope
+                .map(({ node }: SignalUpdate): string => {
+                  return context.sourceCode.getText(node);
+                })
+                .join('; ');
+
+              yield fixer.replaceTextRange(range, `batch(() => {\n  ${updatesText}\n});`);
+
+              recordMetric(perfKey, 'batchFixApplied', {
+                updateCount: updatesInScope.length,
+              });
+
+              return null;
+            },
+          },
+          {
+            messageId: 'useBatchSuggestion',
+            data: { count: updatesInScope.length },
+            *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
+              if (!hasBatchImport) {
+                const batchImport = "import { batch } from '@preact/signals-react';\n";
+
+                const firstImport = context.sourceCode.ast.body.find(
+                  (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration =>
+                    n.type === AST_NODE_TYPES.ImportDeclaration
+                );
+
+                if (typeof firstImport === 'undefined') {
+                  const b = context.sourceCode.ast.body[0];
+
+                  if (!b) {
+                    return null;
+                  }
+
+                  yield fixer.insertTextBefore(b, batchImport);
+                } else {
+                  yield fixer.insertTextBefore(firstImport, batchImport);
+                }
+              }
+
+              const lastNode = allUpdates[allUpdates.length - 1]?.node;
+
+              if (!lastNode) {
+                return null;
+              }
+
+              // Guard: ensure no non-update code exists between updates
+              if (!isSafeAutofixRange(context, firstNode.range[1], lastNode.range[0])) {
+                return null;
+              }
+
+              yield fixer.replaceTextRange(
+                [firstNode.range[0], lastNode.range[1]],
+                `batch(() => { ${allUpdates
+                  .map(({ node }: SignalUpdate): string => {
+                    return `\n${context.sourceCode.getText(node)}\n`;
+                  })
+                  .join('; ')} })`
+              );
+
+              recordMetric(perfKey, 'batchFixApplied', {
+                updateCount: allUpdates.length,
+              });
+
+              return null;
+            },
+          },
+          {
+            messageId: 'addBatchImport',
+            data: {
+              count: updatesInScope.length,
+            },
+            *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
+              if (hasBatchImport) {
+                return;
+              }
+
               const batchImport = "import { batch } from '@preact/signals-react';\n";
 
               const firstImport = context.sourceCode.ast.body.find(
-                (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration =>
-                  n.type === AST_NODE_TYPES.ImportDeclaration
+                (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
+                  return n.type === AST_NODE_TYPES.ImportDeclaration;
+                }
               );
 
               if (typeof firstImport === 'undefined') {
                 const b = context.sourceCode.ast.body[0];
 
                 if (!b) {
-                  return null;
+                  return;
                 }
 
                 yield fixer.insertTextBefore(b, batchImport);
               } else {
                 yield fixer.insertTextBefore(firstImport, batchImport);
               }
-            }
-
-            yield fixer.replaceTextRange(
-              [firstNode.range[0], allUpdates[allUpdates.length - 1]?.node.range[1] ?? 0],
-              `batch(() => { ${allUpdates
-                .map(({ node }: SignalUpdate): string => {
-                  return context.sourceCode.getText(node);
-                })
-                .join('; ')} })`
-            );
-
-            recordMetric(perfKey, 'batchFixApplied', {
-              updateCount: allUpdates.length,
-            });
-
-            return null;
+            },
           },
-        },
-        {
-          messageId: 'addBatchImport',
-          data: {
-            count: updatesInScope.length,
-          },
-          *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
-            if (hasBatchImport) {
-              return;
-            }
-
-            const batchImport = "import { batch } from '@preact/signals-react';\n";
-
-            const firstImport = context.sourceCode.ast.body.find(
-              (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
-                return n.type === AST_NODE_TYPES.ImportDeclaration;
-              }
-            );
-
-            if (typeof firstImport === 'undefined') {
-              const b = context.sourceCode.ast.body[0];
-
-              if (!b) {
-                return;
-              }
-
-              yield fixer.insertTextBefore(b, batchImport);
-            } else {
-              yield fixer.insertTextBefore(firstImport, batchImport);
-            }
-          },
-        },
-      ],
-    });
+        ],
+      });
+    }
   }
 
   return allUpdates;
@@ -489,7 +554,7 @@ function getSignalName(node: TSESTree.Node): string {
 
 function isSignalUpdate(
   node: TSESTree.Node,
-  trackedSignalVars: Set<string>
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
 ): node is
   | TSESTree.AssignmentExpression
   | TSESTree.CallExpression
@@ -500,7 +565,7 @@ function isSignalUpdate(
       node.left.type === AST_NODE_TYPES.MemberExpression &&
       node.left.property.type === AST_NODE_TYPES.Identifier &&
       node.left.property.name === 'value' &&
-      isSignalReference(node.left.object, trackedSignalVars)
+      isSignalReference(node.left.object, context)
     ) {
       return true;
     }
@@ -510,7 +575,7 @@ function isSignalUpdate(
       node.left.type === AST_NODE_TYPES.MemberExpression &&
       node.left.property.type === AST_NODE_TYPES.Identifier &&
       node.left.property.name === 'value' &&
-      isSignalReference(node.left.object, trackedSignalVars)
+      isSignalReference(node.left.object, context)
     ) {
       return true;
     }
@@ -521,7 +586,7 @@ function isSignalUpdate(
     node.callee.type === AST_NODE_TYPES.MemberExpression &&
     node.callee.property.type === AST_NODE_TYPES.Identifier &&
     ['set', 'update'].includes(node.callee.property.name) &&
-    isSignalReference(node.callee.object, trackedSignalVars)
+    isSignalReference(node.callee.object, context)
   ) {
     return true;
   }
@@ -531,7 +596,7 @@ function isSignalUpdate(
     node.argument.type === AST_NODE_TYPES.MemberExpression &&
     node.argument.property.type === AST_NODE_TYPES.Identifier &&
     node.argument.property.name === 'value' &&
-    isSignalReference(node.argument.object, trackedSignalVars)
+    isSignalReference(node.argument.object, context)
   ) {
     return true;
   }
@@ -539,9 +604,274 @@ function isSignalUpdate(
   return false;
 }
 
-function isSignalReference(node: TSESTree.Node, trackedSignalVars: Set<string>): boolean {
+type SignalOriginKind = 'useSignal' | 'computed';
+type SignalOrigin = { kind: SignalOriginKind; sourceModule: string };
+
+type Cache = {
+  symbolOrigin: WeakMap<ts.Symbol, SignalOrigin | null>;
+};
+
+const cacheByProgram = new WeakMap<ts.Program, Cache>();
+
+function getCache(program: ts.Program): Cache {
+  let c = cacheByProgram.get(program);
+
+  if (!c) {
+    c = { symbolOrigin: new WeakMap() };
+    cacheByProgram.set(program, c);
+  }
+  return c;
+}
+
+function getProgram(
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): ts.Program | null {
+  const services = context.sourceCode.parserServices;
+
+  if (
+    typeof services === 'undefined' ||
+    typeof services.program === 'undefined' ||
+    services.program === null ||
+    typeof services.esTreeNodeToTSNodeMap === 'undefined'
+  ) {
+    return null;
+  }
+
+  return services.program;
+}
+
+function resolveTsNode(
+  node: TSESTree.Node,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): ts.Node | null {
+  const services = context.sourceCode.parserServices;
+
+  if (typeof services === 'undefined' || typeof services.esTreeNodeToTSNodeMap === 'undefined') {
+    return null;
+  }
+
+  try {
+    return services.esTreeNodeToTSNodeMap.get(node);
+  } catch {
+    return null;
+  }
+}
+
+function resolveSymbolAt(
+  id: TSESTree.Identifier,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): ts.Symbol | null {
+  const program = getProgram(context);
+  const tsNode = resolveTsNode(id, context);
+  if (!program || !tsNode) return null;
+  const checker = program.getTypeChecker();
+  try {
+    const symbol = checker.getSymbolAtLocation(tsNode);
+    return symbol ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function isFromSignalsReact(decls: ReadonlyArray<ts.Declaration> | undefined): boolean {
+  if (!decls) {
+    return false;
+  }
+
+  for (const d of decls) {
+    const sf = d.getSourceFile();
+
+    const fileName = sf.fileName;
+
+    if (fileName.includes('@preact/signals-react')) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isSignalType(symbol: ts.Symbol, checker: ts.TypeChecker): boolean {
+  const decl = symbol.valueDeclaration ?? symbol.getDeclarations()?.[0];
+
+  if (typeof decl === 'undefined') {
+    return false;
+  }
+
+  const type = checker.getTypeOfSymbolAtLocation(symbol, decl);
+
+  if (
+    ['Signal', 'ReadableSignal', 'WritableSignal'].includes(type.symbol.escapedName.toString()) &&
+    isFromSignalsReact(type.symbol.getDeclarations())
+  ) {
+    return true;
+  }
+
+  // Structural fallback: has a readonly `.value` and methods `set`/`update` on the instance type
+  const valueProp = type.getProperty('value');
+
+  if (typeof valueProp === 'undefined') {
+    return false;
+  }
+
+  const vpDecl = valueProp.valueDeclaration ?? valueProp.declarations?.[0];
+
+  if (vpDecl && isFromSignalsReact(valueProp.getDeclarations())) {
+    return true;
+  }
+
+  return false;
+}
+
+function getImportedNameAndModuleFromCall(
+  call: ts.CallExpression,
+  checker: ts.TypeChecker
+): { name: string; module: string } | null {
+  const expr = call.expression;
+  // handle direct identifier: useSignal()/computed()
+  if (ts.isIdentifier(expr)) {
+    const sym = checker.getSymbolAtLocation(expr);
+
+    if (typeof sym === 'undefined') {
+      return null;
+    }
+
+    const aliased = sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym;
+
+    const decl = aliased.declarations?.[0];
+
+    const name = aliased.getName();
+
+    const module = decl?.getSourceFile().fileName ?? '';
+
+    return { name, module };
+  }
+
+  if (ts.isPropertyAccessExpression(expr)) {
+    const leftSym = checker.getSymbolAtLocation(expr.expression);
+
+    return {
+      name: expr.name.getText(),
+      module:
+        (typeof leftSym !== 'undefined' && leftSym.flags & ts.SymbolFlags.Alias
+          ? checker.getAliasedSymbol(leftSym)
+          : leftSym
+        )?.declarations?.[0]?.getSourceFile().fileName ?? '',
+    };
+  }
+
+  return null;
+}
+
+function traceSignalOrigin(
+  symbol: ts.Symbol,
+  checker: ts.TypeChecker,
+  program: ts.Program
+): SignalOrigin | null {
+  const cache = getCache(program);
+
+  const cached = cache.symbolOrigin.get(symbol);
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  // Direct declarations
+  const decls = symbol.getDeclarations() ?? [];
+
+  for (const d of decls) {
+    if (ts.isVariableDeclaration(d)) {
+      const init = d.initializer;
+
+      if (typeof init !== 'undefined' && ts.isCallExpression(init)) {
+        const info = getImportedNameAndModuleFromCall(init, checker);
+
+        if (info !== null && info.module.includes('@preact/signals-react') === true) {
+          if (info.name === 'useSignal') {
+            const res: SignalOrigin = { kind: 'useSignal', sourceModule: info.module };
+
+            cache.symbolOrigin.set(symbol, res);
+
+            return res;
+          }
+
+          if (info.name === 'computed') {
+            const res: SignalOrigin = { kind: 'computed', sourceModule: info.module };
+
+            cache.symbolOrigin.set(symbol, res);
+
+            return res;
+          }
+        }
+      }
+      // Aliasing: const a = b; follow b
+      if (init && ts.isIdentifier(init)) {
+        const s = checker.getSymbolAtLocation(init);
+
+        if (typeof s !== 'undefined') {
+          const aliased = s.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(s) : s;
+
+          const traced = traceSignalOrigin(aliased, checker, program);
+
+          if (traced !== null) {
+            cache.symbolOrigin.set(symbol, traced);
+
+            return traced;
+          }
+        }
+      }
+    }
+
+    if (symbol.flags & ts.SymbolFlags.Alias) {
+      const aliased = checker.getAliasedSymbol(symbol);
+
+      const traced = traceSignalOrigin(aliased, checker, program);
+
+      if (traced !== null) {
+        cache.symbolOrigin.set(symbol, traced);
+
+        return traced;
+      }
+    }
+  }
+
+  cache.symbolOrigin.set(symbol, null);
+
+  return null;
+}
+
+function isSignalIdentifier(
+  id: TSESTree.Identifier,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): boolean {
+  const program = getProgram(context);
+
+  if (!program || !resolveTsNode(id, context)) {
+    return false;
+  }
+
+  const checker = program.getTypeChecker();
+
+  const symbol = resolveSymbolAt(id, context);
+
+  if (!symbol) {
+    return false;
+  }
+
+  if (isSignalType(symbol, checker)) {
+    return true;
+  }
+
+  const origin = traceSignalOrigin(symbol, checker, program);
+  return origin !== null;
+}
+
+function isSignalReference(
+  node: TSESTree.Node,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): boolean {
   if (node.type === AST_NODE_TYPES.Identifier) {
-    return trackedSignalVars.has(node.name);
+    return isSignalIdentifier(node, context);
   }
 
   if (
@@ -549,31 +879,34 @@ function isSignalReference(node: TSESTree.Node, trackedSignalVars: Set<string>):
     node.property.type === AST_NODE_TYPES.Identifier &&
     node.property.name === 'value'
   ) {
-    return isSignalReference(node.object, trackedSignalVars);
+    return isSignalReference(node.object, context);
   }
 
   return false;
 }
 
-function containsSignalRead(node: TSESTree.Node, trackedSignalVars: Set<string>): boolean {
+function containsSignalRead(
+  node: TSESTree.Node,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): boolean {
   // Direct identifier like `countSignal`
   if (node.type === AST_NODE_TYPES.Identifier) {
-    return isSignalReference(node, trackedSignalVars);
+    return isSignalReference(node, context);
   }
 
   // Member expression like `countSignal.value` or deeper
   if (node.type === AST_NODE_TYPES.MemberExpression) {
-    if (isSignalReference(node.object, trackedSignalVars)) {
+    if (isSignalReference(node.object, context)) {
       return true;
     }
 
     return (
       // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-      (node.object && containsSignalRead(node.object, trackedSignalVars)) ||
+      (node.object && containsSignalRead(node.object, context)) ||
       // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
       (node.property &&
         node.property.type !== AST_NODE_TYPES.PrivateIdentifier &&
-        containsSignalRead(node.property, trackedSignalVars))
+        containsSignalRead(node.property, context))
     );
   }
 
@@ -601,7 +934,7 @@ function containsSignalRead(node: TSESTree.Node, trackedSignalVars: Set<string>)
           if (item && typeof item.type === 'string') {
             // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
-            if (containsSignalRead(item, trackedSignalVars)) {
+            if (containsSignalRead(item, context)) {
               return true;
             }
           }
@@ -610,7 +943,7 @@ function containsSignalRead(node: TSESTree.Node, trackedSignalVars: Set<string>)
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         value !== null &&
         'type' in value &&
-        containsSignalRead(value, trackedSignalVars)
+        containsSignalRead(value, context)
       ) {
         return true;
       }
@@ -649,6 +982,8 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
         'Unnecessary batch around a single signal update. Remove the batch wrapper',
       nonUpdateSignalInBatch:
         'Signal read inside `batch()` without an update. Batch is intended for grouping updates.',
+      updatesSeparatedByCode:
+        'Multiple signal updates detected but separated by other code; cannot safely batch automatically.',
     },
     schema: [
       {
@@ -748,6 +1083,10 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
                 type: 'string',
                 enum: ['error', 'warn', 'off'],
               },
+              updatesSeparatedByCode: {
+                type: 'string',
+                enum: ['error', 'warn', 'off'],
+              },
             },
             additionalProperties: false,
           },
@@ -768,6 +1107,7 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
         useBatchSuggestion: 'error',
         removeUnnecessaryBatch: 'error',
         nonUpdateSignalInBatch: 'warn',
+        updatesSeparatedByCode: 'warn',
       },
     },
   ],
@@ -898,8 +1238,8 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
                 for (const stmt of node.arguments[0].body.body) {
                   if (
                     stmt.type === AST_NODE_TYPES.ExpressionStatement &&
-                    !isSignalUpdate(stmt.expression, trackedSignalVars) &&
-                    containsSignalRead(stmt.expression, trackedSignalVars) &&
+                    !isSignalUpdate(stmt.expression, context) &&
+                    containsSignalRead(stmt.expression, context) &&
                     getSeverity('nonUpdateSignalInBatch', context.options[0]) !== 'off'
                   ) {
                     context.report({ node: stmt.expression, messageId: 'nonUpdateSignalInBatch' });
@@ -916,7 +1256,7 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
                     return s.type === AST_NODE_TYPES.ExpressionStatement;
                   })
                   .filter((s: TSESTree.ExpressionStatement): boolean => {
-                    return isSignalUpdate(s.expression, trackedSignalVars);
+                    return isSignalUpdate(s.expression, context);
                   });
 
                 if (
@@ -962,8 +1302,8 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
               // Concise arrow body case: body is an expression
               if (
                 node.arguments[0].body.type !== AST_NODE_TYPES.BlockStatement &&
-                !isSignalUpdate(node.arguments[0].body, trackedSignalVars) &&
-                containsSignalRead(node.arguments[0].body, trackedSignalVars) &&
+                !isSignalUpdate(node.arguments[0].body, context) &&
+                containsSignalRead(node.arguments[0].body, context) &&
                 getSeverity('nonUpdateSignalInBatch', context.options[0]) !== 'off'
               ) {
                 context.report({
@@ -984,8 +1324,8 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
                 for (const stmt of bodyStatements) {
                   if (
                     stmt.type === AST_NODE_TYPES.ExpressionStatement &&
-                    !isSignalUpdate(stmt.expression, trackedSignalVars) &&
-                    containsSignalRead(stmt.expression, trackedSignalVars) &&
+                    !isSignalUpdate(stmt.expression, context) &&
+                    containsSignalRead(stmt.expression, context) &&
                     getSeverity('nonUpdateSignalInBatch', context.options[0]) !== 'off'
                   ) {
                     context.report({ node: stmt.expression, messageId: 'nonUpdateSignalInBatch' });
@@ -1001,7 +1341,7 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
                       s.type === AST_NODE_TYPES.ExpressionStatement
                   )
                   .filter((s: TSESTree.ExpressionStatement): boolean => {
-                    return isSignalUpdate(s.expression, trackedSignalVars);
+                    return isSignalUpdate(s.expression, context);
                   });
 
                 if (
@@ -1122,7 +1462,7 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
           }
 
           if (
-            isSignalUpdate(node, trackedSignalVars) &&
+            isSignalUpdate(node, context) &&
             batchScopeStack[batchScopeStack.length - 1] !== true
           ) {
             signalUpdates.push({
@@ -1151,7 +1491,7 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
 
         try {
           if (
-            isSignalUpdate(node, trackedSignalVars) &&
+            isSignalUpdate(node, context) &&
             batchScopeStack[batchScopeStack.length - 1] !== true
           ) {
             signalUpdates.push({
@@ -1180,7 +1520,7 @@ export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): st
 
         try {
           if (
-            isSignalUpdate(node, trackedSignalVars) &&
+            isSignalUpdate(node, context) &&
             batchScopeStack[batchScopeStack.length - 1] !== true
           ) {
             signalUpdates.push({

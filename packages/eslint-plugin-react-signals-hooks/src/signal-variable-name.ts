@@ -428,35 +428,44 @@ export const signalVariableNameRule = ESLintUtils.RuleCreator((name: string): st
                         }
                       }
 
-                      const accessor =
-                        inJsxAttribute ||
-                        (isJsx &&
-                          ancestors.some((a: TSESTree.Node): boolean => {
-                            if (a.type !== AST_NODE_TYPES.CallExpression) {
-                              return false;
-                            }
+                      // If reference is already the object of a member access (e.g., foo.value), don't add any accessor
+                      const isObjectOfMember =
+                        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+                        ref.parent?.type === AST_NODE_TYPES.MemberExpression &&
+                        ref.parent.object === ref;
 
-                            // If identifier is within callee, it's not an argument
-                            if (
-                              // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-                              a.callee &&
-                              ref.range[0] >= a.callee.range[0] &&
-                              ref.range[1] <= a.callee.range[1]
-                            ) {
-                              return false;
-                            }
-                            // Identifier lies within one of the arguments' ranges
-                            return a.arguments.some(
-                              (arg: TSESTree.CallExpressionArgument): boolean => {
-                                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
-                                if (!arg) {
+                      const accessor = isObjectOfMember
+                        ? ''
+                        : inJsxAttribute ||
+                            (isJsx &&
+                              ancestors.some((a: TSESTree.Node): boolean => {
+                                if (a.type !== AST_NODE_TYPES.CallExpression) {
                                   return false;
                                 }
 
-                                return ref.range[0] >= arg.range[0] && ref.range[1] <= arg.range[1];
-                              }
-                            );
-                          }))
+                                // If identifier is within callee, it's not an argument
+                                if (
+                                  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+                                  a.callee &&
+                                  ref.range[0] >= a.callee.range[0] &&
+                                  ref.range[1] <= a.callee.range[1]
+                                ) {
+                                  return false;
+                                }
+                                // Identifier lies within one of the arguments' ranges
+                                return a.arguments.some(
+                                  (arg: TSESTree.CallExpressionArgument): boolean => {
+                                    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
+                                    if (!arg) {
+                                      return false;
+                                    }
+
+                                    return (
+                                      ref.range[0] >= arg.range[0] && ref.range[1] <= arg.range[1]
+                                    );
+                                  }
+                                );
+                              }))
                           ? '.value'
                           : isJsx
                             ? ''

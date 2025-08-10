@@ -414,6 +414,182 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
                     `computed(${context.sourceCode.getText(callback)})`
                   );
 
+                  // Also rename the capturing variable to have Signal suffix and fix all references with correct accessors
+                  // Find the VariableDeclarator that initializes with this call
+                  let decl: TSESTree.VariableDeclarator | null = null;
+                  for (const anc of context.sourceCode.getAncestors(node)) {
+                    if (anc.type === AST_NODE_TYPES.VariableDeclarator && anc.init === node) {
+                      decl = anc;
+                      break;
+                    }
+                  }
+
+                  if (decl && decl.id.type === AST_NODE_TYPES.Identifier) {
+                    const originalName = decl.id.name;
+
+                    // Build the fixed name similar to signal-variable-name rule
+                    let fixedName = originalName;
+                    if (fixedName.startsWith('use') && fixedName.length > 3) {
+                      fixedName = fixedName.slice(3);
+                    }
+                    if (fixedName.length > 0) {
+                      fixedName = fixedName.charAt(0).toLowerCase() + fixedName.slice(1);
+                    }
+                    if (!hasSignalSuffix(fixedName, suffixRegex)) {
+                      fixedName += suffix;
+                    }
+
+                    if (fixedName !== originalName) {
+                      // Avoid name collision in current scope
+                      const declScope = context.sourceCode.getScope(decl);
+                      if (!declScope.set.has(fixedName)) {
+                        yield fixer.replaceText(decl.id, fixedName);
+
+                        const variable = declScope.set.get(originalName);
+                        if (variable) {
+                          for (const reference of variable.references) {
+                            const ref = reference.identifier;
+
+                            // Skip the declarator id itself
+                            if (
+                              ref.range[0] === decl.id.range[0] &&
+                              ref.range[1] === decl.id.range[1]
+                            ) {
+                              continue;
+                            }
+
+                            // Skip if used as property name in MemberExpression foo.bar
+                            if (
+                              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+                              ref.parent?.type === AST_NODE_TYPES.MemberExpression &&
+                              ref.parent.property === ref &&
+                              !ref.parent.computed
+                            ) {
+                              continue;
+                            }
+
+                            const ancestors = context.sourceCode.getAncestors(ref);
+
+                            const isJsx = ancestors.some(
+                              (
+                                a: TSESTree.Node
+                              ): a is
+                                | TSESTree.JSXElement
+                                | TSESTree.JSXFragment
+                                | TSESTree.JSXAttribute
+                                | TSESTree.JSXExpressionContainer
+                                | TSESTree.JSXSpreadAttribute => {
+                                return (
+                                  a.type === AST_NODE_TYPES.JSXElement ||
+                                  a.type === AST_NODE_TYPES.JSXFragment ||
+                                  a.type === AST_NODE_TYPES.JSXAttribute ||
+                                  a.type === AST_NODE_TYPES.JSXExpressionContainer ||
+                                  a.type === AST_NODE_TYPES.JSXSpreadAttribute
+                                );
+                              }
+                            );
+
+                            // In JSX attribute context? (either directly under JSXAttribute, or inside its expression container)
+                            const inJsxAttribute = ancestors.some(
+                              (a: TSESTree.Node, idx: number): boolean => {
+                                if (a.type === AST_NODE_TYPES.JSXAttribute) {
+                                  return true;
+                                }
+
+                                if (
+                                  a.type === AST_NODE_TYPES.JSXExpressionContainer &&
+                                  idx > 0 &&
+                                  ancestors[idx - 1]?.type === AST_NODE_TYPES.JSXAttribute
+                                ) {
+                                  return true;
+                                }
+                                return false;
+                              }
+                            );
+
+                            // Determine if inside a component/hook function
+                            let inComponentScope = false;
+
+                            for (let i = ancestors.length - 1; i >= 0; i--) {
+                              // eslint-disable-next-line security/detect-object-injection
+                              const anc = ancestors[i];
+
+                              if (!anc) continue;
+
+                              if (anc.type === AST_NODE_TYPES.FunctionDeclaration) {
+                                if (anc.id && /^[A-Z]/.test(anc.id.name)) {
+                                  inComponentScope = true;
+                                }
+                                break;
+                              }
+
+                              if (
+                                anc.type === AST_NODE_TYPES.FunctionExpression ||
+                                anc.type === AST_NODE_TYPES.ArrowFunctionExpression
+                              ) {
+                                // Look for enclosing variable declarator with Uppercase name
+                                const vd = ancestors.find((x: TSESTree.Node) => {
+                                  return x.type === AST_NODE_TYPES.VariableDeclarator;
+                                }) as TSESTree.VariableDeclarator | undefined;
+
+                                if (
+                                  vd &&
+                                  vd.id.type === AST_NODE_TYPES.Identifier &&
+                                  /^[A-Z]/.test(vd.id.name)
+                                ) {
+                                  inComponentScope = true;
+                                }
+                                break;
+                              }
+                            }
+
+                            // If identifier is inside a CallExpression argument in JSX, treat as argument usage and require .value
+                            const isInJsxCallArg =
+                              isJsx &&
+                              ancestors.some((a: TSESTree.Node): boolean => {
+                                if (a.type !== AST_NODE_TYPES.CallExpression) {
+                                  return false;
+                                }
+
+                                // If identifier is within callee, it's not an argument
+                                if (
+                                  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+                                  a.callee &&
+                                  ref.range[0] >= a.callee.range[0] &&
+                                  ref.range[1] <= a.callee.range[1]
+                                ) {
+                                  return false;
+                                }
+
+                                // Identifier lies within one of the arguments' ranges
+                                return a.arguments.some((arg: TSESTree.CallExpressionArgument) => {
+                                  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
+                                  if (!arg) {
+                                    return false;
+                                  }
+
+                                  return (
+                                    ref.range[0] >= arg.range[0] && ref.range[1] <= arg.range[1]
+                                  );
+                                });
+                              });
+
+                            const accessor =
+                              inJsxAttribute || isInJsxCallArg
+                                ? '.value'
+                                : isJsx
+                                  ? ''
+                                  : inComponentScope
+                                    ? '.value'
+                                    : '.peek()';
+
+                            yield fixer.replaceText(ref, `${fixedName}${accessor}`);
+                          }
+                        }
+                      }
+                    }
+                  }
+
                   if (getSeverity('suggestAddComputedImport', option) === 'off') {
                     return;
                   }

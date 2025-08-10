@@ -27,11 +27,12 @@ The `require-use-signals` rule detects components that use signals but are missi
 
 ### 3. Auto-fix Support
 
-- Automatically adds `useSignals()` at the beginning of the component
+- Automatically inserts `const store = useSignals();` as the first statement in the component body
+- Wraps the body in `try { ... } finally { store.f(); }` to ensure proper lifecycle cleanup
 - Adds the necessary import if missing
   - If a `@preact/signals-react/runtime` import exists, adds `useSignals` to its named imports
   - Otherwise, inserts `import { useSignals } from '@preact/signals-react/runtime';`
-  - For expression-bodied arrow components, converts to a block body and inserts `useSignals(); return <expr>;`
+  - For expression-bodied arrow components, converts to a block body and inserts `const store = useSignals(); try { return <expr>; } finally { store.f(); }`
 
 ## Configuration Options
 
