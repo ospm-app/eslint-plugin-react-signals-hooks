@@ -73,6 +73,43 @@ function isInFunctionProp(node: TSESTree.Node): boolean {
   return false;
 }
 
+// Returns true when `node` (typically a MemberExpression like `x.value`) is inside
+// a CallExpression's argument list while within JSX. In that context we allow `.value`.
+function isInJSXCallArgument(node: TSESTree.Node): boolean {
+  let current: TSESTree.Node | undefined = node.parent;
+
+  while (current) {
+    if (current.type === AST_NODE_TYPES.CallExpression) {
+      const callee = current.callee as TSESTree.Node | undefined;
+      // If node is within callee, it's not an argument
+      if (callee && node.range[0] >= callee.range[0] && node.range[1] <= callee.range[1]) {
+        return false;
+      }
+
+      // If node is within any argument, treat as argument
+      const inArg = current.arguments.some((arg) => {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
+        if (!arg) {
+          return false;
+        }
+
+        return node.range[0] >= arg.range[0] && node.range[1] <= arg.range[1];
+      });
+      if (inArg) {
+        return true;
+      }
+    }
+
+    if (current.type === AST_NODE_TYPES.JSXElement || current.type === AST_NODE_TYPES.JSXFragment) {
+      break;
+    }
+
+    current = current.parent;
+  }
+
+  return false;
+}
+
 function isInJSONStringify(node: TSESTree.Node): boolean {
   let current: TSESTree.Node | undefined = node.parent;
 
@@ -318,6 +355,11 @@ export const preferSignalInJsxRule = ESLintUtils.RuleCreator((name: string): str
         }
 
         if (isInJSXAttribute(node) || isInFunctionProp(node) || isInJSONStringify(node)) {
+          return;
+        }
+
+        // Allow `.value` when used as an argument to a function call inside JSX
+        if (isInJSXCallArgument(node)) {
           return;
         }
 

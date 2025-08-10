@@ -340,7 +340,131 @@ export const signalVariableNameRule = ESLintUtils.RuleCreator((name: string): st
                         continue;
                       }
 
-                      fixes.push(fixer.replaceText(ref, fixedName));
+                      const ancestors = context.sourceCode.getAncestors(ref);
+
+                      const isJsx = ancestors.some(
+                        (
+                          a: TSESTree.Node
+                        ): a is
+                          | TSESTree.JSXElement
+                          | TSESTree.JSXFragment
+                          | TSESTree.JSXAttribute
+                          | TSESTree.JSXExpressionContainer
+                          | TSESTree.JSXSpreadAttribute => {
+                          return (
+                            a.type === AST_NODE_TYPES.JSXElement ||
+                            a.type === AST_NODE_TYPES.JSXFragment ||
+                            a.type === AST_NODE_TYPES.JSXAttribute ||
+                            a.type === AST_NODE_TYPES.JSXExpressionContainer ||
+                            a.type === AST_NODE_TYPES.JSXSpreadAttribute
+                          );
+                        }
+                      );
+
+                      // In JSX attribute context? (either directly under JSXAttribute, or inside its expression container)
+                      const inJsxAttribute = ancestors.some(
+                        (a: TSESTree.Node, idx: number): boolean => {
+                          if (a.type === AST_NODE_TYPES.JSXAttribute) {
+                            return true;
+                          }
+
+                          if (
+                            a.type === AST_NODE_TYPES.JSXExpressionContainer &&
+                            idx > 0 &&
+                            ancestors[idx - 1]?.type === AST_NODE_TYPES.JSXAttribute
+                          ) {
+                            return true;
+                          }
+                          return false;
+                        }
+                      );
+
+                      // Determine if inside a component/hook function
+                      let inComponentScope = false;
+
+                      for (let i = ancestors.length - 1; i >= 0; i--) {
+                        // eslint-disable-next-line security/detect-object-injection
+                        const anc = ancestors[i];
+
+                        if (!anc) {
+                          continue;
+                        }
+
+                        if (anc.type === AST_NODE_TYPES.FunctionDeclaration) {
+                          if (anc.id && /^[A-Z]/.test(anc.id.name)) {
+                            inComponentScope = true;
+                          }
+
+                          break;
+                        }
+
+                        if (
+                          anc.type === AST_NODE_TYPES.FunctionExpression ||
+                          anc.type === AST_NODE_TYPES.ArrowFunctionExpression
+                        ) {
+                          // Look for enclosing variable declarator with Uppercase name
+                          const vd = ancestors.find(
+                            (
+                              x: TSESTree.Node
+                            ): x is
+                              | TSESTree.VariableDeclaratorDefiniteAssignment
+                              | TSESTree.VariableDeclaratorMaybeInit
+                              | TSESTree.VariableDeclaratorNoInit
+                              | TSESTree.UsingInForOfDeclarator
+                              | TSESTree.UsingInNormalContextDeclarator => {
+                              return x.type === AST_NODE_TYPES.VariableDeclarator;
+                            }
+                          );
+
+                          if (
+                            typeof vd !== 'undefined' &&
+                            vd.id.type === AST_NODE_TYPES.Identifier &&
+                            /^[A-Z]/.test(vd.id.name)
+                          ) {
+                            inComponentScope = true;
+                          }
+
+                          break;
+                        }
+                      }
+
+                      const accessor =
+                        inJsxAttribute ||
+                        (isJsx &&
+                          ancestors.some((a: TSESTree.Node): boolean => {
+                            if (a.type !== AST_NODE_TYPES.CallExpression) {
+                              return false;
+                            }
+
+                            // If identifier is within callee, it's not an argument
+                            if (
+                              // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+                              a.callee &&
+                              ref.range[0] >= a.callee.range[0] &&
+                              ref.range[1] <= a.callee.range[1]
+                            ) {
+                              return false;
+                            }
+                            // Identifier lies within one of the arguments' ranges
+                            return a.arguments.some(
+                              (arg: TSESTree.CallExpressionArgument): boolean => {
+                                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
+                                if (!arg) {
+                                  return false;
+                                }
+
+                                return ref.range[0] >= arg.range[0] && ref.range[1] <= arg.range[1];
+                              }
+                            );
+                          }))
+                          ? '.value'
+                          : isJsx
+                            ? ''
+                            : inComponentScope
+                              ? '.value'
+                              : '.peek()';
+
+                      fixes.push(fixer.replaceText(ref, `${fixedName}${accessor}`));
                     }
                   }
 
