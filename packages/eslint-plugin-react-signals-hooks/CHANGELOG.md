@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2025-08-10
+
+### Added
+
+- New rule: `prefer-use-signal-ref-over-use-ref`
+  - Encourages using `useSignalRef` instead of `useRef` when `.current` is read during render/JSX.
+  - Autofix: adds `useSignalRef` import, replaces `useRef(...)` with `useSignalRef(...)`, preserves type params and initializer.
+  - Config: `onlyWhenReadInRender` (default true), `performance` budget, `severity` mapping.
+- Documentation: `docs/rules/prefer-use-signal-ref-over-use-ref.md` with incorrect/correct examples and options.
+- Tests: added `tests/prefer-use-signal-ref-over-use-ref/` with ESLint configs and fixtures.
+
+### Changed
+
+- Exported the new rule from `src/index.ts` and enabled default severity in the recommended map.
+- NPM scripts: added test/fix commands for the new rule and included them in aggregate runners.
+
+## [1.2.8 - 1.2.23] - 2025-08-10
+
+### Added
+
+- A lot of improvements and edge cases handling for existing rules, autofixes.
+
+### Changed
+
+- Minor test configuration adjustments to align with existing rule test patterns.
+
 ## [1.2.7] - 2025-08-10
 
 ### fixed autofix for prefer-signal-reads

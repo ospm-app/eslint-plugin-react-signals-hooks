@@ -1,4 +1,4 @@
-import parser from "@typescript-eslint/parser";
+import tsParser from "@typescript-eslint/parser";
 import reactSignalsHooksPlugin from "../../dist/cjs/index.js";
 
 /** @type {import('eslint').Linter.Config[]} */
@@ -9,9 +9,23 @@ export default [
 			"react-signals-hooks": reactSignalsHooksPlugin,
 		},
 		rules: {
-			"react-signals-hooks/prefer-signal-reads": [
-				"error",
+			"react-signals-hooks/prefer-use-signal-ref-over-use-ref": [
+				"warn",
 				{
+					onlyWhenReadInRender: true,
+					performance: {
+						enableMetrics: false,
+						maxNodes: 5000,
+						maxTime: 1000,
+					},
+				},
+			],
+
+			"react-signals-hooks/prefer-use-signal-over-use-state": [
+				"warn",
+				{
+					// Whether to ignore complex initializers in useState calls
+					ignoreComplexInitializers: false,
 					// Performance budget configuration
 					performance: {
 						// Enable performance metrics collection
@@ -32,13 +46,12 @@ export default [
 			"react-signals-hooks/warn-on-unnecessary-untracked": "warn",
 
 			"react-signals-hooks/prefer-computed": "warn",
+			"react-signals-hooks/prefer-signal-reads": "warn",
 			"react-signals-hooks/prefer-for-over-map": "warn",
 			"react-signals-hooks/prefer-signal-in-jsx": "warn",
 			"react-signals-hooks/prefer-batch-updates": "warn",
 			"react-signals-hooks/prefer-signal-effect": "warn",
 			"react-signals-hooks/prefer-show-over-ternary": "warn",
-			"react-signals-hooks/prefer-use-signal-over-use-state": "warn",
-			"react-signals-hooks/prefer-use-signal-ref-over-use-ref": "warn",
 
 			"react-signals-hooks/no-mutation-in-render": "warn",
 			"react-signals-hooks/prefer-signal-methods": "warn",
@@ -47,9 +60,11 @@ export default [
 			"react-signals-hooks/no-non-signal-with-signal-suffix": "warn",
 		},
 		languageOptions: {
-			parser,
+			parser: tsParser,
 			parserOptions: {
-				ecmaVersion: 2022,
+				tsconfigRootDir: process.cwd(),
+				project: "../../tsconfig.tests.json",
+				ecmaVersion: "latest",
 				sourceType: "module",
 				ecmaFeatures: {
 					jsx: true,

@@ -41,6 +41,7 @@ import { preferSignalInJsxRule } from './prefer-signal-in-jsx.js';
 import { preferSignalMethodsRule } from './prefer-signal-methods.js';
 import { preferSignalReadsRule } from './prefer-signal-reads.js';
 import { preferUseSignalOverUseStateRule } from './prefer-use-signal-over-use-state.js';
+import { preferUseSignalRefOverUseRefRule } from './prefer-use-signal-ref-over-use-ref.js';
 // Code style rules
 import { requireUseSignalsRule } from './require-use-signals.js';
 import { restrictSignalLocations } from './restrict-signal-locations.js';
@@ -66,6 +67,7 @@ const rules = {
   'prefer-signal-methods': preferSignalMethodsRule,
   'prefer-signal-reads': preferSignalReadsRule,
   'prefer-use-signal-over-use-state': preferUseSignalOverUseStateRule,
+  'prefer-use-signal-ref-over-use-ref': preferUseSignalRefOverUseRefRule,
 
   // Code style rules
   'prefer-show-over-ternary': preferShowOverTernaryRule,
@@ -93,6 +95,7 @@ const configRules = {
   'prefer-signal-methods': 'error',
   'prefer-signal-reads': 'error',
   'prefer-use-signal-over-use-state': 'error',
+  'prefer-use-signal-ref-over-use-ref': 'error',
 
   // Code style rules
   'prefer-show-over-ternary': 'error',

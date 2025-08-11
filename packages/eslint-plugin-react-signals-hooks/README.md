@@ -19,7 +19,7 @@ A comprehensive ESLint plugin for React applications using `@preact/signals-reac
 
 ## Rules Overview
 
-This plugin provides 18 specialized ESLint rules for React signals:
+This plugin provides 19 specialized ESLint rules for React signals:
 
 | Rule | Purpose | Autofix | Severity |
 |------|---------|---------|----------|
@@ -38,9 +38,43 @@ This plugin provides 18 specialized ESLint rules for React signals:
 | `prefer-signal-methods` | Enforces signal methods over properties | ✅ | Warning |
 | `prefer-signal-reads` | Optimizes signal access patterns | ✅ | Warning |
 | `prefer-use-signal-over-use-state` | Suggests `useSignal` over `useState` | ✅ | Warning |
+| `prefer-use-signal-ref-over-use-ref` | Suggests `useSignalRef` over `useRef` when `.current` is read during render | ✅ | Warning |
 | `restrict-signal-locations` | Controls where signals can be created | ✅ | Error |
 | `signal-variable-name` | Enforces signal naming conventions | ✅ | Error |
 | `warn-on-unnecessary-untracked` | Warns about unnecessary `untracked()` usage | ✅ | Warning |
+
+For detailed examples and options for each rule, see the docs in `docs/rules/`.
+
+- [`prefer-use-signal-ref-over-use-ref` docs](./docs/rules/prefer-use-signal-ref-over-use-ref.md)
+
+### Rule spotlight: `prefer-use-signal-ref-over-use-ref`
+
+Encourages `useSignalRef` from `@preact/signals-react/utils` instead of `useRef` when `.current` is read during render/JSX.
+
+❌ Incorrect
+
+```tsx
+import { useRef } from 'react';
+
+function Example() {
+  const divRef = useRef<HTMLDivElement | null>(null);
+  return <div ref={divRef}>{divRef.current}</div>; // render read
+}
+```
+
+✅ Correct
+
+```tsx
+import { useSignalRef } from '@preact/signals-react/utils';
+
+function Example() {
+  const divRef = useSignalRef<HTMLDivElement | null>(null);
+  return <div ref={divRef}>{divRef.current}</div>;
+}
+```
+
+Option:
+- `onlyWhenReadInRender` (default: `true`) — only warn when `.current` is read in render/JSX. Imperative-only usage (effects/handlers) is ignored.
 
 ## Key Features
 
@@ -124,6 +158,7 @@ export default [
       'react-signals-hooks/prefer-for-over-map': 'warn',
       'react-signals-hooks/prefer-signal-effect': 'warn',
       'react-signals-hooks/prefer-computed': 'warn',
+      'react-signals-hooks/prefer-use-signal-ref-over-use-ref': 'warn',
     },
   },
 ];
@@ -545,105 +580,3 @@ const conditionalUpdate = useCallback(() => {
 ## TypeScript Support
 
 Fully compatible with TypeScript and `@typescript-eslint/parser`. Handles:
-
-- Type assertions (`as` keyword)
-- Generic type parameters
-- Complex type definitions
-- Interface and type alias references
-
-## Troubleshooting
-
-### Common Issues
-
-1. **"Plugin not found" error**
-   - Ensure the plugin is installed in the correct location
-   - Check your ESLint config file path
-
-2. **Autofix not working**
-   - Enable `enableAutoFixForMemoAndCallback: true` in rule options
-   - Use `--fix` flag when running ESLint
-
-3. **False positives for stable values**
-   - The plugin should automatically detect `useRef`, `useCallback` with empty deps, etc.
-   - If you encounter issues, please file a bug report
-
-## Contributing
-
-This plugin is part of a larger React signals ecosystem. When contributing:
-
-1. Ensure all existing tests pass
-2. Add tests for new functionality
-3. Update documentation for new features
-4. Follow the existing code style
-
-## Validation Library Integration
-
-### Configuration
-
-In your `.eslintrc.js`:
-
-```javascript
-module.exports = {
-  extends: [
-    'plugin:@ospm/react-signals-hooks/recommended',
-    // Add validation plugins you need
-    '@ospm/eslint-plugin-valibot',
-    '@ospm/eslint-plugin-zod',
-    // ... other plugins
-  ],
-  rules: {
-    // Your custom rules
-  },
-};
-```
-
-### Available Rules
-
-#### Valibot
-
-- `valibot/require-valibot-import` - Ensures Valibot is imported
-- `valibot/consistent-import-name` - Enforces consistent import names
-
-#### Zod
-
-- `zod/require-zod-import` - Ensures Zod is imported
-- `zod/consistent-import-name` - Enforces consistent import names
-
-#### Joi
-
-- `joi/require-joi-import` - Ensures Joi is imported
-- `joi/consistent-import-name` - Enforces consistent import names
-
-#### Arktype
-
-- `arktype/require-arktype-import` - Ensures Arktype is imported
-- `arktype/consistent-import-name` - Enforces consistent import names
-
-## Migration Between Validation Libraries
-
-To migrate from one validation library to another, you can use the built-in migration rules:
-
-1. Install the target validation library
-2. Add the corresponding ESLint plugin
-3. Run the migration command:
-
-```bash
-npx eslint --fix --ext .ts,.tsx,.js,.jsx src/
-```
-
-The plugin will automatically convert schemas between different validation libraries where possible.
-
-## License
-
-MIT License - see LICENSE file for details. --
-
-## Changelog
-
-### Latest Version
-
-- ✅ Enhanced autofixable error indicators
-- ✅ Fixed `useRef` stability detection
-- ✅ Improved computed member expression handling
-- ✅ Added redundant dependency detection
-- ✅ Enhanced inner-scope variable detection
-- ✅ Fixed assignment-only detection for complex expressions
