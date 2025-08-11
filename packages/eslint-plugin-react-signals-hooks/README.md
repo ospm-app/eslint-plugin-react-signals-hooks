@@ -73,7 +73,27 @@ function Example() {
 }
 ```
 
+Autofix performs:
+
+- Add import: `useSignalRef` from `@preact/signals-react/utils` (augments existing import when possible)
+- Replace call: `useRef(...)` → `useSignalRef(...)`
+- Rename variable and references: appends or replaces suffix with `SignalRef`
+
+Example rename (autofixed):
+
+```tsx
+// Before
+const inputRef = useRef<HTMLInputElement | null>(null);
+<input ref={inputRef} onFocus={() => inputRef.current?.select()} />
+
+// After (autofixed)
+import { useSignalRef } from '@preact/signals-react/utils';
+const inputSignalRef = useSignalRef<HTMLInputElement | null>(null);
+<input ref={inputSignalRef} onFocus={() => inputSignalRef.current?.select()} />
+```
+
 Option:
+
 - `onlyWhenReadInRender` (default: `true`) — only warn when `.current` is read in render/JSX. Imperative-only usage (effects/handlers) is ignored.
 
 ## Key Features
