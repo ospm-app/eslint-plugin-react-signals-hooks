@@ -545,11 +545,18 @@ export const preferUseSignalRefOverUseRefRule = ESLintUtils.RuleCreator(
 							const varDecl = refVarDeclMap.get(name);
 
 							function computeNewName(orig: string): string {
-								if (orig.endsWith("SignalRef")) return orig;
-								if (orig.endsWith("Ref"))
+								if (orig.endsWith("SignalRef")) {
+									return orig;
+								}
+
+								if (orig.endsWith("Ref")) {
 									return `${orig.slice(0, -3)}SignalRef`;
-								if (orig.endsWith("ref"))
+								}
+
+								if (orig.endsWith("ref")) {
 									return `${orig.slice(0, -3)}SignalRef`;
+								}
+
 								return `${orig}SignalRef`;
 							}
 
@@ -563,23 +570,26 @@ export const preferUseSignalRefOverUseRefRule = ESLintUtils.RuleCreator(
 							) {
 								fixes.push(fixer.replaceText(idNode, newName));
 
+								const seen = new Set<string>([
+									`${idNode.range[0]}:${idNode.range[1]}`,
+								]);
+
 								const visited = new Set<GlobalScope | Scope>();
 
 								function collectScopes(
 									scope: GlobalScope | Scope | null,
+									out: Array<GlobalScope | Scope> = [],
 								): Array<GlobalScope | Scope> {
 									if (scope === null || visited.has(scope)) {
-										return [];
+										return out;
 									}
-
-									const out: Array<GlobalScope | Scope> = [];
 
 									visited.add(scope);
 
 									out.push(scope);
 
 									for (const child of scope.childScopes) {
-										collectScopes(child);
+										collectScopes(child, out);
 									}
 
 									return out;
@@ -611,8 +621,6 @@ export const preferUseSignalRefOverUseRefRule = ESLintUtils.RuleCreator(
 								}
 
 								if (targetVar !== null) {
-									const seen = new Set<string>();
-
 									for (const ref of targetVar.references) {
 										const key = `${ref.identifier.range[0]}:${ref.identifier.range[1]}`;
 

@@ -46,6 +46,7 @@ This plugin provides 19 specialized ESLint rules for React signals:
 For detailed examples and options for each rule, see the docs in `docs/rules/`.
 
 - [`prefer-use-signal-ref-over-use-ref` docs](./docs/rules/prefer-use-signal-ref-over-use-ref.md)
+- [`prefer-for-over-map` docs](./docs/rules/prefer-for-over-map.md)
 
 ### Rule spotlight: `prefer-use-signal-ref-over-use-ref`
 
@@ -357,7 +358,7 @@ Suggests using For component over `.map()` for better performance with signal ar
 {itemsSignal.value.map(item => <div key={item.id}>{item.name}</div>)}
 
 // ✅ Using For component (autofixed)
-<For each={itemsSignal.value}>
+<For each={itemsSignal}>
   {item => <div>{item.name}</div>}
 </For>
 ```

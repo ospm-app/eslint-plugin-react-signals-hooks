@@ -5,7 +5,7 @@ import type { JSX } from 'react';
 // Expect: error for missing useSignals(); autofix inserts after string directive
 export function WithDirective(): JSX.Element {
   'use client';
-  	useSignals();
-const sSignal = signal(0);
+  useSignals();
+  const sSignal = signal(0);
   return <div>{sSignal}</div>;
 }

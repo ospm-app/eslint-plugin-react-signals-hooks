@@ -8,6 +8,11 @@ import {
 } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
+import {
+	buildNamedImport,
+	getPreferredQuote,
+	getPreferredSemicolon,
+} from "./utils/import-format.js";
 import { PerformanceOperations } from "./utils/performance-constants.js";
 import {
 	endPhase,
@@ -39,8 +44,6 @@ type Option = {
 
 type Options = [Option?];
 
-const ruleName = "prefer-use-signal-over-use-state";
-
 function getSeverity(
 	messageId: MessageIds,
 	options: Option | undefined,
@@ -67,6 +70,113 @@ function getSeverity(
 		}
 	}
 }
+
+function ensureUseSignalImport(
+	fixer: TSESLint.RuleFixer,
+	fixes: Array<TSESLint.RuleFix>,
+	context: RuleContext<MessageIds, Options>,
+): void {
+	const importText =
+		"\n" +
+		buildNamedImport(
+			"@preact/signals-react",
+			["useSignal"],
+			getPreferredQuote(context.sourceCode),
+			getPreferredSemicolon(context.sourceCode),
+		) +
+		"\n";
+
+	const importDeclarations = context.sourceCode.ast.body.filter(
+		(n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
+			return n.type === AST_NODE_TYPES.ImportDeclaration;
+		},
+	);
+
+	const signalsImport = importDeclarations.find(
+		(d: TSESTree.ImportDeclaration): d is TSESTree.ImportDeclaration => {
+			return d.source.value === "@preact/signals-react";
+		},
+	);
+
+	if (typeof signalsImport === "undefined") {
+		const lastImport = importDeclarations[importDeclarations.length - 1];
+		const b = context.sourceCode.ast.body[0];
+
+		if (!b) {
+			return;
+		}
+
+		fixes.push(
+			typeof lastImport === "undefined"
+				? fixer.insertTextBefore(b, importText.trimStart())
+				: fixer.insertTextAfter(lastImport, importText),
+		);
+		return;
+	}
+
+	if (
+		signalsImport.specifiers.some(
+			(s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
+				return (
+					s.type === AST_NODE_TYPES.ImportSpecifier &&
+					s.imported.type === AST_NODE_TYPES.Identifier &&
+					s.imported.name === "useSignal"
+				);
+			},
+		)
+	) {
+		return;
+	}
+
+	if (signalsImport.importKind === "type") {
+		fixes.push(fixer.insertTextAfter(signalsImport, importText));
+
+		return;
+	}
+
+	if (
+		signalsImport.specifiers.some(
+			(s: TSESTree.ImportClause): s is TSESTree.ImportNamespaceSpecifier => {
+				return s.type === AST_NODE_TYPES.ImportNamespaceSpecifier;
+			},
+		)
+	) {
+		fixes.push(fixer.insertTextAfter(signalsImport, importText));
+
+		return;
+	}
+
+	const lastNamed = [...signalsImport.specifiers]
+		.reverse()
+		.find((s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
+			return s.type === AST_NODE_TYPES.ImportSpecifier;
+		});
+
+	if (lastNamed) {
+		fixes.push(fixer.insertTextAfter(lastNamed, ", useSignal"));
+		return;
+	}
+
+	if (
+		signalsImport.specifiers.find(
+			(s: TSESTree.ImportClause): s is TSESTree.ImportDefaultSpecifier => {
+				return s.type === AST_NODE_TYPES.ImportDefaultSpecifier;
+			},
+		)
+	) {
+		// Comment-safe augmentation: insert before source literal, preserving any trailing comments on the import line
+		fixes.push(
+			fixer.insertTextBefore(signalsImport.source, ", { useSignal } "),
+		);
+
+		return;
+	}
+
+	// Fallback: insert a separate value import
+	fixes.push(fixer.insertTextAfter(signalsImport, importText));
+}
+
+const ruleName = "prefer-use-signal-over-use-state";
 
 export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator(
 	(name: string): string => {
@@ -315,44 +425,59 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator(
 					node.init.arguments[0];
 
 				if (
-					stateVar?.type === AST_NODE_TYPES.Identifier &&
-					setterVar?.type === AST_NODE_TYPES.Identifier &&
-					setterVar.name.startsWith("set")
+					!(
+						stateVar?.type === AST_NODE_TYPES.Identifier &&
+						setterVar?.type === AST_NODE_TYPES.Identifier &&
+						setterVar.name.startsWith("set")
+					)
 				) {
-					if (getSeverity("preferUseSignal", option) === "off") {
-						return;
-					}
+					return;
+				}
 
-					const suffix =
-						typeof option?.suffix === "string" && option.suffix.length > 0
-							? option.suffix
-							: "Signal";
+				if (getSeverity("preferUseSignal", option) === "off") {
+					return;
+				}
 
-					const suggestions: TSESLint.ReportSuggestionArray<MessageIds> = [];
+				const suffix =
+					typeof option?.suffix === "string" && option.suffix.length > 0
+						? option.suffix
+						: "Signal";
 
-					// Suggestion 1: add import only (non-destructive)
-					suggestions.push({
-						messageId: "addUseSignalImport",
-						fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
-							const fixes: Array<TSESLint.RuleFix> = [];
-							const importDeclarations = context.sourceCode.ast.body.filter(
-								(
-									n: TSESTree.ProgramStatement,
-								): n is TSESTree.ImportDeclaration => {
-									return n.type === AST_NODE_TYPES.ImportDeclaration;
-								},
-							);
+				const suggestions: TSESLint.ReportSuggestionArray<MessageIds> = [];
 
-							const signalsImport = importDeclarations.find(
-								(
-									d: TSESTree.ImportDeclaration,
-								): d is TSESTree.ImportDeclaration => {
-									return d.source.value === "@preact/signals-react";
-								},
-							);
+				// Suggestion 1: add import only (non-destructive)
+				suggestions.push({
+					messageId: "addUseSignalImport",
+					fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+						const fixes: Array<TSESLint.RuleFix> = [];
 
-							if (signalsImport) {
-								const hasUseSignal = signalsImport.specifiers.some(
+						const importText =
+							"\n" +
+							buildNamedImport(
+								"@preact/signals-react",
+								["useSignal"],
+								getPreferredQuote(context.sourceCode),
+								getPreferredSemicolon(context.sourceCode),
+							) +
+							"\n";
+
+						const importDeclarations = context.sourceCode.ast.body.filter(
+							(n): n is TSESTree.ImportDeclaration => {
+								return n.type === AST_NODE_TYPES.ImportDeclaration;
+							},
+						);
+
+						const signalsImport = importDeclarations.find(
+							(
+								d: TSESTree.ImportDeclaration,
+							): d is TSESTree.ImportDeclaration => {
+								return d.source.value === "@preact/signals-react";
+							},
+						);
+
+						if (signalsImport) {
+							if (
+								!signalsImport.specifiers.some(
 									(s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
 										return (
 											s.type === AST_NODE_TYPES.ImportSpecifier &&
@@ -360,434 +485,333 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator(
 											s.imported.name === "useSignal"
 										);
 									},
+								)
+							) {
+								if (signalsImport.importKind === "type") {
+									fixes.push(fixer.insertTextAfter(signalsImport, importText));
+
+									return fixes;
+								}
+
+								const defaultSpec = signalsImport.specifiers.find(
+									(
+										s: TSESTree.ImportClause,
+									): s is TSESTree.ImportDefaultSpecifier => {
+										return s.type === AST_NODE_TYPES.ImportDefaultSpecifier;
+									},
 								);
 
-								if (!hasUseSignal) {
-									const hasNamespace = signalsImport.specifiers.some(
-										(s) => s.type === AST_NODE_TYPES.ImportNamespaceSpecifier,
+								const lastNamed = [...signalsImport.specifiers]
+									.reverse()
+									.find(
+										(
+											s: TSESTree.ImportClause,
+										): s is TSESTree.ImportSpecifier => {
+											return s.type === AST_NODE_TYPES.ImportSpecifier;
+										},
 									);
-									const defaultSpec = signalsImport.specifiers.find(
-										(s): s is TSESTree.ImportDefaultSpecifier =>
-											s.type === AST_NODE_TYPES.ImportDefaultSpecifier,
+
+								if (
+									signalsImport.specifiers.some(
+										(
+											s: TSESTree.ImportClause,
+										): s is TSESTree.ImportNamespaceSpecifier => {
+											return s.type === AST_NODE_TYPES.ImportNamespaceSpecifier;
+										},
+									)
+								) {
+									fixes.push(fixer.insertTextAfter(signalsImport, importText));
+								} else if (lastNamed) {
+									fixes.push(fixer.insertTextAfter(lastNamed, ", useSignal"));
+								} else if (defaultSpec) {
+									fixes.push(
+										fixer.replaceText(
+											signalsImport,
+											`import ${defaultSpec.local.name}, { useSignal } from ${getPreferredQuote(context.sourceCode)}@preact/signals-react${getPreferredQuote(context.sourceCode)}${getPreferredSemicolon(context.sourceCode)}`,
+										),
 									);
-									const lastNamed = [...signalsImport.specifiers]
-										.reverse()
-										.find(
-											(s): s is TSESTree.ImportSpecifier =>
-												s.type === AST_NODE_TYPES.ImportSpecifier,
-										);
-
-									if (hasNamespace) {
-										// Cannot mix namespace with named specifiers in the same import; add a new line import
-										fixes.push(
-											fixer.insertTextAfter(
-												signalsImport,
-												"\nimport { useSignal } from '@preact/signals-react';\n",
-											),
-										);
-									} else if (lastNamed) {
-										fixes.push(fixer.insertTextAfter(lastNamed, ", useSignal"));
-									} else if (defaultSpec) {
-										// Rewrite default-only import to include named specifier group
-										const defaultName = defaultSpec.local.name;
-										fixes.push(
-											fixer.replaceText(
-												signalsImport,
-												`import ${defaultName}, { useSignal } from '@preact/signals-react';`,
-											),
-										);
-									} else {
-										// No specifiers at all; just add a new line import
-										fixes.push(
-											fixer.insertTextAfter(
-												signalsImport,
-												"\nimport { useSignal } from '@preact/signals-react';\n",
-											),
-										);
-									}
+								} else {
+									fixes.push(fixer.insertTextAfter(signalsImport, importText));
 								}
-							} else {
-								const lastImport =
-									importDeclarations[importDeclarations.length - 1];
+							}
+						} else {
+							const lastImport =
+								importDeclarations[importDeclarations.length - 1];
 
-								const importText =
-									"\nimport { useSignal } from '@preact/signals-react';\n";
+							const b = context.sourceCode.ast.body[0];
 
-								const b = context.sourceCode.ast.body[0];
+							if (!b) {
+								return null;
+							}
 
-								if (!b) {
-									return null;
-								}
+							fixes.push(
+								typeof lastImport === "undefined"
+									? fixer.insertTextBefore(b, importText.trimStart())
+									: fixer.insertTextAfter(lastImport, importText),
+							);
+						}
 
+						return fixes.length > 0 ? fixes : null;
+					},
+				});
+
+				if (
+					(typeof initialValue === "undefined" ||
+						initialValue.type === AST_NODE_TYPES.Literal ||
+						initialValue.type === AST_NODE_TYPES.Identifier) &&
+					// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+					stateVar.type === AST_NODE_TYPES.Identifier
+				) {
+					suggestions.push({
+						messageId: "convertToUseSignal",
+						fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+							const fixes: Array<TSESLint.RuleFix> = [];
+
+							ensureUseSignalImport(fixer, fixes, context);
+
+							const initText = initialValue
+								? context.sourceCode.getText(initialValue)
+								: "undefined";
+
+							const typeParamsNode =
+								(node.init &&
+									("typeParameters" in node.init
+										? node.init.typeParameters
+										: "typeArguments" in node.init
+											? node.init.typeArguments
+											: null)) ??
+								null;
+
+							const typeParamsText = typeParamsNode
+								? context.sourceCode.getText(typeParamsNode)
+								: "";
+
+							if (
+								// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+								node.parent &&
+								// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+								node.parent.type === AST_NODE_TYPES.VariableDeclaration &&
+								node.parent.declarations.length === 1
+							) {
 								fixes.push(
-									typeof lastImport === "undefined"
-										? fixer.insertTextBefore(b, importText.trimStart())
-										: fixer.insertTextAfter(lastImport, importText),
+									fixer.replaceText(
+										node.parent,
+										`const ${stateVar.name}${suffix} = useSignal${typeParamsText}(${initText})`,
+									),
+								);
+							} else {
+								fixes.push(
+									fixer.replaceText(
+										node,
+										`${stateVar.name}${suffix} = useSignal${typeParamsText}(${initText})`,
+									),
 								);
 							}
 
-							return fixes.length > 0 ? fixes : null;
-						},
-					});
+							const variable = context.sourceCode
+								.getScope(node)
+								.variables.find((v: Variable): boolean => {
+									return v.name === stateVar.name;
+								});
 
-					if (
-						(typeof initialValue === "undefined" ||
-							initialValue.type === AST_NODE_TYPES.Literal ||
-							initialValue.type === AST_NODE_TYPES.Identifier) &&
-						// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-						stateVar.type === AST_NODE_TYPES.Identifier
-					) {
-						suggestions.push({
-							messageId: "convertToUseSignal",
-							fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
-								const fixes: Array<TSESLint.RuleFix> = [];
-
-								const importDeclarations = context.sourceCode.ast.body.filter(
-									(
-										n: TSESTree.ProgramStatement,
-									): n is TSESTree.ImportDeclaration => {
-										return n.type === AST_NODE_TYPES.ImportDeclaration;
-									},
-								);
-
-								const signalsImport = importDeclarations.find(
-									(
-										d: TSESTree.ImportDeclaration,
-									): d is TSESTree.ImportDeclaration => {
-										return d.source.value === "@preact/signals-react";
-									},
-								);
-
-								if (signalsImport) {
-									const hasUseSignal = signalsImport.specifiers.some(
-										(s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier =>
-											s.type === AST_NODE_TYPES.ImportSpecifier &&
-											s.imported.type === AST_NODE_TYPES.Identifier &&
-											s.imported.name === "useSignal",
-									);
-
-									if (!hasUseSignal) {
-										const hasNamespace = signalsImport.specifiers.some(
-											(s) => s.type === AST_NODE_TYPES.ImportNamespaceSpecifier,
-										);
-										const defaultSpec = signalsImport.specifiers.find(
-											(s): s is TSESTree.ImportDefaultSpecifier =>
-												s.type === AST_NODE_TYPES.ImportDefaultSpecifier,
-										);
-										const lastNamed = [...signalsImport.specifiers]
-											.reverse()
-											.find(
-												(s): s is TSESTree.ImportSpecifier =>
-													s.type === AST_NODE_TYPES.ImportSpecifier,
-											);
-
-										if (hasNamespace) {
-											fixes.push(
-												fixer.insertTextAfter(
-													signalsImport,
-													"\nimport { useSignal } from '@preact/signals-react';\n",
-												),
-											);
-										} else if (lastNamed) {
-											fixes.push(
-												fixer.insertTextAfter(lastNamed, ", useSignal"),
-											);
-										} else if (defaultSpec) {
-											const defaultName = defaultSpec.local.name;
-											fixes.push(
-												fixer.replaceText(
-													signalsImport,
-													`import ${defaultName}, { useSignal } from '@preact/signals-react';`,
-												),
-											);
-										} else {
-											fixes.push(
-												fixer.insertTextAfter(
-													signalsImport,
-													"\nimport { useSignal } from '@preact/signals-react';\n",
-												),
-											);
-										}
-									}
-								} else {
-									const lastImport =
-										importDeclarations[importDeclarations.length - 1];
-
-									const importText =
-										"\nimport { useSignal } from '@preact/signals-react';\n";
-
-									const b = context.sourceCode.ast.body[0];
-
-									if (!b) {
-										return null;
-									}
-
-									fixes.push(
-										typeof lastImport === "undefined"
-											? fixer.insertTextBefore(b, importText.trimStart())
-											: fixer.insertTextAfter(lastImport, importText),
-									);
-								}
-
-								{
-									const initText = initialValue
-										? context.sourceCode.getText(initialValue)
-										: "undefined";
-
-									// Preserve generic type arguments from useState<T>(...)
-									// Support both legacy `typeParameters` and newer `typeArguments` fields from @typescript-eslint
-									const typeParamsNode =
-										(node.init &&
-											("typeParameters" in node.init
-												? node.init.typeParameters
-												: "typeArguments" in node.init
-													? node.init.typeArguments
-													: null)) ??
-										null;
-
-									const typeParamsText = typeParamsNode
-										? context.sourceCode.getText(typeParamsNode)
-										: "";
-
+							if (variable) {
+								for (const ref of variable.references) {
 									if (
-										// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-										node.parent &&
-										// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-										node.parent.type === AST_NODE_TYPES.VariableDeclaration &&
-										node.parent.declarations.length === 1
+										// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
+										!ref.identifier ||
+										ref.identifier.range[0] === stateVar.range[0]
 									) {
-										fixes.push(
-											fixer.replaceText(
-												node.parent,
-												`const ${stateVar.name}${suffix} = useSignal${typeParamsText}(${initText})`,
-											),
-										);
-									} else {
-										fixes.push(
-											fixer.replaceText(
-												node,
-												`${stateVar.name}${suffix} = useSignal${typeParamsText}(${initText})`,
-											),
-										);
+										continue;
 									}
 
-									const variable = context.sourceCode
-										.getScope(node)
-										.variables.find((v: Variable): boolean => {
-											return v.name === stateVar.name;
-										});
+									const ancestors = context.sourceCode.getAncestors(
+										ref.identifier,
+									);
 
-									if (variable) {
-										for (const ref of variable.references) {
-											const id = ref.identifier;
-											// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
-											if (!id || id.range[0] === stateVar.range[0]) {
-												continue;
+									const isJsx = ancestors.some(
+										(
+											a: TSESTree.Node,
+										): a is
+											| TSESTree.JSXElement
+											| TSESTree.JSXFragment
+											| TSESTree.JSXAttribute
+											| TSESTree.JSXExpressionContainer
+											| TSESTree.JSXSpreadAttribute => {
+											return (
+												a.type === AST_NODE_TYPES.JSXElement ||
+												a.type === AST_NODE_TYPES.JSXFragment ||
+												a.type === AST_NODE_TYPES.JSXAttribute ||
+												a.type === AST_NODE_TYPES.JSXExpressionContainer ||
+												a.type === AST_NODE_TYPES.JSXSpreadAttribute
+											);
+										},
+									);
+
+									// Determine if inside a component/hook function
+									let inComponentScope = false;
+
+									for (let i = ancestors.length - 1; i >= 0; i--) {
+										// eslint-disable-next-line security/detect-object-injection
+										const anc = ancestors[i];
+
+										if (typeof anc === "undefined") {
+											continue;
+										}
+
+										if (anc.type === AST_NODE_TYPES.FunctionDeclaration) {
+											if (anc.id && /^[A-Z]/.test(anc.id.name)) {
+												inComponentScope = true;
 											}
 
-											const ancestors = context.sourceCode.getAncestors(id);
+											break;
+										}
 
-											const isJsx = ancestors.some(
+										if (
+											anc.type === AST_NODE_TYPES.FunctionExpression ||
+											anc.type === AST_NODE_TYPES.ArrowFunctionExpression
+										) {
+											// Look for enclosing variable declarator with Uppercase name
+											const vd = ancestors.find(
 												(
-													a: TSESTree.Node,
-												): a is
-													| TSESTree.JSXElement
-													| TSESTree.JSXFragment
-													| TSESTree.JSXAttribute
-													| TSESTree.JSXExpressionContainer
-													| TSESTree.JSXSpreadAttribute => {
-													return (
-														a.type === AST_NODE_TYPES.JSXElement ||
-														a.type === AST_NODE_TYPES.JSXFragment ||
-														a.type === AST_NODE_TYPES.JSXAttribute ||
-														a.type === AST_NODE_TYPES.JSXExpressionContainer ||
-														a.type === AST_NODE_TYPES.JSXSpreadAttribute
-													);
+													x: TSESTree.Node,
+												): x is
+													| TSESTree.VariableDeclaratorDefiniteAssignment
+													| TSESTree.VariableDeclaratorMaybeInit
+													| TSESTree.VariableDeclaratorNoInit
+													| TSESTree.UsingInForOfDeclarator
+													| TSESTree.UsingInNormalContextDeclarator => {
+													return x.type === AST_NODE_TYPES.VariableDeclarator;
 												},
 											);
 
-											// In JSX attribute context? (either directly under JSXAttribute, or inside its expression container)
-											const inJsxAttribute = ancestors.some(
-												(a: TSESTree.Node, idx: number): boolean => {
-													if (a.type === AST_NODE_TYPES.JSXAttribute) {
-														return true;
-													}
+											if (
+												typeof vd !== "undefined" &&
+												vd.id.type === AST_NODE_TYPES.Identifier &&
+												/^[A-Z]/.test(vd.id.name)
+											) {
+												inComponentScope = true;
+											}
 
-													if (
-														a.type === AST_NODE_TYPES.JSXExpressionContainer &&
-														idx > 0 &&
-														ancestors[idx - 1]?.type ===
-															AST_NODE_TYPES.JSXAttribute
-													) {
-														return true;
-													}
+											break;
+										}
+									}
+
+									const inJsxMathOperation =
+										isJsx &&
+										ancestors.some((a: TSESTree.Node): boolean => {
+											if (a.type === AST_NODE_TYPES.BinaryExpression) {
+												return (
+													a.operator === "+" ||
+													a.operator === "-" ||
+													a.operator === "*" ||
+													a.operator === "/" ||
+													a.operator === "%" ||
+													a.operator === "**"
+												);
+											}
+
+											if (a.type === AST_NODE_TYPES.UnaryExpression) {
+												return a.operator === "+" || a.operator === "-";
+											}
+
+											if (a.type === AST_NODE_TYPES.UpdateExpression) {
+												return true; // ++x, --x, x++, x--
+											}
+
+											if (a.type === AST_NODE_TYPES.AssignmentExpression) {
+												return ["+=", "-=", "*=", "/=", "%=", "**="].includes(
+													a.operator,
+												);
+											}
+											return false;
+										});
+
+									const accessor =
+										ancestors.some((a: TSESTree.Node, idx: number): boolean => {
+											if (a.type === AST_NODE_TYPES.JSXAttribute) {
+												return true;
+											}
+
+											if (
+												a.type === AST_NODE_TYPES.JSXExpressionContainer &&
+												idx > 0 &&
+												ancestors[idx - 1]?.type === AST_NODE_TYPES.JSXAttribute
+											) {
+												return true;
+											}
+
+											return false;
+										}) ||
+										(isJsx &&
+											ancestors.some((a: TSESTree.Node): boolean => {
+												if (a.type !== AST_NODE_TYPES.CallExpression) {
 													return false;
-												},
-											);
-
-											// Determine if inside a component/hook function
-											let inComponentScope = false;
-
-											for (let i = ancestors.length - 1; i >= 0; i--) {
-												// eslint-disable-next-line security/detect-object-injection
-												const anc = ancestors[i];
-
-												if (!anc) {
-													continue;
-												}
-
-												if (anc.type === AST_NODE_TYPES.FunctionDeclaration) {
-													if (anc.id && /^[A-Z]/.test(anc.id.name)) {
-														inComponentScope = true;
-													}
-
-													break;
 												}
 
 												if (
-													anc.type === AST_NODE_TYPES.FunctionExpression ||
-													anc.type === AST_NODE_TYPES.ArrowFunctionExpression
+													// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+													a.callee &&
+													ref.identifier.range[0] >= a.callee.range[0] &&
+													ref.identifier.range[1] <= a.callee.range[1]
 												) {
-													// Look for enclosing variable declarator with Uppercase name
-													const vd = ancestors.find(
-														(
-															x: TSESTree.Node,
-														): x is
-															| TSESTree.VariableDeclaratorDefiniteAssignment
-															| TSESTree.VariableDeclaratorMaybeInit
-															| TSESTree.VariableDeclaratorNoInit
-															| TSESTree.UsingInForOfDeclarator
-															| TSESTree.UsingInNormalContextDeclarator => {
-															return (
-																x.type === AST_NODE_TYPES.VariableDeclarator
-															);
-														},
-													);
-
-													if (
-														typeof vd !== "undefined" &&
-														vd.id.type === AST_NODE_TYPES.Identifier &&
-														/^[A-Z]/.test(vd.id.name)
-													) {
-														inComponentScope = true;
-													}
-
-													break;
-												}
-											}
-
-											// Detect if inside a mathematical operation within JSX
-											const inJsxMathOperation =
-												isJsx &&
-												ancestors.some((a: TSESTree.Node): boolean => {
-													if (a.type === AST_NODE_TYPES.BinaryExpression) {
-														return (
-															a.operator === "+" ||
-															a.operator === "-" ||
-															a.operator === "*" ||
-															a.operator === "/" ||
-															a.operator === "%" ||
-															a.operator === "**"
-														);
-													}
-													if (a.type === AST_NODE_TYPES.UnaryExpression) {
-														return a.operator === "+" || a.operator === "-";
-													}
-													if (a.type === AST_NODE_TYPES.UpdateExpression) {
-														return true; // ++x, --x, x++, x--
-													}
-													if (a.type === AST_NODE_TYPES.AssignmentExpression) {
-														return [
-															"+=",
-															"-=",
-															"*=",
-															"/=",
-															"%=",
-															"**=",
-														].includes(a.operator);
-													}
 													return false;
-												});
+												}
 
-											const accessor =
-												inJsxAttribute ||
-												// Used as an argument to a call within JSX
-												(isJsx &&
-													ancestors.some((a: TSESTree.Node): boolean => {
-														if (a.type !== AST_NODE_TYPES.CallExpression) {
+												return a.arguments.some(
+													(arg: TSESTree.CallExpressionArgument): boolean => {
+														// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
+														if (!arg) {
 															return false;
 														}
 
-														// If identifier is within callee, it's not an argument
-														if (
-															// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-															a.callee &&
-															id.range[0] >= a.callee.range[0] &&
-															id.range[1] <= a.callee.range[1]
-														) {
-															return false;
-														}
-														// Identifier lies within one of the arguments' ranges
-														return a.arguments.some(
-															(
-																arg: TSESTree.CallExpressionArgument,
-															): boolean => {
-																// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
-																if (!arg) {
-																	return false;
-																}
-
-																return (
-																	id.range[0] >= arg.range[0] &&
-																	id.range[1] <= arg.range[1]
-																);
-															},
+														return (
+															ref.identifier.range[0] >= arg.range[0] &&
+															ref.identifier.range[1] <= arg.range[1]
 														);
-													})) ||
-												// In JSX math expressions, require .value
-												inJsxMathOperation
+													},
+												);
+											})) ||
+										inJsxMathOperation
+											? ".value"
+											: isJsx
+												? ""
+												: inComponentScope
 													? ".value"
-													: isJsx
-														? ""
-														: inComponentScope
-															? ".value"
-															: ".peek()";
+													: ".peek()";
 
-											fixes.push(
-												fixer.replaceText(
-													id,
-													`${stateVar.name}${suffix}${accessor}`,
-												),
-											);
-										}
-									}
+									fixes.push(
+										fixer.replaceText(
+											ref.identifier,
+											`${stateVar.name}${suffix}${accessor}`,
+										),
+									);
 								}
+							}
 
-								return fixes;
-							},
-						});
-					}
-
-					context.report({
-						node: node.init,
-						messageId: "preferUseSignal",
-						data: {
-							type:
-								typeof initialValue === "undefined"
-									? "state"
-									: initialValue.type === AST_NODE_TYPES.Literal
-										? initialValue.value === null
-											? "null"
-											: typeof initialValue.value
-										: initialValue.type === AST_NODE_TYPES.TemplateLiteral
-											? "string"
-											: initialValue.type === AST_NODE_TYPES.Identifier
-												? "identifier"
-												: "state",
+							return fixes;
 						},
-						suggest: suggestions,
 					});
 				}
+
+				context.report({
+					node: node.init,
+					messageId: "preferUseSignal",
+					data: {
+						type:
+							typeof initialValue === "undefined"
+								? "state"
+								: initialValue.type === AST_NODE_TYPES.Literal
+									? initialValue.value === null
+										? "null"
+										: typeof initialValue.value
+									: initialValue.type === AST_NODE_TYPES.TemplateLiteral
+										? "string"
+										: initialValue.type === AST_NODE_TYPES.Identifier
+											? "identifier"
+											: "state",
+					},
+					suggest: suggestions,
+				});
 			},
 
 			[`${AST_NODE_TYPES.VariableDeclarator}:exit`](

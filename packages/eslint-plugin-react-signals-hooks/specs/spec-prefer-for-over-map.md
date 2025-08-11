@@ -1,11 +1,11 @@
 # Prefer For Over Map Rule Specification
 
-This rule encourages using the `<For>` component from `@preact/signals-react` instead of `.map()` for rendering signal arrays, providing better performance and reactivity.
+This rule encourages using the `<For>` component from `@preact/signals-react/utils` instead of `.map()` for rendering signal arrays, providing better performance and reactivity.
 
 ## Plugin Scope
 
 - Signal sources are detected only from `@preact/signals-react`.
-- Autofixes add/augment imports from `@preact/signals-react`.
+- Autofixes add/augment `For` import from `@preact/signals-react/utils`.
 
 ## Core Functionality
 
@@ -31,11 +31,13 @@ The `prefer-for-over-map` rule detects `.map()` calls on signal arrays and sugge
 - Preserves complex mapping logic
 - Handles both block and concise arrow functions
 
-## Auto-fix Suggestions
+## Auto-fix Behavior
 
 - Replaces `.map()` calls with `<For>` component
-- Automatically adds the `For` import if missing
-- Preserves the callback logic and parameters
+- Automatically adds the `For` import from `@preact/signals-react/utils` if missing
+- Passes the signal itself to `each` (not `.value`)
+- Preserves TypeScript parameter types. If the callback uses object destructuring, converts it to a single typed `item` parameter and rewrites references in the body to `item.prop` form
+- Replaces the enclosing `JSXExpressionContainer` when applicable to avoid extra `{}` around the generated `<For>`
 - Handles both single-parameter and index-based callbacks
 
 ## Error Messages
@@ -62,7 +64,7 @@ While `<For>` is preferred for signal arrays, `.map()` is still useful for:
 
 ## Auto-import
 
-The rule can automatically add the `For` import if it's not already present. The import source is `@preact/signals-react`.
+The rule can automatically add the `For` import if it's not already present. The import source is `@preact/signals-react/utils`.
 
 ## Performance Considerations
 

@@ -18,6 +18,7 @@ import {
 	createPerformanceTracker,
 	DEFAULT_PERFORMANCE_BUDGET,
 } from "./utils/performance.js";
+import { buildSuffixRegex, hasSignalSuffix } from "./utils/suffix.js";
 import type { PerformanceBudget } from "./utils/types.js";
 import { getRuleDocUrl } from "./utils/urls.js";
 
@@ -41,6 +42,10 @@ type Option = {
 	allowedPatterns?: Array<string>;
 	/** Custom severity levels for different violation types */
 	severity?: Severity;
+	/** Enable unsafe autofixes in suggestions (off by default) */
+	unsafeAutofix?: boolean;
+	/** Variable name suffix used to detect signal variables (default: "Signal") */
+	suffix?: string;
 	/** Performance tuning option */
 	performance?: PerformanceBudget;
 };
@@ -85,9 +90,9 @@ function trackIdentifier(
 
 function getSeverity(
 	messageId: MessageIds,
-	option: Option,
+	option?: Option,
 ): "error" | "warn" | "off" {
-	if (!option.severity) {
+	if (!option?.severity) {
 		return "error";
 	}
 
@@ -126,7 +131,76 @@ function getSeverity(
 	}
 }
 
+// Resolve the base identifier name for patterns like:
+//   foo.value = ...
+//   foo.value.bar = ...
+//   foo.value[expr] = ...
+// Returns the identifier name (e.g., "foo") if resolvable, else null
+function resolveBaseIdentifierFromValueChain(
+	node: TSESTree.ChainElement | TSESTree.Expression,
+): string | null {
+	// Unwrap ChainExpression if present (optional chaining not valid on LHS, but be safe)
+	if (node.type === AST_NODE_TYPES.ChainExpression) {
+		const inner = node.expression;
+
+		return resolveBaseIdentifierFromValueChain(inner);
+	}
+
+	if (node.type === AST_NODE_TYPES.Identifier) {
+		return node.name;
+	}
+
+	if (node.type === AST_NODE_TYPES.MemberExpression) {
+		// We want base.value[...]/base.value or base.value.prop
+		if (
+			node.object.type === AST_NODE_TYPES.MemberExpression &&
+			!node.object.computed &&
+			node.object.property.type === AST_NODE_TYPES.Identifier &&
+			node.object.property.name === "value" &&
+			node.object.object.type === AST_NODE_TYPES.Identifier
+		) {
+			return node.object.object.name;
+		}
+
+		// Also support the direct base.value (no further nesting)
+		if (
+			!node.computed &&
+			node.property.type === AST_NODE_TYPES.Identifier &&
+			node.property.name === "value" &&
+			node.object.type === AST_NODE_TYPES.Identifier
+		) {
+			return node.object.name;
+		}
+	}
+
+	return null;
+}
+
+function looksLikeSignal(
+	baseName: string | null,
+	suffixRegex: RegExp | null,
+	option?: Option,
+): boolean {
+	if (baseName === null) {
+		return false;
+	}
+
+	// Suffix-based heuristic
+	if (suffixRegex !== null && hasSignalSuffix(baseName, suffixRegex)) {
+		return true;
+	}
+
+	// Explicit configured names (creator/import-based detection to be added separately)
+	const names = option?.signalNames ?? [];
+
+	return names.some((n: string): boolean => {
+		return baseName === n || baseName.endsWith(n.replace(/^[A-Z]/, ""));
+	});
+}
+
 const resolvedIdentifiers = new Map<string, number>();
+// Track variables created via signal/computed/effect creators in this file
+const knownCreatorSignals = new Set<string>();
 
 let inRenderContext = false;
 let renderDepth = 0;
@@ -192,6 +266,8 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 								enum: ["error", "warn", "off"],
 								default: "error",
 							},
+							unsafeAutofix: { type: "boolean" },
+							suffix: { type: "string" },
 						},
 						additionalProperties: false,
 					},
@@ -247,6 +323,8 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 				signalArrayIndexAssignment: "error",
 				signalNestedPropertyAssignment: "error",
 			},
+			unsafeAutofix: false,
+			suffix: "Signal",
 			performance: DEFAULT_PERFORMANCE_BUDGET,
 		},
 	],
@@ -259,6 +337,34 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 		startPhase(perfKey, "ruleInit");
 
 		const perf = createPerformanceTracker(perfKey, option?.performance);
+
+		// Build suffix regex for variable-name based signal detection
+		const suffixRegex = buildSuffixRegex(option?.suffix);
+
+		// Early bail if file matches any of the allowed patterns
+		if (
+			Array.isArray(option?.allowedPatterns) &&
+			option.allowedPatterns.length > 0
+		) {
+			try {
+				const allowed = option.allowedPatterns.some((p) => {
+					try {
+						// eslint-disable-next-line security/detect-non-literal-regexp
+						const re = new RegExp(p);
+
+						return re.test(context.filename);
+					} catch {
+						return false;
+					}
+				});
+
+				if (allowed) {
+					return {};
+				}
+			} catch {
+				// ignore pattern errors and continue
+			}
+		}
 
 		if (option?.performance?.enableMetrics === true) {
 			startTracking(context, perfKey, option.performance, ruleName);
@@ -345,6 +451,40 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 					PerformanceOperations[`${node.type}Processing`] ??
 						PerformanceOperations.nodeProcessing,
 				);
+			},
+
+			// Capture creator-based signals: const x = signal(...)
+			[AST_NODE_TYPES.VariableDeclarator](
+				node: TSESTree.VariableDeclarator,
+			): void {
+				if (
+					// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
+					!node.id ||
+					node.id.type !== AST_NODE_TYPES.Identifier ||
+					!node.init ||
+					node.init.type !== AST_NODE_TYPES.CallExpression
+				) {
+					return;
+				}
+
+				let creatorName: string | null = null;
+
+				if (node.init.callee.type === AST_NODE_TYPES.Identifier) {
+					creatorName = node.init.callee.name;
+				} else if (
+					node.init.callee.type === AST_NODE_TYPES.MemberExpression &&
+					!node.init.callee.computed &&
+					node.init.callee.property.type === AST_NODE_TYPES.Identifier
+				) {
+					creatorName = node.init.callee.property.name;
+				}
+
+				if (
+					creatorName !== null &&
+					["signal", "computed", "effect"].includes(creatorName)
+				) {
+					knownCreatorSignals.add(node.id.name);
+				}
 			},
 
 			[AST_NODE_TYPES.FunctionDeclaration](
@@ -442,60 +582,99 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 			},
 
 			[AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
-				trackOperation(perfKey, PerformanceOperations.CallExpressionProcessing);
-
-				type CalleeNames =
-					| "useEffect"
-					| "useLayoutEffect"
-					| "useCallback"
-					| "useMemo"
-					| "useImperativeHandle" // @preact/signals-core effect
-					| "effect"
-					| "computed";
-
 				if (
-					node.callee.type === AST_NODE_TYPES.Identifier &&
-					[
-						"useEffect",
-						"useLayoutEffect",
-						"useCallback",
-						"useMemo",
-						"useImperativeHandle",
-						// @preact/signals-core effect
-						"effect",
-						// @preact/signals-core computed
-						"computed",
-					].includes(node.callee.name)
+					!inRenderContext ||
+					renderDepth < 1 ||
+					hookDepth > 0 ||
+					functionDepth > 0
 				) {
-					trackOperation(
-						perfKey,
-						// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-						PerformanceOperations[`hook:${node.callee.name as CalleeNames}`] ??
-							PerformanceOperations.hookCheck,
-					);
-
-					hookDepth++;
-
-					if (hookDepth === 1) {
-						inRenderContext = false;
-
-						trackOperation(
-							perfKey,
-							PerformanceOperations.enteredHookContextProcessing,
-						);
-					}
+					return;
 				}
 
 				if (
-					node.callee.type === AST_NODE_TYPES.Identifier &&
-					option?.signalNames?.includes(node.callee.name) === true
+					node.callee.type === AST_NODE_TYPES.MemberExpression &&
+					!node.callee.computed &&
+					node.callee.property.type === AST_NODE_TYPES.Identifier &&
+					node.callee.object.type === AST_NODE_TYPES.MemberExpression &&
+					!node.callee.object.computed &&
+					node.callee.object.property.type === AST_NODE_TYPES.Identifier &&
+					node.callee.object.property.name === "value" &&
+					node.callee.object.object.type === AST_NODE_TYPES.Identifier
 				) {
-					trackOperation(
-						perfKey,
-						PerformanceOperations.signalFunctionCallProcessing,
-					);
+					const method = node.callee.property.name;
+					const targetName = node.callee.object.object.name;
 
-					trackIdentifier(node.callee.name, perfKey, resolvedIdentifiers);
+					const mutatingArrayMethods = new Set([
+						"push",
+						"pop",
+						"splice",
+						"sort",
+						"reverse",
+						"copyWithin",
+						"fill",
+						"shift",
+						"unshift",
+					]);
+					const mutatingMapSetMethods = new Set([
+						"set",
+						"add",
+						"delete",
+						"clear",
+					]);
+
+					if (
+						mutatingArrayMethods.has(method) ||
+						mutatingMapSetMethods.has(method)
+					) {
+						// Best-effort signal identification via suffix or explicit allowlist of names
+						const looksLikeSignal =
+							hasSignalSuffix(targetName, suffixRegex) ||
+							(option?.signalNames ?? []).some(
+								(n) =>
+									n === targetName ||
+									targetName.endsWith(n.replace(/^[A-Z]/, "")),
+							);
+
+						if (!looksLikeSignal) {
+							return;
+						}
+
+						if (getSeverity("signalPropertyAssignment", option) === "off") {
+							return;
+						}
+
+						context.report({
+							node,
+							messageId: "signalPropertyAssignment",
+							suggest:
+								option?.unsafeAutofix === true
+									? [
+											{
+												messageId: "suggestUseEffect",
+												fix(
+													fixer: TSESLint.RuleFixer,
+												): TSESLint.RuleFix | null {
+													return fixer.replaceText(
+														node,
+														`useEffect(() => { ${context.sourceCode.getText(node)} }, [${targetName}])`,
+													);
+												},
+											},
+											{
+												messageId: "suggestEventHandler",
+												fix(
+													fixer: TSESLint.RuleFixer,
+												): TSESLint.RuleFix | null {
+													return fixer.replaceText(
+														node,
+														`const handleEvent = () => { ${context.sourceCode.getText(node)} }`,
+													);
+												},
+											},
+										]
+									: [],
+						});
+					}
 				}
 			},
 
@@ -528,53 +707,132 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 						PerformanceOperations.assignmentAnalysis,
 				);
 
-				// Check for direct signal value assignment (signal.value = x)
-				if (
-					node.left.type === AST_NODE_TYPES.MemberExpression &&
-					node.left.property.type === AST_NODE_TYPES.Identifier &&
-					node.left.property.name === "value" &&
-					node.left.object.type === AST_NODE_TYPES.Identifier &&
-					option?.signalNames?.some((name: string): boolean => {
-						return (
-							("object" in node.left &&
-								"name" in node.left.object &&
-								node.left.object.name.endsWith(name.replace(/^[A-Z]/, ""))) ||
-							("object" in node.left &&
-								"name" in node.left.object &&
-								node.left.object.name === name)
-						);
-					}) === true
-				) {
-					if (getSeverity("signalValueAssignment", option) === "off") {
+				// Resolve base name for any .value-based assignment
+				const baseName = resolveBaseIdentifierFromValueChain(node.left);
+				const isSignal = looksLikeSignal(baseName, suffixRegex, option);
+
+				if (isSignal) {
+					// Determine specific assignment category
+					const isDirectValue =
+						node.left.type === AST_NODE_TYPES.MemberExpression &&
+						!node.left.computed &&
+						node.left.property.type === AST_NODE_TYPES.Identifier &&
+						node.left.property.name === "value";
+
+					const isIndexedOnValue =
+						node.left.type === AST_NODE_TYPES.MemberExpression &&
+						node.left.computed &&
+						node.left.object.type === AST_NODE_TYPES.MemberExpression &&
+						!node.left.object.computed &&
+						node.left.object.property.type === AST_NODE_TYPES.Identifier &&
+						node.left.object.property.name === "value";
+
+					const isNestedOnValue =
+						node.left.type === AST_NODE_TYPES.MemberExpression &&
+						!node.left.computed &&
+						node.left.object.type === AST_NODE_TYPES.MemberExpression &&
+						!node.left.object.computed &&
+						node.left.object.property.type === AST_NODE_TYPES.Identifier &&
+						node.left.object.property.name === "value";
+
+					// Decide message based on operator
+					const isCompoundOperator = node.operator !== "=";
+
+					if (isDirectValue) {
+						const msg: MessageIds = isCompoundOperator
+							? "signalValueUpdate"
+							: "signalValueAssignment";
+
+						if (getSeverity(msg, option) !== "off") {
+							context.report({
+								node,
+								messageId: msg,
+								suggest:
+									option?.unsafeAutofix === true
+										? [
+												{
+													messageId: "suggestUseEffect",
+													fix(
+														fixer: TSESLint.RuleFixer,
+													): TSESLint.RuleFix | null {
+														return fixer.replaceText(
+															node,
+															`useEffect(() => { ${context.sourceCode.getText(node)} }, [])`,
+														);
+													},
+												},
+												{
+													messageId: "suggestEventHandler",
+													fix(
+														fixer: TSESLint.RuleFixer,
+													): TSESLint.RuleFix | null {
+														return fixer.replaceText(
+															node,
+															`const handleEvent = () => { ${context.sourceCode.getText(node)} }`,
+														);
+													},
+												},
+											]
+										: [],
+							});
+						}
+
 						return;
 					}
 
-					context.report({
-						node,
-						messageId: "signalValueAssignment",
-						suggest: [
-							{
-								messageId: "suggestUseEffect",
-								fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-									return fixer.replaceText(
-										node,
-										`useEffect(() => { ${context.sourceCode.getText(node)} }, [])`,
-									);
-								},
-							},
-							{
-								messageId: "suggestEventHandler",
-								fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-									return fixer.replaceText(
-										node,
-										`const handleEvent = () => { ${context.sourceCode.getText(node)} }`,
-									);
-								},
-							},
-						],
-					});
+					if (isIndexedOnValue) {
+						if (getSeverity("signalArrayIndexAssignment", option) !== "off") {
+							context.report({
+								node,
+								messageId: "signalArrayIndexAssignment",
+								suggest:
+									option?.unsafeAutofix === true
+										? [
+												{
+													messageId: "suggestUseEffect",
+													fix(
+														fixer: TSESLint.RuleFixer,
+													): TSESLint.RuleFix | null {
+														return fixer.replaceText(
+															node,
+															`useEffect(() => { ${context.sourceCode.getText(node)} }, [${baseName ?? ""}])`,
+														);
+													},
+												},
+											]
+										: [],
+							});
+						}
 
-					return;
+						return;
+					}
+
+					if (isNestedOnValue) {
+						if (
+							getSeverity("signalNestedPropertyAssignment", option) !== "off"
+						) {
+							context.report({
+								node,
+								messageId: "signalNestedPropertyAssignment",
+								suggest:
+									option?.unsafeAutofix === true
+										? [
+												{
+													messageId: "suggestUseEffect",
+													fix(
+														fixer: TSESLint.RuleFixer,
+													): TSESLint.RuleFix | null {
+														return fixer.replaceText(
+															node,
+															`useEffect(() => { ${context.sourceCode.getText(node)} }, [])`,
+														);
+													},
+												},
+											]
+										: [],
+							});
+						}
+					}
 				}
 
 				if (
@@ -680,57 +938,44 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 				if (
 					node.argument.type === AST_NODE_TYPES.MemberExpression &&
 					node.argument.property.type === AST_NODE_TYPES.Identifier &&
-					node.argument.property.name === "value" &&
-					node.argument.object.type === AST_NODE_TYPES.Identifier &&
-					option?.signalNames?.some((name: string): boolean => {
-						return (
-							("object" in node.argument &&
-								"object" in node.argument.object &&
-								"name" in node.argument.object &&
-								typeof node.argument.object.name === "string" &&
-								node.argument.object.name.endsWith(
-									name.replace(/^[A-Z]/, ""),
-								)) ||
-							("object" in node.argument &&
-								"name" in node.argument.object &&
-								typeof node.argument.object.name === "string" &&
-								node.argument.object.name === name)
-						);
-					}) === true
+					node.argument.property.name === "value"
 				) {
-					if (getSeverity("signalValueAssignment", option) === "off") {
+					const baseName = resolveBaseIdentifierFromValueChain(node.argument);
+
+					if (!looksLikeSignal(baseName, suffixRegex, option)) {
+						return;
+					}
+
+					if (getSeverity("signalValueUpdate", option) === "off") {
 						return;
 					}
 
 					context.report({
 						node,
 						messageId: "signalValueUpdate",
-						suggest: [
-							{
-								messageId: "suggestUseEffect",
-								fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-									return fixer.replaceText(
-										node,
-										`useEffect(() => { ${context.sourceCode.getText(node)} }, [${
-											"object" in node.argument &&
-											"name" in node.argument.object &&
-											typeof node.argument.object.name === "string"
-												? node.argument.object.name
-												: ""
-										}])`,
-									);
-								},
-							},
-							{
-								messageId: "suggestEventHandler",
-								fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-									return fixer.replaceText(
-										node,
-										`const handleEvent = () => { ${context.sourceCode.getText(node)} }`,
-									);
-								},
-							},
-						],
+						suggest:
+							option?.unsafeAutofix === true
+								? [
+										{
+											messageId: "suggestUseEffect",
+											fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+												return fixer.replaceText(
+													node,
+													`useEffect(() => { ${context.sourceCode.getText(node)} }, [${baseName ?? ""}])`,
+												);
+											},
+										},
+										{
+											messageId: "suggestEventHandler",
+											fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+												return fixer.replaceText(
+													node,
+													`const handleEvent = () => { ${context.sourceCode.getText(node)} }`,
+												);
+											},
+										},
+									]
+								: [],
 					});
 				}
 			},
@@ -786,6 +1031,7 @@ export const noMutationInRenderRule = ESLintUtils.RuleCreator(
 					inRenderContext = true; // Back in render context
 				}
 			},
+
 			"CallExpression:exit"(node: TSESTree.CallExpression): void {
 				if (
 					node.callee.type === AST_NODE_TYPES.Identifier &&
