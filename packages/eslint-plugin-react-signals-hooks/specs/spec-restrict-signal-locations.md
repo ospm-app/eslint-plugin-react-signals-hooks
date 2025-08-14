@@ -141,7 +141,7 @@ Exporting signals from a file often leads to circular imports and breaks the bui
 
 ## Error Messages
 
-- `signalInComponent`: "Avoid creating signals in component bodies. Move to module level or a custom hook."
+- `signalInComponent`: "Avoid creating signals in component bodies. Move to module level or to external file"
 - `computedInComponent`: "Avoid creating computed values in component bodies. Consider using useMemo instead."
 - `exportedSignal`: "Avoid exporting signals to prevent circular dependencies."
 

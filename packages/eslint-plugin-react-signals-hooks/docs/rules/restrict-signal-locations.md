@@ -94,7 +94,7 @@ interface Options {
 
 ### signalInComponent
 
-- **Message**: "Avoid creating signals in component bodies. Move to module level or a custom hook."
+- **Message**: "Avoid creating signals in component bodies. Move to module level or to external file"
 - **Description**: A signal is being created inside a React component body
 
 ### computedInComponent
@@ -186,3 +186,77 @@ You might want to disable this rule when:
 - `no-signal-assignment-in-effect`: Prevents direct signal assignments in effects
 - `no-mutation-in-render`: Prevents signal mutations during render
 - `prefer-signal-effect`: Encourages using signals with effects properly
+
+---
+
+## Additional Guidance and Examples
+
+### ❌ Incorrect: Exported signals
+
+Exporting signals from modules can lead to circular imports and make data flow harder to reason about.
+
+```tsx
+// bad.tsx
+import { signal } from '@preact/signals-react';
+
+// Named export of a signal variable — not recommended
+export const exportedSignal = signal('x');
+
+// Default export of a signal identifier — not recommended
+const defaultSignal = signal('y');
+export default defaultSignal;
+
+// Default export of a call expression creating a signal — not recommended
+export default signal('z');
+```
+
+### ✅ Correct: Avoid exporting signals directly
+
+Prefer exporting factories or plain values derived at call-sites.
+
+```tsx
+// good.tsx
+import { signal } from '@preact/signals-react';
+
+// Export a factory that creates signals locally where needed
+export function createCounter() {
+  const count = signal(0);
+  const inc = () => count.value++;
+  return { count, inc };
+}
+```
+
+### ❌ Incorrect: Creating signals in memo/forwardRef-wrapped components
+
+Components wrapped in `memo` or `forwardRef` are still components. Creating signals inside them is flagged.
+
+```tsx
+import { memo, forwardRef } from 'react';
+import { signal } from '@preact/signals-react';
+
+export const MemoWrapped = memo(() => {
+  const s = signal(0); // ❌ flagged
+  return <div>{s}</div>;
+});
+
+export const ForwardRefWrapped = forwardRef(function Fwd() {
+  const s = signal(0); // ❌ flagged
+  return <div>{s}</div>;
+});
+```
+
+### ℹ️ Aliased and namespaced imports are detected
+
+Aliased `signal`/`computed` and namespace imports (e.g., `S.signal`) are recognized by the rule.
+
+```tsx
+import { signal as sig, computed as cmp } from '@preact/signals-react';
+import * as S from '@preact/signals-react';
+
+export function Component() {
+  // Both calls below are treated as signal/computed creations inside a component
+  const a = sig(1);      // flagged
+  const b = cmp(() => a.value + 1); // flagged (unless allowComputedInComponents: true)
+  return <div>{a} {b}</div>;
+}
+```

@@ -204,8 +204,13 @@ function Component() {
 
 // ✅ With useSignals()
 function Component() {
-  useSignals();
-  return <div>{countSignal.value}</div>;
+  const store = useSignals(1);
+
+  try {
+    return <div>{countSignal.value}</div>;
+  } finally {
+    store.f();
+  }
 }
 ```
 

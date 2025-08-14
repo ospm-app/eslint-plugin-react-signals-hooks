@@ -33,7 +33,7 @@ export function TestUseMemoWithDirectSignalDeps(): JSX.Element {
 	// This should trigger a warning - useMemo with direct signal dependencies
 	const filteredItems = useMemo(() => {
 		return itemsSignal.value.filter((item) => item > filterSignal.value);
-	}, [itemsSignal, filterSignal]);
+	}, [itemsSignal.value, filterSignal.value]);
 
 	return (
 		<div>
@@ -151,7 +151,7 @@ export function TestCorrectComputedUsage(): JSX.Element {
 	const multiplierSignal = signal(2);
 
 	// This should NOT trigger a warning - already using computed()
-	const result = computed(() => {
+	const resultSignal = computed(() => {
 		return baseSignal.value * multiplierSignal.value;
 	});
 
@@ -159,7 +159,7 @@ export function TestCorrectComputedUsage(): JSX.Element {
 		<div>
 			<p>Base: {baseSignal}</p>
 			<p>Multiplier: {multiplierSignal}</p>
-			<p>Result: {result}</p>
+			<p>Result: {resultSignal}</p>
 		</div>
 	);
 }

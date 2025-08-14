@@ -112,6 +112,24 @@ function isSignalCall(
 	return false;
 }
 
+function isMemoLikeCall(node: TSESTree.Node | undefined): boolean {
+	if (!node || node.type !== AST_NODE_TYPES.CallExpression) {
+		return false;
+	}
+	const callee = node.callee;
+	if (callee.type === AST_NODE_TYPES.Identifier) {
+		return callee.name === "memo" || callee.name === "forwardRef";
+	}
+	if (
+		callee.type === AST_NODE_TYPES.MemberExpression &&
+		callee.property.type === AST_NODE_TYPES.Identifier
+	) {
+		const name = callee.property.name;
+		return name === "memo" || name === "forwardRef";
+	}
+	return false;
+}
+
 function isSignalCreation(
 	callee: TSESTree.Expression,
 	signalCreatorLocals: ReadonlySet<string>,
@@ -177,9 +195,9 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 		},
 		messages: {
 			signalInComponent:
-				"Avoid creating signals in component bodies. Move to module level or a custom hook.",
+				"Avoid creating signals in component bodies. Move to module level or to external file",
 			computedInComponent:
-				"Avoid creating computed values in component bodies. Consider using useMemo instead.",
+				"Avoid creating computed values in component bodies. Prefer moving them to a custom hook or module scope. If you must keep it in the component, consider useMemo.",
 			exportedSignal:
 				"Avoid exporting signals directly. Prefer creating them locally and passing values or utilities instead. If you suspect circular imports, run a circular dependency diagnostic (e.g., with @biomejs/biome).",
 		},
@@ -199,7 +217,7 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 					},
 					customHookPattern: {
 						type: "string",
-						default: "^use[A-Z]",
+						default: "^use[A-Z][a-zA-Z0-9]*$",
 					},
 					performance: {
 						type: "object",
@@ -248,7 +266,7 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 		{
 			allowedDirs: [],
 			allowComputedInComponents: false,
-			customHookPattern: "^use[A-Z]",
+			customHookPattern: "^use[A-Z][a-zA-Z0-9]*$",
 			performance: DEFAULT_PERFORMANCE_BUDGET,
 		} satisfies Option,
 	],
@@ -293,6 +311,12 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 		endPhase(perfKey, "ruleInit");
 
 		let nodeCount = 0;
+
+		// Precompile hook regex once for performance/safety
+		// eslint-disable-next-line security/detect-non-literal-regexp
+		const hookRegex = new RegExp(
+			option?.customHookPattern ?? "^use[A-Z][a-zA-Z0-9]*$",
+		);
 
 		function shouldContinue(): boolean {
 			nodeCount++;
@@ -389,12 +413,11 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 					return;
 				}
 
-				const decl = node.declaration;
-
-				if (decl.type === AST_NODE_TYPES.VariableDeclaration) {
-					for (const d of decl.declarations) {
+				if (node.declaration.type === AST_NODE_TYPES.VariableDeclaration) {
+					for (const d of node.declaration.declarations) {
 						if (
-							d.init?.type === AST_NODE_TYPES.CallExpression &&
+							d.init !== null &&
+							d.init.type === AST_NODE_TYPES.CallExpression &&
 							isSignalCreation(
 								d.init.callee,
 								signalCreatorLocals,
@@ -406,21 +429,27 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 						}
 					}
 				} else if (
-					decl.type === AST_NODE_TYPES.Identifier &&
-					signalVariables.has(decl.name) &&
+					node.declaration.type === AST_NODE_TYPES.Identifier &&
+					signalVariables.has(node.declaration.name) &&
 					getSeverity("exportedSignal", option) !== "off"
 				) {
-					context.report({ node: decl, messageId: "exportedSignal" });
+					context.report({
+						node: node.declaration,
+						messageId: "exportedSignal",
+					});
 				} else if (
-					decl.type === AST_NODE_TYPES.CallExpression &&
+					node.declaration.type === AST_NODE_TYPES.CallExpression &&
 					isSignalCreation(
-						decl.callee,
+						node.declaration.callee,
 						signalCreatorLocals,
 						signalNamespaces,
 					) &&
 					getSeverity("exportedSignal", option) !== "off"
 				) {
-					context.report({ node: decl, messageId: "exportedSignal" });
+					context.report({
+						node: node.declaration,
+						messageId: "exportedSignal",
+					});
 				}
 			},
 
@@ -432,13 +461,9 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 						node.id.type === AST_NODE_TYPES.Identifier &&
 						/^[A-Z]/.test(node.id.name),
 					isHook:
-						typeof option?.customHookPattern === "string" &&
-						("id" in node && node.id && "name" in node.id
-							? // eslint-disable-next-line security/detect-non-literal-regexp
-								new RegExp(option.customHookPattern).test(
-									node.id.name as string,
-								)
-							: false),
+						"id" in node && node.id && "name" in node.id
+							? hookRegex.test(node.id.name as string)
+							: false,
 					node,
 				});
 			},
@@ -455,15 +480,14 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 						node.parent !== null &&
 						node.parent.type === AST_NODE_TYPES.VariableDeclarator &&
 						node.parent.id.type === AST_NODE_TYPES.Identifier &&
-						/^[A-Z]/.test(node.parent.id.name),
+						(/^[A-Z]/.test(node.parent.id.name) ||
+							isMemoLikeCall(node.parent.parent as TSESTree.Node | undefined)),
 					isHook:
-						typeof option?.customHookPattern === "string" &&
-						(node.parent &&
+						node.parent &&
 						node.parent.type === AST_NODE_TYPES.VariableDeclarator &&
 						node.parent.id.type === AST_NODE_TYPES.Identifier
-							? // eslint-disable-next-line security/detect-non-literal-regexp
-								new RegExp(option.customHookPattern).test(node.parent.id.name)
-							: false),
+							? hookRegex.test(node.parent.id.name)
+							: false,
 					node,
 				});
 			},
@@ -477,17 +501,17 @@ export const restrictSignalLocations = ESLintUtils.RuleCreator(
 					isComponent:
 						// Prefer variable declarator name when present
 						typeof node.parent !== "undefined" &&
-						node.parent.type === AST_NODE_TYPES.VariableDeclarator &&
-						node.parent.id.type === AST_NODE_TYPES.Identifier &&
-						/^[A-Z]/.test(node.parent.id.name),
+						((node.parent.type === AST_NODE_TYPES.VariableDeclarator &&
+							node.parent.id.type === AST_NODE_TYPES.Identifier &&
+							/^[A-Z]/.test(node.parent.id.name)) ||
+							// Or when wrapped in memo/forwardRef
+							isMemoLikeCall(node.parent as unknown as TSESTree.Node)),
 					isHook:
-						typeof option?.customHookPattern === "string" &&
-						(node.parent &&
+						node.parent &&
 						node.parent.type === AST_NODE_TYPES.VariableDeclarator &&
 						node.parent.id.type === AST_NODE_TYPES.Identifier
-							? // eslint-disable-next-line security/detect-non-literal-regexp
-								new RegExp(option.customHookPattern).test(node.parent.id.name)
-							: false),
+							? hookRegex.test(node.parent.id.name)
+							: false,
 					node,
 				});
 			},

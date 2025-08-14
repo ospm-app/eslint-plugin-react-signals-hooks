@@ -1,27 +1,42 @@
 {
-  "name": "eslint-8-plugin-react-signals-test",
-  "version": "1.0.0",
-  "private": true,
-  "description": "Test package for ESLint 8 compatibility with @ospm/eslint-plugin-react-signals-hooks",
-  "main": "index.js",
-  "scripts": {
-    "test": "eslint . --ext .ts,.tsx"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "2.1.2",
-    "@total-typescript/ts-reset": "0.6.1",
-    "@ospm/eslint-plugin-react-signals-hooks": "workspace:*",
-    "@types/react": "^18.2.0",
-    "@typescript-eslint/eslint-plugin": "^8.38.0",
-    "@typescript-eslint/parser": "^8.38.0",
-    "eslint": "^8.57.0",
-    "typescript": "^5.8.3"
-  },
-  "peerDependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
-    "@types/node": "^18.2.0"
-  }
+	"name": "eslint-8-plugin-react-signals-test",
+	"version": "1.0.0",
+	"private": true,
+	"description": "Test package for ESLint 8 compatibility with @ospm/eslint-plugin-react-signals-hooks",
+	"main": "index.js",
+	"scripts": {
+		"test": "eslint . --ext .ts,.tsx"
+	},
+	"devDependencies": {
+		"globals": "^16.3.0",
+		"@babel/preset-env": "^7.28.0",
+		"@babel/eslint-parser": "^7.28.0",
+		"@biomejs/biome": "2.1.4",
+		"@total-typescript/ts-reset": "0.6.1",
+		"@ospm/eslint-plugin-react-signals-hooks": "workspace:*",
+		"@types/react": "^18.2.0",
+		"@typescript-eslint/eslint-plugin": "^8.39.1",
+		"@typescript-eslint/parser": "^8.39.1",
+		"eslint": "^8.57.0",
+		"eslint-config-typescript": "^3.0.0",
+		"eslint-plugin-es": "^4.1.0",
+		"eslint-plugin-import": "^2.32.0",
+		"eslint-plugin-jsx-a11y": "^6.10.2",
+		"eslint-plugin-n": "^17.21.3",
+		"eslint-plugin-optimize-regex": "^1.2.1",
+		"eslint-plugin-oxlint": "^1.11.2",
+		"eslint-plugin-promise": "^7.2.1",
+		"eslint-plugin-react": "^7.37.5",
+		"eslint-plugin-security": "^3.0.1",
+		"eslint-plugin-react-hooks": "^5.2.0",
+		"oxlint": "1.11.2",
+		"typescript": "^5.9.2"
+	},
+	"peerDependencies": {
+		"react": "^18.2.0",
+		"react-dom": "^18.2.0",
+		"@types/react": "^18.2.0",
+		"@types/react-dom": "^18.2.0",
+		"@types/node": "^18.2.0"
+	}
 }

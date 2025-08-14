@@ -5,7 +5,7 @@ import { useEffect, useMemo, type JSX } from 'react';
 
 const piecePosMapSignal = signal({ test: {} });
 
-// eslint-disable-next-line react-signals-hooks/require-use-signals
+ 
 export function TestComponent(): JSX.Element | null {
   const id = 'test';
 

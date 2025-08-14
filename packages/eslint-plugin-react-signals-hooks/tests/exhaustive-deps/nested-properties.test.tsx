@@ -1,4 +1,5 @@
 /** biome-ignore-all assist/source/organizeImports: off */
+/** biome-ignore-all lint/correctness/useHookAtTopLevel: <explanation> */
 import { signal } from "@preact/signals-react";
 import { useSignals } from "@preact/signals-react/runtime";
 import { useMemo, type JSX } from "react";
@@ -45,36 +46,40 @@ type Props = {
 function TestNestedProperties({ id, isSelected }: Props): JSX.Element | null {
 	// Test case 1: Should warn that hexagonsSignal.value[id] is redundant
 	// when more specific nested properties are accessed
-	useSignals();
+	const store = useSignals(1);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: false positive
-	const vector = useMemo(() => {
-		return {
-			x: hexagonsSignal.value[id].coordinate[0],
-			y: hexagonsSignal.value[id].coordinate[1],
-		};
-	}, [
-		id,
-		hexagonsSignal.value[id], // This should be flagged as redundant
-		hexagonsSignal.value[id].coordinate[0],
-		hexagonsSignal.value[id].coordinate[1],
-	]);
+	try {
+		// biome-ignore lint/correctness/useExhaustiveDependencies: false positive
+		const vector = useMemo(() => {
+			return {
+				x: hexagonsSignal.value[id].coordinate[0],
+				y: hexagonsSignal.value[id].coordinate[1],
+			};
+		}, [
+			id,
+			hexagonsSignal.value[id], // This should be flagged as redundant
+			hexagonsSignal.value[id].coordinate[0],
+			hexagonsSignal.value[id].coordinate[1],
+		]);
 
-	// Test case 2: Should warn about missing nested properties
-	// biome-ignore lint/correctness/useExhaustiveDependencies: false positive
-	const color = useMemo(() => {
-		if (isSelected) {
-			return "#4a90e2";
-		}
+		// Test case 2: Should warn about missing nested properties
+		// biome-ignore lint/correctness/useExhaustiveDependencies: false positive
+		const color = useMemo(() => {
+			if (isSelected) {
+				return "#4a90e2";
+			}
 
-		return hexagonsSignal.value[id].color;
-	}, [
-		isSelected,
-		id,
-		hexagonsSignal.value[id], // This should be replaced with hexagonsSignal.value[id].color
-	]);
+			return hexagonsSignal.value[id].color;
+		}, [
+			isSelected,
+			id,
+			hexagonsSignal.value[id], // This should be replaced with hexagonsSignal.value[id].color
+		]);
 
-	return <Text>{`${color} ${vector.x}`}</Text>;
+		return <Text>{`${color} ${vector.x}`}</Text>;
+	} finally {
+		store.f();
+	}
 }
 
 export default TestNestedProperties;

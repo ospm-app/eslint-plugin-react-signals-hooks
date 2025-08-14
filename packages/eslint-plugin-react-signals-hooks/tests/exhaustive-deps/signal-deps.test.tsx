@@ -1,4 +1,6 @@
 /** biome-ignore-all assist/source/organizeImports: off */
+/** biome-ignore-all lint/correctness/useExhaustiveDependencies: <explanation> */
+/** biome-ignore-all lint/correctness/useHookAtTopLevel: off */
 import { signal } from "@preact/signals-react";
 import { useSignals } from "@preact/signals-react/runtime";
 import { useEffect, useState, type JSX } from "react";
@@ -9,7 +11,6 @@ export function TestMissingSignalDep(): JSX.Element {
 	const counterSignal = signal(0);
 	const [_count, setCount] = useState(0);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: false positive
 	useEffect(() => {
 		// This should be flagged as a missing dependency
 		console.info("Counter value:", counterSignal.value);
@@ -17,7 +18,7 @@ export function TestMissingSignalDep(): JSX.Element {
 		if (counterSignal.value > 5) {
 			setCount(counterSignal.value);
 		}
-	}, [setCount]); // Missing counterSignal,value dependency
+	}, [setCount]); // Missing counterSignal.value dependency
 
 	return <div>{counterSignal}</div>;
 }
@@ -38,16 +39,19 @@ export function TestCorrectSignalDep() {
 // This component should trigger an ESLint warning for missing signal value access
 export function TestMissingSignalValueDep() {
 	// Component-scoped signal
-	useSignals();
+	const store = useSignals(1);
 
-	const nameSignal = signal("test");
+	try {
+		const nameSignal = signal("test");
 
-	// This effect uses nameSignal.value but doesn't list it as a dependency
-	// biome-ignore lint/correctness/useExhaustiveDependencies: false positive
-	useEffect(() => {
-		const name = nameSignal.value;
-		console.info("Name:", name);
-	}, []); // Empty dependency array - should flag nameSignal.value as missing
+		// This effect uses nameSignal.value but doesn't list it as a dependency
+		useEffect(() => {
+			const name = nameSignal.value;
+			console.info("Name:", name);
+		}, []); // Empty dependency array - should flag nameSignal.value as missing
 
-	return <div>{nameSignal}</div>;
+		return <div>{nameSignal}</div>;
+	} finally {
+		store.f();
+	}
 }

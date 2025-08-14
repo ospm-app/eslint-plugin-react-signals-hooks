@@ -329,8 +329,10 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    console.info(`${ruleName}: Rule configuration:`, option);
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
     recordMetric(perfKey, 'config', {
       performance: {
@@ -386,7 +388,7 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
       },
 
       // Track rule definitions
-      CallExpression(node: TSESTree.CallExpression): void {
+      [AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
         if (
           node.type === 'CallExpression' &&
           node.callee.type === 'Identifier' &&
@@ -537,25 +539,22 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
                   if (
                     typeof docsProp !== 'undefined' &&
                     'value' in docsProp &&
-                    docsProp.value.type === AST_NODE_TYPES.ObjectExpression
+                    docsProp.value.type === AST_NODE_TYPES.ObjectExpression &&
+                    !docsProp.value.properties.find(
+                      (prop: TSESTree.ObjectLiteralElement): boolean => {
+                        return (
+                          prop.type === AST_NODE_TYPES.Property &&
+                          prop.key.type === AST_NODE_TYPES.Identifier &&
+                          prop.key.name === 'url'
+                        );
+                      }
+                    )
                   ) {
-                    if (
-                      !docsProp.value.properties.find(
-                        (prop: TSESTree.ObjectLiteralElement): boolean => {
-                          return (
-                            prop.type === AST_NODE_TYPES.Property &&
-                            prop.key.type === AST_NODE_TYPES.Identifier &&
-                            prop.key.name === 'url'
-                          );
-                        }
-                      )
-                    ) {
-                      context.report({
-                        node: docsProp,
-                        messageId: 'missingDocsUrl',
-                        data: { ruleName: currentRuleName || 'unknown' },
-                      });
-                    }
+                    context.report({
+                      node: docsProp,
+                      messageId: 'missingDocsUrl',
+                      data: { ruleName: currentRuleName || 'unknown' },
+                    });
                   }
                 }
               }
@@ -649,8 +648,9 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
                     prop.key.type === AST_NODE_TYPES.Identifier &&
                     prop.key.name === 'messages'
                   );
-                } catch (e) {
+                } catch (e: unknown) {
                   console.warn('Error checking messages property:', e);
+
                   return false;
                 }
               }
@@ -660,28 +660,25 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
               typeof messagesProp !== 'undefined' &&
               'value' in messagesProp &&
               messagesProp.value &&
-              messagesProp.value.type === AST_NODE_TYPES.ObjectExpression
+              messagesProp.value.type === AST_NODE_TYPES.ObjectExpression &&
+              messagesProp.value.properties &&
+              Array.isArray(messagesProp.value.properties)
             ) {
-              // Validate all message IDs
-              if (messagesProp.value.properties && Array.isArray(messagesProp.value.properties)) {
-                messagesProp.value.properties.forEach(
-                  (prop: TSESTree.ObjectLiteralElement): void => {
-                    try {
-                      if (
-                        prop &&
-                        prop.type === AST_NODE_TYPES.Property &&
-                        prop.key &&
-                        prop.key.type === AST_NODE_TYPES.Literal &&
-                        typeof prop.key.value === 'string'
-                      ) {
-                        validateMessageId(prop.key.value, prop.key, context);
-                      }
-                    } catch (e) {
-                      console.warn('Error validating message ID:', e);
-                    }
+              messagesProp.value.properties.forEach((prop: TSESTree.ObjectLiteralElement): void => {
+                try {
+                  if (
+                    prop &&
+                    prop.type === AST_NODE_TYPES.Property &&
+                    prop.key &&
+                    prop.key.type === AST_NODE_TYPES.Literal &&
+                    typeof prop.key.value === 'string'
+                  ) {
+                    validateMessageId(prop.key.value, prop.key, context);
                   }
-                );
-              }
+                } catch (e) {
+                  console.warn('Error validating message ID:', e);
+                }
+              });
             }
           }
         }
@@ -724,7 +721,9 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
         }
 
         inRuleDefinition = true;
+
         currentRuleNode = node;
+
         currentRuleName =
           node.id.type === AST_NODE_TYPES.Identifier &&
           node.init &&
@@ -815,6 +814,7 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
 
         if (hasSuggestionsProp !== null) {
           hasSuggestions = true;
+
           if (
             'value' in hasSuggestionsProp &&
             hasSuggestionsProp.value.type === AST_NODE_TYPES.Literal &&
@@ -848,7 +848,7 @@ export const consistentRuleStructureRule = ESLintUtils.RuleCreator((name: string
         }
 
         // Check for performance tracking
-        if (option?.requirePerformanceTracking) {
+        if (option?.requirePerformanceTracking === true) {
           const prop = getProperty(ruleOptions, 'create');
 
           const createFn = prop !== null && 'value' in prop ? prop.value : null;

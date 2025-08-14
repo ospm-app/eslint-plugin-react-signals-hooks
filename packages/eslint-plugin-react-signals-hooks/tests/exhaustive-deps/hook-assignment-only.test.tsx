@@ -1,5 +1,5 @@
-/* eslint-disable react-signals-hooks/prefer-signal-effect */
-/* eslint-disable react-signals-hooks/prefer-computed */
+ 
+ 
 import { effect, signal } from "@preact/signals-core";
 import { useSignals } from "@preact/signals-react/runtime";
 import { type JSX, useCallback, useEffect, useMemo } from "react";
@@ -96,15 +96,19 @@ export function TestConditionalAssignment(): JSX.Element | null {
 
 // Case 8: Assignment in callback within hook - still no dependency needed
 export function TestAssignmentInCallback(): JSX.Element | null {
-	useSignals();
+	const store = useSignals(1);
 
-	effect(() => {
-		const timer = setTimeout(() => {
-			counterSignal.value = 100; // ASSIGNMENT - no dependency needed
-		}, 1000);
+	try {
+		effect(() => {
+			const timer = setTimeout(() => {
+				counterSignal.value = 100; // ASSIGNMENT - no dependency needed
+			}, 1000);
 
-		return () => clearTimeout(timer);
-	}); // This should be flagged as unnecessary
+			return () => clearTimeout(timer);
+		}); // This should be flagged as unnecessary
 
-	return null;
+		return null;
+	} finally {
+		store.f();
+	}
 }

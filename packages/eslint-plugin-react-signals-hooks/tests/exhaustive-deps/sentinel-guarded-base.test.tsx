@@ -1,4 +1,4 @@
-/* eslint-disable react-signals-hooks/prefer-signal-effect */
+ 
 /** biome-ignore-all lint/correctness/useHookAtTopLevel: not relevant */
 /** biome-ignore-all assist/source/organizeImports: off */
 import { useMemo, type JSX } from 'react';

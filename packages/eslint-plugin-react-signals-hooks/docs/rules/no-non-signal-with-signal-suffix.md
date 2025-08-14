@@ -169,6 +169,9 @@ interface Options {
   /** Whether to validate object/class properties that end with the suffix; default true */
   validateProperties?: boolean;
   
+  /** When true, also validate exported variables (by default exported names are skipped) */
+  validateExported?: boolean;
+  
   /** Severity levels for different violation types */
   severity?: {
     /** Severity for variables with Signal suffix that aren't signals */
@@ -199,6 +202,7 @@ interface Options {
   "signalNames": ["signal", "useSignal", "createSignal"],
   "suffix": "Signal",
   "validateProperties": true,
+  "validateExported": false,
   "severity": {
     "variableWithSignalSuffixNotSignal": "error",
     "parameterWithSignalSuffixNotSignal": "error",
@@ -249,6 +253,7 @@ This rule can report the following types of issues:
 - **Fix Suggestions**:
   - Remove the 'Signal' suffix if the variable shouldn't be a signal
   - Initialize the variable as a signal if it should be one
+    - Note: the "Convert to signal" suggestion is offered only when it is safe (single-declarator `const` with an existing named `signal` import). Otherwise, only a rename suggestion is provided to avoid unsafe fixes.
 
 ### Parameter with Signal Suffix Not a Signal
 

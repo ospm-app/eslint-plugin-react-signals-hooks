@@ -57,7 +57,7 @@ Update `workspace.jsonc` with our configuration:
     "policy": {
       "dependencies": {},
       "peerDependencies": {
-        "eslint": ">=8.0.0"
+        "eslint": ">=8.57.1 || ^9.33.0"
       }
     }
   },

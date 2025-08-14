@@ -36,6 +36,7 @@ type Severity = {
 
 type Option = {
 	onlyWhenReadInRender?: boolean;
+	renameRef?: boolean;
 	performance?: PerformanceBudget;
 	severity?: Severity;
 };
@@ -162,6 +163,12 @@ export const preferUseSignalRefOverUseRefRule = ESLintUtils.RuleCreator(
 						description:
 							"When true, only suggest for refs whose .current is read during render/JSX.",
 					},
+					renameRef: {
+						type: "boolean",
+						default: true,
+						description:
+							"When false, keep original variable name (do not append SignalRef).",
+					},
 					performance: {
 						type: "object",
 						properties: {
@@ -209,6 +216,7 @@ export const preferUseSignalRefOverUseRefRule = ESLintUtils.RuleCreator(
 	defaultOptions: [
 		{
 			onlyWhenReadInRender: true,
+			renameRef: true,
 			performance: DEFAULT_PERFORMANCE_BUDGET,
 			severity: {
 				preferUseSignalRef: "error",
@@ -563,6 +571,7 @@ export const preferUseSignalRefOverUseRefRule = ESLintUtils.RuleCreator(
 							const newName = computeNewName(name);
 
 							if (
+								option?.renameRef !== false &&
 								typeof idNode !== "undefined" &&
 								typeof varDecl !== "undefined" &&
 								context.sourceCode.scopeManager !== null &&

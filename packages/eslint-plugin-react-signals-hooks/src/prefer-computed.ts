@@ -36,6 +36,27 @@ type Option = {
   performance?: PerformanceBudget;
   severity?: Severity;
   suffix?: string;
+  /**
+   * Controls whether the fixer renames the resulting computed variable and updates references.
+   * Default: true
+   */
+  rename?: boolean;
+  /**
+   * Controls how accessors are applied when updating references to the computed variable.
+   */
+  accessors?: {
+    /**
+     * Accessor strategy within JSX (excluding attributes and call args which still require `.value`).
+     * - 'auto'  => no accessor for general JSX expressions, '.value' for attributes/call args
+     * - 'value' => force '.value' in all JSX contexts
+     * - 'none'  => never add accessor in JSX contexts (attributes/call args still use '.value')
+     */
+    jsx?: 'auto' | 'value' | 'none';
+    /** Accessor to use in non-JSX contexts within component/hook bodies. Default: 'value' */
+    inComponent?: 'value' | 'peek';
+    /** Accessor to use outside component scope. Default: 'peek' */
+    outsideComponent?: 'peek' | 'value';
+  };
 };
 
 type Options = [Option?];
@@ -204,6 +225,16 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
             additionalProperties: false,
           },
           suffix: { type: 'string', minLength: 1 },
+          rename: { type: 'boolean' },
+          accessors: {
+            type: 'object',
+            properties: {
+              jsx: { type: 'string', enum: ['auto', 'value', 'none'] },
+              inComponent: { type: 'string', enum: ['value', 'peek'] },
+              outsideComponent: { type: 'string', enum: ['peek', 'value'] },
+            },
+            additionalProperties: false,
+          },
         },
         additionalProperties: false,
       },
@@ -212,6 +243,12 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
   defaultOptions: [
     {
       performance: DEFAULT_PERFORMANCE_BUDGET,
+      rename: true,
+      accessors: {
+        jsx: 'auto',
+        inComponent: 'value',
+        outsideComponent: 'peek',
+      },
     },
   ],
   create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
@@ -414,7 +451,7 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
                     `computed(${context.sourceCode.getText(callback)})`
                   );
 
-                  // Also rename the capturing variable to have Signal suffix and fix all references with correct accessors
+                  // Also optionally rename the capturing variable to have Signal suffix and fix all references with correct accessors
                   // Find the VariableDeclarator that initializes with this call
                   let decl: TSESTree.VariableDeclarator | null = null;
                   for (const anc of context.sourceCode.getAncestors(node)) {
@@ -424,7 +461,11 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
                     }
                   }
 
-                  if (decl && decl.id.type === AST_NODE_TYPES.Identifier) {
+                  if (
+                    option?.rename !== false &&
+                    decl &&
+                    decl.id.type === AST_NODE_TYPES.Identifier
+                  ) {
                     const originalName = decl.id.name;
 
                     // Build the fixed name similar to signal-variable-name rule
@@ -574,14 +615,21 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
                                 });
                               });
 
-                            const accessor =
-                              inJsxAttribute || isInJsxCallArg
-                                ? '.value'
-                                : isJsx
-                                  ? ''
-                                  : inComponentScope
-                                    ? '.value'
-                                    : '.peek()';
+                            const jsxStrategy = option?.accessors?.jsx ?? 'auto';
+                            const inCompPref = option?.accessors?.inComponent ?? 'value';
+                            const outCompPref = option?.accessors?.outsideComponent ?? 'peek';
+
+                            let accessor = '';
+
+                            if (inJsxAttribute || isInJsxCallArg) {
+                              accessor = '.value';
+                            } else if (isJsx) {
+                              accessor = jsxStrategy === 'value' ? '.value' : '';
+                            } else if (inComponentScope) {
+                              accessor = inCompPref === 'value' ? '.value' : '.peek()';
+                            } else {
+                              accessor = outCompPref === 'peek' ? '.peek()' : '.value';
+                            }
 
                             yield fixer.replaceText(ref, `${fixedName}${accessor}`);
                           }
@@ -598,10 +646,7 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
                     return;
                   }
 
-                  const computedImport = getOrCreateComputedImport(
-                    context.getSourceCode(),
-                    program
-                  );
+                  const computedImport = getOrCreateComputedImport(context.sourceCode, program);
 
                   recordMetric(
                     perfKey,
@@ -625,7 +670,11 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
                     if (!hasComputed && last) {
                       yield fixer.insertTextAfter(last, ', computed');
                     }
-                  } else if (typeof program?.body[0] !== 'undefined') {
+
+                    return;
+                  }
+
+                  if (typeof program?.body[0] !== 'undefined') {
                     yield fixer.insertTextBefore(
                       program.body[0],
                       "import { computed } from '@preact/signals-react';\n"

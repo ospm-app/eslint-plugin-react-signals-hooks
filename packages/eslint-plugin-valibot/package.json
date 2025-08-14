@@ -22,19 +22,19 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "@biomejs/biome": "2.1.2",
-    "eslint": "^9.31.0",
+    "@biomejs/biome": "2.1.4",
+    "eslint": "^9.33.0",
     "@types/eslint": "^9.6.1",
-    "@types/node": "^24.1.0",
-    "@typescript-eslint/utils": "^8.38.0",
-    "@typescript-eslint/eslint-plugin": "^8.38.0",
-    "@typescript-eslint/parser": "^8.38.0",
-    "typescript": "^5.8.3"
+    "@types/node": "^24.2.1",
+    "@typescript-eslint/utils": "^8.39.1",
+    "@typescript-eslint/eslint-plugin": "^8.39.1",
+    "@typescript-eslint/parser": "^8.39.1",
+    "typescript": "^5.9.2"
   },
   "peerDependencies": {
     "valibot": "^1.0.0",
-    "eslint": "^8.57.1 || ^9.31.0",
-    "typescript": "^5.8.3"
+    "eslint": "^8.57.1 || ^9.33.0",
+    "typescript": "^5.9.2"
   },
   "repository": {
     "type": "git",

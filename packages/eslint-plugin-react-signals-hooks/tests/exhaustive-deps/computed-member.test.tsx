@@ -80,7 +80,7 @@ function AssignmentOnlyTest(): JSX.Element | null {
   }, []); // This is correct - no dependencies needed
 
   // Test 2: Multiple assignments to computed properties
-  // eslint-disable-next-line react-signals-hooks/prefer-signal-effect
+   
   useEffect(() => {
     // Multiple assignments, all write-only
     piecePosMapSignal.value[externalId] = [3, 4];
@@ -97,7 +97,7 @@ function AssignmentOnlyTest(): JSX.Element | null {
  * When a computed property is used for both reading and writing,
  * it should be required in the dependency array.
  */
-// eslint-disable-next-line react-signals-hooks/require-use-signals
+ 
 function MixedTest(): JSX.Element | null {
   // Test 1: Both read and write to computed property with external ID
   useEffect(() => {
@@ -113,7 +113,7 @@ function MixedTest(): JSX.Element | null {
   }, []); // Missing dependency: piecePosMapSignal.value[externalId]
 
   // Test 2: Read from one property, write to another
-  // eslint-disable-next-line react-signals-hooks/prefer-signal-effect
+   
   useEffect(() => {
     // Read from one property, write to another
     const pos = piecePosMapSignal.value[externalId];

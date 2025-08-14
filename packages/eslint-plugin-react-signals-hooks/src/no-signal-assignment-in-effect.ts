@@ -26,9 +26,6 @@ type MessageIds =
   | 'avoidSignalAssignmentInEffect'
   | 'suggestUseSignalsEffect'
   | 'suggestUseSignalsLayoutEffect'
-  | 'missingDependencies'
-  | 'unnecessaryDependencies'
-  | 'duplicateDependencies'
   | 'avoidSignalAssignmentInLayoutEffect';
 
 type Severity = {
@@ -70,18 +67,6 @@ function getSeverity(messageId: MessageIds, options: Option | undefined): 'error
     case 'suggestUseSignalsLayoutEffect': {
       return options.severity.suggestUseSignalsLayoutEffect ?? 'error';
     }
-    case 'missingDependencies': {
-      return options.severity.missingDependencies ?? 'error';
-    }
-
-    case 'unnecessaryDependencies': {
-      return options.severity.unnecessaryDependencies ?? 'error';
-    }
-
-    case 'duplicateDependencies': {
-      return options.severity.duplicateDependencies ?? 'error';
-    }
-
     case 'avoidSignalAssignmentInLayoutEffect': {
       return options.severity.avoidSignalAssignmentInLayoutEffect ?? 'error';
     }
@@ -291,9 +276,6 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator((name: str
       suggestUseSignalsEffect: 'Use useSignalsEffect for signal assignments',
       suggestUseSignalsLayoutEffect:
         'Use useSignalsLayoutEffect for signal assignments in layout effects',
-      missingDependencies: 'Missing dependencies: {{dependencies}}',
-      unnecessaryDependencies: 'Unnecessary dependencies: {{dependencies}}',
-      duplicateDependencies: 'Duplicate dependencies: {{dependencies}}',
     },
     schema: [
       {
@@ -302,7 +284,7 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator((name: str
           signalNames: {
             type: 'array',
             items: { type: 'string' },
-            default: ['signal', 'useSignal', 'createSignal'],
+            default: ['Signal', 'useSignal', 'createSignal'],
             description: 'Custom signal function names to check',
           },
           allowedPatterns: {
@@ -325,24 +307,6 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator((name: str
                 enum: ['off', 'warn', 'error'],
                 default: 'error',
                 description: 'Severity for signal assignments in useLayoutEffect',
-              },
-              missingDependencies: {
-                type: 'string',
-                enum: ['off', 'warn', 'error'],
-                default: 'error',
-                description: 'Severity for missing dependencies',
-              },
-              unnecessaryDependencies: {
-                type: 'string',
-                enum: ['off', 'warn', 'error'],
-                default: 'error',
-                description: 'Severity for unnecessary dependencies',
-              },
-              duplicateDependencies: {
-                type: 'string',
-                enum: ['off', 'warn', 'error'],
-                default: 'error',
-                description: 'Severity for duplicate dependencies',
               },
               suggestUseSignalsEffect: {
                 type: 'string',
@@ -386,14 +350,11 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator((name: str
   },
   defaultOptions: [
     {
-      signalNames: ['signal', 'useSignal', 'createSignal'],
+      signalNames: ['Signal', 'useSignal', 'createSignal'],
       allowedPatterns: [],
       severity: {
         avoidSignalAssignmentInEffect: 'error',
         avoidSignalAssignmentInLayoutEffect: 'error',
-        missingDependencies: 'error',
-        unnecessaryDependencies: 'error',
-        duplicateDependencies: 'error',
         suggestUseSignalsEffect: 'error',
         suggestUseSignalsLayoutEffect: 'error',
       },
@@ -411,8 +372,10 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator((name: str
       startTracking(context, perfKey, option.performance, ruleName);
     }
 
-    console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
-    // console.info(`${ruleName}: Rule configuration:`, option);
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
     recordMetric(perfKey, 'config', {
       performance: {
@@ -629,13 +592,15 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator((name: str
         if (currentEffect.signalAssignments.length > 0) {
           const suggest: Array<{
             messageId: MessageIds;
-            fix: (fixer: TSESLint.RuleFixer) => TSESLint.RuleFix | null;
+            fix: (fixer: TSESLint.RuleFixer) => TSESLint.RuleFix | Array<TSESLint.RuleFix> | null;
           }> = [];
 
           if (currentEffect.isLayoutEffect) {
             suggest.push({
               messageId: 'suggestUseSignalsLayoutEffect',
-              fix: (fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null => {
+              fix: (
+                fixer: TSESLint.RuleFixer
+              ): TSESLint.RuleFix | Array<TSESLint.RuleFix> | null => {
                 const callback = node.arguments[0];
 
                 if (
@@ -650,16 +615,50 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator((name: str
 
                 const [end] = node.arguments[1]?.range ?? node.range;
 
-                return fixer.replaceTextRange(
-                  [node.range[0], node.range[1]],
-                  `effect(() => ${context.sourceCode.text.slice(start, end).trim()})`
+                const fixes: Array<TSESLint.RuleFix> = [];
+                fixes.push(
+                  fixer.replaceTextRange(
+                    [node.range[0], node.range[1]],
+                    `useSignalsLayoutEffect(() => ${context.sourceCode.text
+                      .slice(start, end)
+                      .trim()})`
+                  )
                 );
+
+                const hasImport = context.sourceCode.ast.body.some(
+                  (stmt: TSESTree.ProgramStatement): boolean => {
+                    return (
+                      stmt.type === AST_NODE_TYPES.ImportDeclaration &&
+                      stmt.source.value === '@preact/signals-react/runtime' &&
+                      stmt.specifiers.some((s: TSESTree.ImportClause): boolean => {
+                        return (
+                          s.type === AST_NODE_TYPES.ImportSpecifier &&
+                          s.imported.type === AST_NODE_TYPES.Identifier &&
+                          s.imported.name === 'useSignalsLayoutEffect'
+                        );
+                      })
+                    );
+                  }
+                );
+
+                if (!hasImport) {
+                  fixes.push(
+                    fixer.insertTextBeforeRange(
+                      [0, 0],
+                      "import { useSignalsLayoutEffect } from '@preact/signals-react/runtime';\n"
+                    )
+                  );
+                }
+
+                return fixes;
               },
             });
           } else {
             suggest.push({
               messageId: 'suggestUseSignalsEffect',
-              fix: (fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null => {
+              fix: (
+                fixer: TSESLint.RuleFixer
+              ): TSESLint.RuleFix | Array<TSESLint.RuleFix> | null => {
                 const callback = node.arguments[0];
 
                 if (
@@ -674,10 +673,40 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator((name: str
 
                 const [end] = node.arguments[1]?.range ?? node.range;
 
-                return fixer.replaceTextRange(
-                  [node.range[0], node.range[1]],
-                  `effect(() => ${context.sourceCode.text.slice(start, end).trim()})`
+                const fixes: Array<TSESLint.RuleFix> = [];
+                fixes.push(
+                  fixer.replaceTextRange(
+                    [node.range[0], node.range[1]],
+                    `useSignalsEffect(() => ${context.sourceCode.text.slice(start, end).trim()})`
+                  )
                 );
+
+                const hasImport = context.sourceCode.ast.body.some(
+                  (stmt: TSESTree.ProgramStatement): boolean => {
+                    return (
+                      stmt.type === AST_NODE_TYPES.ImportDeclaration &&
+                      stmt.source.value === '@preact/signals-react/runtime' &&
+                      stmt.specifiers.some((s: TSESTree.ImportClause): boolean => {
+                        return (
+                          s.type === AST_NODE_TYPES.ImportSpecifier &&
+                          s.imported.type === AST_NODE_TYPES.Identifier &&
+                          s.imported.name === 'useSignalsEffect'
+                        );
+                      })
+                    );
+                  }
+                );
+
+                if (!hasImport) {
+                  fixes.push(
+                    fixer.insertTextBeforeRange(
+                      [0, 0],
+                      "import { useSignalsEffect } from '@preact/signals-react/runtime';\n"
+                    )
+                  );
+                }
+
+                return fixes;
               },
             });
           }
@@ -699,7 +728,7 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator((name: str
                       return assign.object.name;
                     }
 
-                    return context.getSourceCode().getText(assign.object);
+                    return context.sourceCode.getText(assign.object);
                   })
                   .join(', '),
               },

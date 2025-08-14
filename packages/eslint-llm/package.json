@@ -15,9 +15,9 @@
     "email": "justfly1984@gmail.com"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.1.2",
+    "@biomejs/biome": "2.1.4",
     "@types/eslint": "^9.6.1",
-    "@typescript-eslint/utils": "^8.38.0"
+    "@typescript-eslint/utils": "^8.39.1"
   },
   "license": "MIT",
   "repository": {

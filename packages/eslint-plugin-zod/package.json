@@ -57,21 +57,21 @@
   },
   "dependencies": {
     "@types/estree": "^1.0.5",
-    "zod": "^3.22.0"
+    "zod": "^4.0.17"
   },
   "devDependencies": {
-    "@types/node": "^24.1.0",
-    "@biomejs/biome": "^2.1.2",
-    "@typescript-eslint/utils": "^8.38.0",
-    "@typescript-eslint/eslint-plugin": "^8.38.0",
-    "@typescript-eslint/parser": "^8.38.0",
-    "eslint": "^9.31.0",
-    "typescript": "^5.8.3"
+    "@types/node": "^24.2.1",
+    "@biomejs/biome": "^2.1.4",
+    "@typescript-eslint/utils": "^8.39.1",
+    "@typescript-eslint/eslint-plugin": "^8.39.1",
+    "@typescript-eslint/parser": "^8.39.1",
+    "eslint": "^9.33.0",
+    "typescript": "^5.9.2"
   },
   "peerDependencies": {
-    "eslint": "^8.57.1 || ^9.31.0",
-    "typescript": "^5.8.3",
-    "zod": "^3.22.0"
+    "eslint": "^8.57.1 || ^9.33.0",
+    "typescript": "^5.9.2",
+    "zod": "^4.0.17"
   },
   "engines": {
     "node": ">=24.4.1"

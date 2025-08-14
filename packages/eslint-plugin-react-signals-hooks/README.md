@@ -6,7 +6,7 @@ A comprehensive ESLint plugin for React applications using `@preact/signals-reac
 
 ### 🎯 **Signal Validation**
 
-- 19 specialized rules for React signals
+- 21 specialized rules for React signals
 - Complete replacement for `eslint-plugin-react-hooks/exhaustive-deps` rule
 - Enhanced `exhaustive-deps` with signal awareness
 
@@ -19,7 +19,7 @@ A comprehensive ESLint plugin for React applications using `@preact/signals-reac
 
 ## Rules Overview
 
-This plugin provides 19 specialized ESLint rules for React signals:
+This plugin provides 21 specialized ESLint rules for React signals:
 
 | Rule | Purpose | Autofix | Severity |
 |------|---------|---------|----------|
@@ -42,11 +42,36 @@ This plugin provides 19 specialized ESLint rules for React signals:
 | `restrict-signal-locations` | Controls where signals can be created | ✅ | Error |
 | `signal-variable-name` | Enforces signal naming conventions | ✅ | Error |
 | `warn-on-unnecessary-untracked` | Warns about unnecessary `untracked()` usage | ✅ | Warning |
+| `forbid-signal-re-assignment` | Forbids aliasing or re-assigning variables that hold a signal | ❌ | Error |
+| `forbid-signal-destructuring` | Forbids destructuring signals into aliases (e.g., `{ value } = signal`) | ❌ | Error |
 
 For detailed examples and options for each rule, see the docs in `docs/rules/`.
 
 - [`prefer-use-signal-ref-over-use-ref` docs](./docs/rules/prefer-use-signal-ref-over-use-ref.md)
 - [`prefer-for-over-map` docs](./docs/rules/prefer-for-over-map.md)
+- [`forbid-signal-re-assignment` docs](./docs/rules/forbid-signal-re-assignment.md)
+- [`forbid-signal-destructuring` docs](./docs/rules/forbid-signal-destructuring.md)
+
+### `forbid-signal-destructuring` options (summary)
+
+- `modules?: string[]`
+  - Additional module specifiers to treat as exporting signal creators.
+  - Works with aliased and namespaced imports.
+
+- `enableSuffixHeuristic?: boolean` (default: `false`)
+  - When `true`, enables suffix-based detection (e.g., variables ending with `Signal`) as a fallback.
+  - Can increase false positives; keep off unless needed.
+
+### `forbid-signal-re-assignment` options (summary)
+
+- `modules?: string[]`
+  - Additional module specifiers to treat as exporting signal creators. Merged with defaults (`@preact/signals-react`, `@preact/signals-core`).
+
+- `allowBareNames?: boolean` (default: `false`)
+  - When `true`, treats bare identifiers `signal`/`computed`/`effect` as creators even without imports. Can increase false positives; keep disabled unless needed.
+
+- `suffix?: string` (default: `"Signal"`)
+  - Variable-name suffix used as a heuristic when identifying signal-like variables.
 
 ### Rule spotlight: `prefer-use-signal-ref-over-use-ref`
 
@@ -122,7 +147,7 @@ Option:
 
 ## Installation
 
-### Installation
+Install the plugin alongside `@preact/signals-react`:
 
 ```bash
 # npm
@@ -135,7 +160,7 @@ yarn add --dev @ospm/eslint-plugin-react-signals-hooks @preact/signals-react
 pnpm add -D @ospm/eslint-plugin-react-signals-hooks @preact/signals-react
 ```
 
-you have to turn off `react-hooks/exhaustive-deps` rule in your eslint config if you use this plugin.
+You must disable the `react-hooks/exhaustive-deps` rule when using this plugin, since this plugin provides a signal-aware replacement:
 
 ```json
 {
@@ -246,8 +271,13 @@ function Component() {
 
 // ✅ With useSignals()
 function Component() {
-  useSignals();
-  return <div>{countSignal.value}</div>;
+  const store = useSignals(1);
+
+  try {
+    return <div>{countSignal.value}</div>;
+  } finally {
+    store.f();
+  }
 }
 ```
 
@@ -600,4 +630,86 @@ const conditionalUpdate = useCallback(() => {
 
 ## TypeScript Support
 
-Fully compatible with TypeScript and `@typescript-eslint/parser`. Handles:
+Fully compatible with TypeScript and `@typescript-eslint/parser`.
+
+- Works with both Flat config (`eslint.config.js`) and legacy `.eslintrc`.
+- Understands TS syntax features (generics, `as const`, enums, type-only imports).
+- Analyzes computed members and property chains with proper type info when available.
+
+Parser setup example (legacy config):
+
+```js
+// .eslintrc.js
+module.exports = {
+  parser: '@typescript-eslint/parser',
+  parserOptions: { project: ['./tsconfig.json'] }, // optional but recommended for best type-aware results
+  plugins: ['react-signals-hooks'],
+  rules: {
+    'react-signals-hooks/exhaustive-deps': 'error',
+  },
+};
+```
+
+Flat config example:
+
+```js
+// eslint.config.js
+import tseslint from 'typescript-eslint';
+import reactSignalsHooks from '@ospm/eslint-plugin-react-signals-hooks';
+
+export default [
+  ...tseslint.config({
+    parserOptions: { project: ['./tsconfig.json'] }, // optional
+  }),
+  {
+    plugins: { 'react-signals-hooks': reactSignalsHooks },
+    rules: { 'react-signals-hooks/exhaustive-deps': 'error' },
+  },
+];
+```
+
+Note: a `project` reference is not strictly required, but it can improve precision for complex expressions.
+
+## Compatibility
+
+- React 18+
+- `@preact/signals-react` 2.x+
+- Node.js 18+
+- ESLint 8.56+ (legacy) or 9+ (Flat config)
+
+## IDE Integration
+
+- Works out of the box with VS Code ESLint extension.
+- Autofixes are safe-by-default. For aggressive fixes in effects, enable: `enableDangerousAutofixThisMayCauseInfiniteLoops` in `exhaustive-deps` options.
+- Many rules provide code actions and rename-safe fixes (imports/identifiers updated consistently).
+
+## Performance
+
+- Uses targeted AST visitors and avoids repeated traversal.
+- Skips inner-scope variables for dependency inference to reduce noise.
+- Provides internal performance tracking hooks in rule implementations.
+
+Tips:
+
+- Run ESLint with `--cache` in CI and locally.
+- Prefer Flat config for faster startup in ESLint 9+.
+
+## Limitations
+
+- The plugin does not execute code; dynamic patterns may require manual review.
+- If you heavily customize signal creators or use unusual abstractions, consider enabling `modules` and/or `enableSuffixHeuristic` options in relevant rules.
+- Aggressive autofix for effects can introduce loops if your effect writes to values it also reads; keep `enableDangerousAutofixThisMayCauseInfiniteLoops` off unless you know the codebase patterns.
+
+## FAQ
+
+- Why replace `react-hooks/exhaustive-deps`? — React Hooks rules are not signal-aware. This plugin understands `.value`, computed chains, and signal semantics to provide accurate deps and safer fixes.
+- Can I keep both rules on? — No. Disable `react-hooks/exhaustive-deps` to avoid conflicts and duplicate/contradictory diagnostics.
+- Does it support custom hooks? — Yes. Any `use*` function is analyzed as a hook callback site for dependency inference.
+
+## Contributing
+
+Contributions are welcome! Please open an issue or PR. Follow the repository’s lint/test conventions, and add rule docs under `packages/eslint-plugin-react-signals-hooks/docs/rules/` following the structure described in `rules.md`.
+
+## License
+
+MIT © OSPM

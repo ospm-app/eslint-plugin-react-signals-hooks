@@ -1,137 +1,136 @@
 {
-	"name": "@ospm/eslint-plugin-eslint-rule",
-	"version": "1.1.0",
-	"type": "module",
-	"description": "ESLint plugin for fixing ESLint rules",
-	"main": "dist/cjs/index.js",
-	"module": "dist/esm/index.mjs",
-	"types": "dist/types/index.d.ts",
-	"exports": {
-		".": {
-			"import": "./dist/esm/index.mjs",
-			"require": "./dist/cjs/index.js",
-			"types": "./dist/types/index.d.ts"
-		},
-		"./rules": {
-			"import": "./dist/esm/index.mjs",
-			"require": "./dist/cjs/index.js",
-			"types": "./dist/types/index.d.ts"
-		},
-		"./package.json": "./package.json"
-	},
-	"files": [
-		"dist/",
-		"README.md",
-		"LICENSE"
-	],
-	"scripts": {
-		"deploy": "npm run build && npm publish --access public",
-		"deploy:dry": "npm pack --dry-run",
-		"build": "npm run clean && npm run build:cjs && npm run build:esm && npm run postbuild:esm && npm run build:types",
-		"build:cjs": "tsc --project tsconfig.cjs.json",
-		"build:esm": "tsc --project tsconfig.esm.json",
-		"postbuild:esm": "node scripts/rename-to-mjs.mjs",
-		"build:types": "tsc --project tsconfig.types.json",
-		"build:watch": "npm run build:cjs -- --watch & npm run build:esm -- --watch & npm run build:types -- --watch",
-		"clean": "rm -rf dist/",
-		"prebuild": "npm run clean",
-		"tc": "tsc --project tsconfig.json --noEmit",
-		"test": "npm run build && npm run test:all-rules",
-		"test:all-rules": "npm run test:consistent-rule-structure",
+  "name": "@ospm/eslint-plugin-eslint-rule",
+  "version": "1.1.0",
+  "type": "module",
+  "description": "ESLint plugin for fixing ESLint rules",
+  "main": "dist/cjs/index.js",
+  "module": "dist/esm/index.mjs",
+  "types": "dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/esm/index.mjs",
+      "require": "./dist/cjs/index.js",
+      "types": "./dist/types/index.d.ts"
+    },
+    "./rules": {
+      "import": "./dist/esm/index.mjs",
+      "require": "./dist/cjs/index.js",
+      "types": "./dist/types/index.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "deploy": "npm run build && npm publish --access public",
+    "deploy:dry": "npm pack --dry-run",
+    "build": "npm run clean && npm run build:cjs && npm run build:esm && npm run postbuild:esm && npm run build:types",
+    "build:cjs": "tsc --project tsconfig.cjs.json",
+    "build:esm": "tsc --project tsconfig.esm.json",
+    "postbuild:esm": "node scripts/rename-to-mjs.mjs",
+    "build:types": "tsc --project tsconfig.types.json",
+    "build:watch": "npm run build:cjs -- --watch & npm run build:esm -- --watch & npm run build:types -- --watch",
+    "clean": "rm -rf dist/",
+    "prebuild": "npm run clean",
+    "tc": "tsc --project tsconfig.json --noEmit",
+    "test": "npm run build && npm run test:all-rules",
+    "test:all-rules": "npm run test:consistent-rule-structure",
 
-		"test:simple": "npm run test:all-rules:simple",
-		"test:all-rules:simple": "npm run test:consistent-rule-structure:simple",
+    "test:simple": "npm run test:all-rules:simple",
+    "test:all-rules:simple": "npm run test:consistent-rule-structure:simple",
 
-		"test:consistent-rule-structure": "cd tests/spec-consistent-rule-structure && npx eslint --config eslint.config.js *.ts",
-		"test:consistent-rule-structure:simple": "cd tests/spec-consistent-rule-structure && npx eslint --config simple.config.js *.ts",
+    "test:consistent-rule-structure": "cd tests/spec-consistent-rule-structure && npx eslint --config eslint.config.js *.ts",
+    "test:consistent-rule-structure:simple": "cd tests/spec-consistent-rule-structure && npx eslint --config simple.config.js *.ts",
 
-		"test:fix": "npm run build && npm run test:fix:all-rules",
-		"test:fix:all-rules": "npm run test:fix:consistent-rule-structure",
+    "test:fix": "npm run build && npm run test:fix:all-rules",
+    "test:fix:all-rules": "npm run test:fix:consistent-rule-structure",
 
-		"test:fix:simple": "npm run test:fix:all-rules:simple",
-		"test:fix:all-rules:simple": "npm run test:fix:consistent-rule-structure:simple",
+    "test:fix:simple": "npm run test:fix:all-rules:simple",
+    "test:fix:all-rules:simple": "npm run test:fix:consistent-rule-structure:simple",
 
-		"test:fix:consistent-rule-structure": "cd tests/spec-consistent-rule-structure && npx eslint --config eslint.config.js --fix *.ts",
-		"test:fix:consistent-rule-structure:simple": "cd tests/spec-consistent-rule-structure && npx eslint --config simple.config.js --fix *.ts",
-		"lint": "npx eslint src/ --ext .ts",
-		"lint:fix": "npx eslint src/ --ext .ts --fix",
-		"prepublishOnly": "npm run build"
-	},
-	"keywords": [
-		"eslint",
-		"eslint-plugin",
-		"react",
-		"signals",
-		"signals-react",
-		"react-signals",
-		"preact-signals",
-		"react-hooks",
-		"performance",
-		"reactivity",
-		"best-practices"
-	],
-	"author": {
-		"name": "Alexey Lyakhov",
-		"url": "https://github.com/JustFly1984",
-		"email": "justfly1984@gmail.com"
-	},
-	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/tree/main/packages/eslint-plugin-react-signals-hooks"
-	},
-	"bugs": {
-		"url": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/issues"
-	},
-	"homepage": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/tree/main/packages/eslint-plugin-react-signals-hooks#readme",
-	"peerDependencies": {
-		"@preact/signals-core": "^1.11.0",
-		"@preact/signals-react": "^3.2.1",
-		"@types/react": "^18.2.0 || ^19.0.0",
-		"eslint": "^8.57.1 || ^9.0.0",
-		"react": "^18.2.0 || ^19.0.0",
-		"react-dom": "^18.2.0 || ^19.0.0"
-	},
-	"dependencies": {
-		"valibot": "^1.1.0"
-	},
-	"devDependencies": {
-		"@babel/eslint-parser": "^7.28.0",
-		"@babel/plugin-syntax-import-assertions": "^7.27.1",
-		"@babel/preset-env": "7.28.0",
-		"@biomejs/biome": "2.1.2",
-		"@total-typescript/ts-reset": "0.6.1",
-		"@types/eslint": "^9.6.1",
-		"@types/estree": "^1.0.8",
-		"@types/node": "^24.1.0",
-		"@typescript-eslint/types": "^8.38.0",
-		"@typescript-eslint/eslint-plugin": "^8.38.0",
-		"@typescript-eslint/parser": "^8.38.0",
-		"@typescript-eslint/scope-manager": "^8.38.0",
-		"@typescript-eslint/utils": "^8.38.0",
-		"@types/react": "^19.0.0",
-		"@types/react-dom": "^19.0.0",
-		"@types/react-native": "^0.73.0",
-		"eslint": "^9.31.0",
-		"eslint-config-typescript": "^3.0.0",
-		"eslint-plugin-es": "^4.1.0",
-		"eslint-plugin-es-x": "^9.0.0",
-		"eslint-plugin-eslint-plugin": "^6.5.0",
-		"eslint-plugin-import": "^2.32.0",
-		"eslint-plugin-json": "^4.0.1",
-		"eslint-plugin-jsx-a11y": "^6.10.2",
-		"eslint-plugin-n": "^17.21.0",
-		"eslint-plugin-optimize-regex": "^1.2.1",
-		"eslint-plugin-oxlint": "^1.8.0",
-		"eslint-plugin-promise": "^7.2.1",
-		"eslint-plugin-security": "^3.0.1",
-		"globals": "^16.3.0",
-		"knip": "^5.62.0",
-		"oxlint": "1.8.0",
-		"typescript": "^5.8.3"
-	},
-	"optionalDependencies": {
-		"react-native": "^0.79.5",
-		"@preact/signals-react": "^3.2.1"
-	}
+    "test:fix:consistent-rule-structure": "cd tests/spec-consistent-rule-structure && npx eslint --config eslint.config.js --fix *.ts",
+    "test:fix:consistent-rule-structure:simple": "cd tests/spec-consistent-rule-structure && npx eslint --config simple.config.js --fix *.ts",
+    "lint": "npx eslint src/ --ext .ts",
+    "lint:fix": "npx eslint src/ --ext .ts --fix",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "eslint",
+    "eslint-plugin",
+    "react",
+    "signals",
+    "signals-react",
+    "react-signals",
+    "preact-signals",
+    "react-hooks",
+    "performance",
+    "reactivity",
+    "best-practices"
+  ],
+  "author": {
+    "name": "Alexey Lyakhov",
+    "url": "https://github.com/JustFly1984",
+    "email": "justfly1984@gmail.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/tree/main/packages/eslint-plugin-react-signals-hooks"
+  },
+  "bugs": {
+    "url": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/issues"
+  },
+  "homepage": "https://github.com/ospm-app/eslint-plugin-react-signals-hooks/tree/main/packages/eslint-plugin-react-signals-hooks#readme",
+  "peerDependencies": {
+    "@preact/signals-core": "^1.11.0",
+    "@preact/signals-react": "^3.2.1",
+    "@types/react": "^18.2.0 || ^19.0.0",
+    "eslint": "^8.57.1 || ^9.33.0",
+    "react": "^18.2.0 || ^19.0.0",
+    "react-dom": "^18.2.0 || ^19.0.0"
+  },
+  "dependencies": {
+    "valibot": "^1.1.0"
+  },
+  "devDependencies": {
+    "@babel/eslint-parser": "^7.28.0",
+    "@babel/plugin-syntax-import-assertions": "^7.27.1",
+    "@babel/preset-env": "7.28.0",
+    "@biomejs/biome": "2.1.4",
+    "@total-typescript/ts-reset": "0.6.1",
+    "@types/eslint": "^9.6.1",
+    "@types/estree": "^1.0.8",
+    "@types/node": "^24.2.1",
+    "@typescript-eslint/types": "^8.39.1",
+    "@typescript-eslint/eslint-plugin": "^8.39.1",
+    "@typescript-eslint/parser": "^8.39.1",
+    "@typescript-eslint/scope-manager": "^8.39.1",
+    "@typescript-eslint/utils": "^8.39.1",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.33.0",
+    "eslint-config-typescript": "^3.0.0",
+    "eslint-plugin-es": "^4.1.0",
+    "eslint-plugin-es-x": "^9.0.0",
+    "eslint-plugin-eslint-plugin": "^7.0.0",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-json": "^4.0.1",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-n": "^17.21.3",
+    "eslint-plugin-optimize-regex": "^1.2.1",
+    "eslint-plugin-oxlint": "^1.11.2",
+    "eslint-plugin-promise": "^7.2.1",
+    "eslint-plugin-security": "^3.0.1",
+    "globals": "^16.3.0",
+    "knip": "^5.62.0",
+    "oxlint": "1.11.2",
+    "typescript": "^5.9.2"
+  },
+  "optionalDependencies": {
+    "react-native": "^0.79.5",
+    "@preact/signals-react": "^3.2.1"
+  }
 }

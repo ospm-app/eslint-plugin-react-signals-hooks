@@ -1,4 +1,6 @@
 /** biome-ignore-all assist/source/organizeImports: off */
+/** biome-ignore-all lint/correctness/useHookAtTopLevel: off */
+/** biome-ignore-all lint/correctness/useExhaustiveDependencies: off */
 import { useCallback, useEffect, type JSX } from "react";
 import { counterSignal, nameSignal } from "./signals";
 import { useSignals } from "@preact/signals-react/runtime";
@@ -20,7 +22,6 @@ export function TestMissingImportedSignalDep(): JSX.Element | null {
 	}, []); // Empty dependency array - should flag counterSignal as missing
 
 	// This callback also uses the signal but doesn't list it
-	// biome-ignore lint/correctness/useExhaustiveDependencies: false positive
 	const handleClick = useCallback(() => {
 		console.info("Current counter:", counterSignal.value);
 	}, [counterSignal]); // Should flag counterSignal unnecessary and counterSignal.value as missing
@@ -35,12 +36,15 @@ export function TestMissingImportedSignalDep(): JSX.Element | null {
 // This component should NOT trigger an ESLint warning
 export function TestCorrectImportedSignalDep(): JSX.Element | null {
 	// This effect correctly lists imported counterSignal as a dependency
-	useSignals();
+	const store = useSignals(1);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: false positive
-	useEffect(() => {
-		console.info("Value:", counterSignal.value);
-	}, [counterSignal.value]); // Correctly includes the imported signal
+	try {
+		useEffect(() => {
+			console.info("Value:", counterSignal.value);
+		}, [counterSignal.value]); // Correctly includes the imported signal
 
-	return <div>{counterSignal}</div>;
+		return <div>{counterSignal}</div>;
+	} finally {
+		store.f();
+	}
 }
