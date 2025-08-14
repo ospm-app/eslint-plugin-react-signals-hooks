@@ -223,9 +223,7 @@ function processBlock(
   for (const stmt of statements) {
     if (stmt.type !== AST_NODE_TYPES.ExpressionStatement) {
       if (stmt.type === AST_NODE_TYPES.BlockStatement) {
-        const nestedUpdates = processBlock(stmt.body, context, perfKey, scopeDepth + 1, inBatch);
-
-        allUpdates.push(...nestedUpdates);
+        allUpdates.push(...processBlock(stmt.body, context, perfKey, scopeDepth + 1, inBatch));
       }
 
       continue;
@@ -355,8 +353,6 @@ function processBlock(
                 return null;
               }
 
-              const range: TSESTree.Range = [firstUpdate.range[0], lastUpdate.range[1]];
-
               // Guard: ensure no non-update code exists between updates
               if (!isSafeAutofixRange(context, firstUpdate.range[1], lastUpdate.range[0])) {
                 return null;
@@ -369,19 +365,70 @@ function processBlock(
               }
 
               if (!hasBatchImport) {
-                yield fixer.insertTextBefore(
-                  b,
-                  "import { batch } from '@preact/signals-react';\n\n"
+                // Try to merge into an existing import from '@preact/signals-react'
+                const existingSignalsImport = context.sourceCode.ast.body.find(
+                  (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration =>
+                    n.type === AST_NODE_TYPES.ImportDeclaration &&
+                    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+                    n.source.type === AST_NODE_TYPES.Literal &&
+                    n.source.value === '@preact/signals-react'
                 );
+
+                if (
+                  existingSignalsImport &&
+                  Array.isArray(existingSignalsImport.specifiers) &&
+                  existingSignalsImport.specifiers.some(
+                    (s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
+                      return s.type === AST_NODE_TYPES.ImportSpecifier;
+                    }
+                  )
+                ) {
+                  // If 'batch' already present, nothing to do
+                  if (
+                    existingSignalsImport.specifiers.some((s: TSESTree.ImportClause): boolean => {
+                      return (
+                        s.type === AST_NODE_TYPES.ImportSpecifier &&
+                        s.imported.type === AST_NODE_TYPES.Identifier &&
+                        s.imported.name === 'batch'
+                      );
+                    })
+                  ) {
+                    // no-op
+                  } else {
+                    // Append ", batch" after the last ImportSpecifier
+                    const lastSpec = [...existingSignalsImport.specifiers]
+                      .reverse()
+                      .find((s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
+                        return s.type === AST_NODE_TYPES.ImportSpecifier;
+                      });
+
+                    if (lastSpec) {
+                      yield fixer.insertTextAfter(lastSpec, ', batch');
+                    } else {
+                      // Fallback: insert a new import line
+                      yield fixer.insertTextBefore(
+                        b,
+                        "import { batch } from '@preact/signals-react';\n\n"
+                      );
+                    }
+                  }
+                } else {
+                  // No existing signals-react import with named specifiers: insert a new one
+                  yield fixer.insertTextBefore(
+                    b,
+                    "import { batch } from '@preact/signals-react';\n\n"
+                  );
+                }
               }
 
-              const updatesText = updatesInScope
-                .map(({ node }: SignalUpdate): string => {
-                  return context.sourceCode.getText(node);
-                })
-                .join('; ');
-
-              yield fixer.replaceTextRange(range, `batch(() => {\n  ${updatesText}\n});`);
+              yield fixer.replaceTextRange(
+                [firstUpdate.range[0], lastUpdate.range[1]],
+                `batch(() => {\n  ${updatesInScope
+                  .map(({ node }: SignalUpdate): string => {
+                    return context.sourceCode.getText(node);
+                  })
+                  .join('; ')}\n});`
+              );
 
               recordMetric(perfKey, 'batchFixApplied', {
                 updateCount: updatesInScope.length,
@@ -395,23 +442,66 @@ function processBlock(
             data: { count: updatesInScope.length },
             *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
               if (!hasBatchImport) {
-                const batchImport = "import { batch } from '@preact/signals-react';\n";
-
-                const firstImport = context.sourceCode.ast.body.find(
-                  (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration =>
-                    n.type === AST_NODE_TYPES.ImportDeclaration
+                // Merge with existing '@preact/signals-react' import if possible
+                const existingSignalsImport = context.sourceCode.ast.body.find(
+                  (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
+                    return (
+                      n.type === AST_NODE_TYPES.ImportDeclaration &&
+                      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+                      n.source.type === AST_NODE_TYPES.Literal &&
+                      n.source.value === '@preact/signals-react'
+                    );
+                  }
                 );
 
-                if (typeof firstImport === 'undefined') {
+                if (
+                  existingSignalsImport &&
+                  Array.isArray(existingSignalsImport.specifiers) &&
+                  existingSignalsImport.specifiers.some(
+                    (s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
+                      return s.type === AST_NODE_TYPES.ImportSpecifier;
+                    }
+                  )
+                ) {
+                  const already = existingSignalsImport.specifiers.some(
+                    (s: TSESTree.ImportClause): boolean => {
+                      return (
+                        s.type === AST_NODE_TYPES.ImportSpecifier &&
+                        s.imported.type === AST_NODE_TYPES.Identifier &&
+                        s.imported.name === 'batch'
+                      );
+                    }
+                  );
+
+                  if (!already) {
+                    const lastSpec = [...existingSignalsImport.specifiers]
+                      .reverse()
+                      .find((s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
+                        return s.type === AST_NODE_TYPES.ImportSpecifier;
+                      });
+                    if (lastSpec) {
+                      yield fixer.insertTextAfter(lastSpec, ', batch');
+                    }
+                  }
+                } else {
+                  const firstImport = context.sourceCode.ast.body.find(
+                    (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration =>
+                      n.type === AST_NODE_TYPES.ImportDeclaration
+                  );
+
                   const b = context.sourceCode.ast.body[0];
 
                   if (!b) {
                     return null;
                   }
 
-                  yield fixer.insertTextBefore(b, batchImport);
-                } else {
-                  yield fixer.insertTextBefore(firstImport, batchImport);
+                  const batchImport = "import { batch } from '@preact/signals-react';\n";
+
+                  if (typeof firstImport === 'undefined') {
+                    yield fixer.insertTextBefore(b, batchImport);
+                  } else {
+                    yield fixer.insertTextBefore(firstImport, batchImport);
+                  }
                 }
               }
 
@@ -452,24 +542,66 @@ function processBlock(
                 return;
               }
 
-              const batchImport = "import { batch } from '@preact/signals-react';\n";
-
-              const firstImport = context.sourceCode.ast.body.find(
+              // Merge with existing '@preact/signals-react' import if possible
+              const existingSignalsImport = context.sourceCode.ast.body.find(
                 (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
-                  return n.type === AST_NODE_TYPES.ImportDeclaration;
+                  return (
+                    n.type === AST_NODE_TYPES.ImportDeclaration &&
+                    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+                    n.source.type === AST_NODE_TYPES.Literal &&
+                    n.source.value === '@preact/signals-react'
+                  );
                 }
               );
 
-              if (typeof firstImport === 'undefined') {
+              if (
+                existingSignalsImport &&
+                Array.isArray(existingSignalsImport.specifiers) &&
+                existingSignalsImport.specifiers.some((s: TSESTree.ImportClause): boolean => {
+                  return s.type === AST_NODE_TYPES.ImportSpecifier;
+                })
+              ) {
+                const already = existingSignalsImport.specifiers.some(
+                  (s: TSESTree.ImportClause): boolean => {
+                    return (
+                      s.type === AST_NODE_TYPES.ImportSpecifier &&
+                      s.imported.type === AST_NODE_TYPES.Identifier &&
+                      s.imported.name === 'batch'
+                    );
+                  }
+                );
+
+                if (!already) {
+                  const lastSpec = [...existingSignalsImport.specifiers]
+                    .reverse()
+                    .find((s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
+                      return s.type === AST_NODE_TYPES.ImportSpecifier;
+                    });
+
+                  if (lastSpec) {
+                    yield fixer.insertTextAfter(lastSpec, ', batch');
+                  }
+                }
+              } else {
+                const firstImport = context.sourceCode.ast.body.find(
+                  (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
+                    return n.type === AST_NODE_TYPES.ImportDeclaration;
+                  }
+                );
+
                 const b = context.sourceCode.ast.body[0];
 
                 if (!b) {
                   return;
                 }
 
-                yield fixer.insertTextBefore(b, batchImport);
-              } else {
-                yield fixer.insertTextBefore(firstImport, batchImport);
+                const batchImport = "import { batch } from '@preact/signals-react';\n";
+
+                if (typeof firstImport === 'undefined') {
+                  yield fixer.insertTextBefore(b, batchImport);
+                } else {
+                  yield fixer.insertTextBefore(firstImport, batchImport);
+                }
               }
             },
           },
