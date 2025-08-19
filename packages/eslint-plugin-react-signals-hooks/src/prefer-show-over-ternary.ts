@@ -780,6 +780,23 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
         const isDirectSignalIdentifier =
           node.test.type === AST_NODE_TYPES.Identifier && signalVariables.has(node.test.name);
 
+        // Do not report if this ternary is nested inside another ternary whose test is NOT a direct signal.
+        // Example to skip: condExpr ? null : directSignal ? A : B
+        // We only want the top-most conditional to be considered in such composite expressions.
+        if (
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          node.parent?.type === AST_NODE_TYPES.ConditionalExpression &&
+          (node.parent.consequent === node || node.parent.alternate === node)
+        ) {
+          const parentTest = node.parent.test;
+          const parentIsDirectSignal =
+            parentTest.type === AST_NODE_TYPES.Identifier && signalVariables.has(parentTest.name);
+
+          if (!parentIsDirectSignal) {
+            return;
+          }
+        }
+
         if (!(inJsxContext && isDirectSignalIdentifier)) {
           return;
         }
