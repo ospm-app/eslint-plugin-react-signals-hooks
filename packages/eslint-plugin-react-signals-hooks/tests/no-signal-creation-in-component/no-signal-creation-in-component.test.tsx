@@ -1,3 +1,7 @@
+/* eslint-disable react-signals-hooks/no-non-signal-with-signal-suffix */
+/** biome-ignore-all lint/correctness/useHookAtTopLevel: <explanation> */
+/* eslint-disable react-signals-hooks/prefer-use-signal-over-use-state */
+/** biome-ignore-all lint/correctness/useExhaustiveDependencies: off */
 import type { Signal } from '@preact/signals-react';
 import { signal, computed } from '@preact/signals-react';
 import { useSignals } from '@preact/signals-react/runtime';
@@ -9,10 +13,9 @@ export function TestSignalInComponentBody(): JSX.Element {
 
   const countSignal = signal(0); // Should warn - signal created in component body
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   const onClick = useCallback(() => {
     countSignal.value++;
-  }, []);
+  }, [countSignal.value]);
 
   return (
     <div>
@@ -80,7 +83,6 @@ export function TestSignalInUseCallback(): JSX.Element {
     clickSignal.value += 1;
 
     setCount(clickSignal.value);
-    // eslint-disable-next-line react-signals-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -94,10 +96,9 @@ export function TestSignalInUseCallback(): JSX.Element {
 export function TestSignalFromProps({ countSignal }: { countSignal: Signal<number> }): JSX.Element {
   useSignals();
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   const onClick = useCallback(() => {
     countSignal.value++;
-  }, []);
+  }, [countSignal.value]);
 
   return (
     <div>
@@ -130,10 +131,9 @@ export function TestCustomHookWithSignal(): JSX.Element {
 
   const countSignal = useCounterSignal();
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
   const onClick = useCallback(() => {
     countSignal.value++;
-  }, []);
+  }, [countSignal.value]);
 
   return (
     <div>
@@ -148,9 +148,15 @@ export function TestCustomHookWithSignal(): JSX.Element {
 
 // Custom hook that creates and returns a signal
 function useCounterSignal(): Signal<number> {
-  const countSignal = signal(0);
+  const store = useSignals(2);
 
-  return countSignal;
+  try {
+    const countSignal = signal(0);
+
+    return countSignal;
+  } finally {
+    store.f();
+  }
 }
 
 // This component should NOT trigger warning - signal created outside component
@@ -206,65 +212,80 @@ class CounterClass {
 }
 
 export function TestSignalInClassMethod(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  const counter = new CounterClass();
+  try {
+    const counter = new CounterClass();
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: false positive
-  const onClick = useCallback(() => {
-    counter.increment();
-  }, []);
+    const onClick = useCallback(() => {
+      counter.increment();
+    }, [counter]);
 
-  return (
-    <div>
-      <div>Count: {counter.getCount()}</div>
+    return (
+      <div>
+        <div>Count: {counter.getCount()}</div>
 
-      <button type='button' onClick={onClick}>
-        Increment
-      </button>
-    </div>
-  );
+        <button type='button' onClick={onClick}>
+          Increment
+        </button>
+      </div>
+    );
+  } finally {
+    store.f();
+  }
 }
 
 // This component should NOT trigger warning - signal created in module scope
 const moduleSignal = signal('module scope');
 
 export function TestModuleScopeSignal(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  return <div>{moduleSignal}</div>;
+  try {
+    return <div>{moduleSignal}</div>;
+  } finally {
+    store.f();
+  }
 }
 
 // Test component for custom signal names
 export function TestCustomSignalNames(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  // These should be ignored because we'll configure custom signal names
-  const customSignal1 = signal(0);
-  const customSignal2 = signal('test');
+  try {
+    // These should be ignored because we'll configure custom signal names
+    const customSignal1 = signal(0);
+    const customSignal2 = signal('test');
 
-  return (
-    <div>
-      <div>Signal 1: {customSignal1}</div>
-      <div>Signal 2: {customSignal2}</div>
-    </div>
-  );
+    return (
+      <div>
+        <div>Signal 1: {customSignal1}</div>
+        <div>Signal 2: {customSignal2}</div>
+      </div>
+    );
+  } finally {
+    store.f();
+  }
 }
 
 // Test component for custom severity levels
 export function TestCustomSeverity(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  // These should have different severity levels configured
-  const warningSignal = signal(0); // Should be 'warn'
-  const errorSignal = signal('test'); // Should be 'error'
+  try {
+    // These should have different severity levels configured
+    const warningSignal = signal(0); // Should be 'warn'
+    const errorSignal = signal('test'); // Should be 'error'
 
-  return (
-    <div>
-      <div>Warning: {warningSignal}</div>
-      <div>Error: {errorSignal}</div>
-    </div>
-  );
+    return (
+      <div>
+        <div>Warning: {warningSignal}</div>
+        <div>Error: {errorSignal}</div>
+      </div>
+    );
+  } finally {
+    store.f();
+  }
 }
 
 // Test configuration for custom options
@@ -285,12 +306,16 @@ export const customOptionsConfig = {
 
 // Test component for file/pattern-based disabling
 export function TestFilePatternDisable(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  // This would be ignored in test files
-  const testSignal = signal(0);
+  try {
+    // This would be ignored in test files
+    const testSignal = signal(0);
 
-  return <div>{testSignal}</div>;
+    return <div>{testSignal}</div>;
+  } finally {
+    store.f();
+  }
 }
 
 export const filePatternConfig = {
@@ -306,12 +331,16 @@ export const filePatternConfig = {
 
 // Test component for allowed patterns
 export function TestAllowedPatterns(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  // This should be ignored because of allowed patterns
-  const allowedSignal = signal(0);
+  try {
+    // This should be ignored because of allowed patterns
+    const allowedSignal = signal(0);
 
-  return <div>{allowedSignal}</div>;
+    return <div>{allowedSignal}</div>;
+  } finally {
+    store.f();
+  }
 }
 
 export const allowedPatternsConfig = {

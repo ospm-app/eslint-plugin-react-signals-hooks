@@ -2,6 +2,10 @@
 
 This rule enforces explicit `.value` access when reading signal values in non-JSX contexts. It ensures that signal reads are clear and intentional, especially in JavaScript/TypeScript code where automatic `.value` access doesn't occur.
 
+## Plugin Scope
+
+- Signal creators are detected from `@preact/signals-react` by default (direct, aliased, or namespace imports), and you can extend detection via the `extraCreatorModules` option.
+
 ## Rule Details
 
 This rule helps maintain consistency by requiring explicit `.value` access when reading signal values in non-JSX contexts. It complements the `prefer-signal-in-jsx` rule, which handles the opposite case in JSX.
@@ -65,6 +69,53 @@ This rule provides an auto-fix that automatically adds `.value` to signal reads 
 1. Identifies signal variables (ending with 'Signal' or 'signal')
 2. Checks if they're used in a non-JSX context without `.value`
 3. Adds the `.value` accessor
+
+Notes:
+
+- The rule is fixable but does not provide suggestions (`hasSuggestions: false`).
+
+## Configuration
+
+```js
+// eslint.config.js
+export default [
+  {
+    rules: {
+      'react-signals-hooks/prefer-signal-reads': [
+        'warn',
+        {
+          // APIs that accept a Signal instance directly (skip forcing .value)
+          consumers: ['subscribe'],
+          // Additional modules that export signal/computed creators
+          // (named or namespace imports will be recognized)
+          extraCreatorModules: [],
+          // Use TS types (when available) to confirm Signal-like identifiers
+          typeAware: true,
+          // Heuristic naming suffix used to detect signal-like identifiers
+          suffix: 'Signal',
+          // Per-message severity overrides
+          severity: {
+            useValueInNonJSX: 'error'
+          },
+          // Performance budgets and metrics toggles
+          performance: {
+            // maxTime, maxMemory, maxNodes, enableMetrics, logMetrics, maxOperations
+          }
+        },
+      ],
+    },
+  },
+];
+```
+
+### Options
+
+- `consumers: string[]` — Additional functions that accept a Signal instance and should not be forced to `.value`.
+- `extraCreatorModules: string[]` — Additional module specifiers to treat as sources of `signal`/`computed` creators (both named and namespace imports are supported). Defaults to `['@preact/signals-react']` being recognized; use this to add others.
+- `typeAware: boolean` — When true and TypeScript types are available, confirm signals via the type checker (checks for `value`/`peek` members or `Signal`/`ReadableSignal` names) to reduce reliance on naming heuristics.
+- `suffix: string` — Suffix used by the naming heuristic to detect signal-like identifiers. Default: `"Signal"`.
+- `severity: { useValueInNonJSX?: 'error' | 'warn' | 'off' }` — Per-message severity override. Default: `error`.
+- `performance` — Performance budgets and metrics toggles: `maxTime`, `maxMemory`, `maxNodes`, `enableMetrics`, `logMetrics`, `maxOperations`.
 
 ## When Not To Use It
 

@@ -21,6 +21,8 @@ This rule helps optimize React components by reducing the number of renders caus
    countSignal.update(prev => prev + 1);
    ```
 
+   Note: `.update(...)` calls are considered updates by default. You can configure the rule to treat them as non-updates with `detection.ignoreUpdateCalls: true`.
+
 ### When does this rule apply?
 
 The rule activates when it detects multiple signal updates (default: 2 or more) in the same scope that could be batched together.
@@ -47,6 +49,11 @@ This rule accepts an options object with the following properties:
           },
           "enableMetrics": false,   // Enable performance metrics collection
           "logMetrics": false       // Log metrics to console
+        },
+        "detection": {
+          "allowSingleReads": 0,           // Allow up to N reads without updates inside a batch body
+          "allowNonTrivialBetween": 0,     // Allow up to N non-trivial statements between updates to still consider them contiguous
+          "ignoreUpdateCalls": false       // Treat `.update(...)` method calls as non-updates when true
         }
       }
     ]
@@ -70,6 +77,11 @@ This rule accepts an options object with the following properties:
     },
     enableMetrics: false,
     logMetrics: false
+  },
+  detection: {
+    allowSingleReads: 0,
+    allowNonTrivialBetween: 0,
+    ignoreUpdateCalls: false
   }
 }
 ```
@@ -179,7 +191,70 @@ This rule accepts an options object with the following properties:
    }
    ```
 
-3. **Batching nested updates**
+3. **Array updates in loops**
+
+   When working with arrays in signals, especially in loops, it's important to avoid direct mutations and use immutable update patterns:
+
+   ```tsx
+   function processItems(items) {
+     // ✅ Single update for all items
+     batch(() => {
+       const updatedItems = itemListSignal.value.map((item, index) => ({
+         ...item,
+         processed: items.some(i => i.id === item.id)
+       }));
+       
+       itemListSignal.value = updatedItems;
+     });
+   }
+   ```
+
+   ```tsx
+   // ❌ Avoid: Direct array mutations in loops
+   function doubleValues() {
+     for (let i = 0; i < itemsSignal.value.length; i++) {
+       itemsSignal.value[i].value *= 2; // Direct mutation
+     }
+   }
+
+   // ✅ Prefer: Using map to create new arrays
+   function doubleValues() {
+     itemsSignal.value = itemsSignal.value.map(item => ({
+       ...item,
+       value: item.value * 2
+     }));
+   }
+
+   // ❌ Avoid: Array methods that mutate in place
+   function addItem() {
+     itemsSignal.value.push(newItem); // Direct mutation
+   }
+
+   // ✅ Prefer: Creating new arrays with spread or concat
+   function addItem() {
+     itemsSignal.value = [...itemsSignal.value, newItem];
+   }
+   ```
+
+4. **TypeScript noUncheckedIndexedAccess**
+
+   When using TypeScript with `noUncheckedIndexedAccess` enabled, be mindful of potential undefined array access:
+
+   ```tsx
+   // ❌ May have issues with noUncheckedIndexedAccess
+   itemsSignal.value[0].name = 'New Name';
+
+   // ✅ Safer with null check
+   const item = itemsSignal.value[0];
+   if (item) {
+     itemsSignal.value = [
+       { ...item, name: 'New Name' },
+       ...itemsSignal.value.slice(1)
+     ];
+   }
+   ```
+
+5. **Batching nested updates**
 
    ```tsx
    function updateNestedData() {
@@ -201,23 +276,7 @@ This rule accepts an options object with the following properties:
    }
    ```
 
-4. **Batching in loops**
-
-   ```tsx
-   function processItems(items) {
-     // ✅ Single update for all items
-     batch(() => {
-       const updatedItems = itemListSignal.value.map((item, index) => ({
-         ...item,
-         processed: items.some(i => i.id === item.id)
-       }));
-       
-       itemListSignal.value = updatedItems;
-     });
-   }
-   ```
-
-5. **Custom batching utilities**
+6. **Custom batching utilities**
 
    ```tsx
    // utils/signals.ts
@@ -245,7 +304,7 @@ This rule accepts an options object with the following properties:
    }
    ```
 
-6. **Event handlers with batching**
+7. **Event handlers with batching**
 
    ```tsx
    function FormComponent() {
@@ -284,9 +343,39 @@ This rule accepts an options object with the following properties:
 
 ## Options
 
-This rule accepts an options object with the following property:
+This rule accepts an options object with the following properties:
 
 - `minUpdates` (number): Minimum number of signal updates required to trigger the rule (default: 2)
+- `detection` (object): Heuristics tuning
+  - `allowSingleReads` (number, default 0): Allow up to N signal reads inside a batch body without reporting `nonUpdateSignalInBatch` if there are updates elsewhere in the body
+  - `allowNonTrivialBetween` (number, default 0): Allow up to N non-trivial statements between updates to still consider them contiguous for batching
+  - `ignoreUpdateCalls` (boolean, default false): When true, treat `.update(...)` calls as non-updates
+
+### Severity (optional)
+
+You can control severity per message id (`'error' | 'warn' | 'off'`), including `removeUnnecessaryBatch` and `nonUpdateSignalInBatch`:
+
+```json
+{
+  "rules": {
+    "react-signals-hooks/prefer-batch-updates": [
+      "error",
+      {
+        "minUpdates": 2,
+        "severity": {
+          "useBatch": "error",
+          "suggestUseBatch": "warn",
+          "addBatchImport": "error",
+          "wrapWithBatch": "error",
+          "useBatchSuggestion": "warn",
+          "removeUnnecessaryBatch": "error",
+          "nonUpdateSignalInBatch": "warn"
+        }
+      }
+    ]
+  }
+}
+```
 
 ### Example configuration
 
@@ -295,7 +384,14 @@ This rule accepts an options object with the following property:
   "rules": {
     "react-signals-hooks/prefer-batch-updates": [
       "error",
-      { "minUpdates": 3 }
+      {
+        "minUpdates": 3,
+        "detection": {
+          "allowSingleReads": 0,
+          "allowNonTrivialBetween": 1,
+          "ignoreUpdateCalls": true
+        }
+      }
     ]
   }
 }
@@ -309,6 +405,34 @@ This rule provides auto-fix suggestions to:
 
 1. Wrap multiple signal updates in a `batch` call
 2. Add the `batch` import if it's not already imported
+3. Remove an unnecessary `batch` wrapper when it contains exactly one signal update
+
+Additional warning (no autofix):
+
+- Warn when a signal is read inside `batch()` without an update (`nonUpdateSignalInBatch`).
+
+### Dual reporting inside `batch()`
+
+- When a `batch` callback contains exactly one signal update and additional non-update statements (e.g., reads/logs), the rule reports both:
+  - `removeUnnecessaryBatch` on the `batch(...)` call, and
+  - `nonUpdateSignalInBatch` on the read expression(s).
+- Autofix to remove the batch is offered only when the batch body has a single statement and it is the signal update; otherwise, removal is reported without a fixer to avoid dropping other statements.
+
+#### ❌ Incorrect
+
+```tsx
+batch(() => {
+  console.info(countSignal.value); // read only
+  countSignal.value = 1;           // single update
+});
+```
+
+#### ✅ Correct
+
+```tsx
+console.info(countSignal.value);
+countSignal.value = 1;
+```
 
 ## When Not To Use It
 

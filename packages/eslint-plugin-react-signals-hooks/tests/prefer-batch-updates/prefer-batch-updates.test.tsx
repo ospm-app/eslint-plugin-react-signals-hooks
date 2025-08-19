@@ -1,7 +1,9 @@
+/* eslint-disable react-signals-hooks/signal-variable-name */
+/** biome-ignore-all assist/source/organizeImports: off */
 // oxlint-disable no-unused-vars
 /* eslint-disable react-signals-hooks/restrict-signal-locations */
-/** biome-ignore-all lint/correctness/noUnusedVariables: <explanation> */
-/** biome-ignore-all lint/correctness/useExhaustiveDependencies: not relevant */
+/** biome-ignore-all lint/correctness/noUnusedVariables: off */
+/** biome-ignore-all lint/correctness/useExhaustiveDependencies:off */
 import { type JSX, useCallback, useEffect, useState } from 'react';
 import { signal, batch } from '@preact/signals-react';
 import { useSignals } from '@preact/signals-react/runtime';
@@ -89,7 +91,7 @@ export function TestNestedSignalUpdates(): JSX.Element {
     countSignal.value += 1;
 
     userSignal.value = { ...userSignal.value, active: true };
-  }, []);
+  }, [userSignal.value]);
 
   return (
     <div>
@@ -173,6 +175,7 @@ export function TestBatchInCallback(): JSX.Element {
 // This component should trigger warning for multiple signal updates in a loop
 export function TestSignalUpdatesInLoop(): JSX.Element {
   useSignals();
+
   const itemsSignal = signal([1, 2, 3]);
 
   const doubleItems = useCallback(() => {
@@ -264,9 +267,8 @@ export function TestBatchInConditional(): JSX.Element {
         nameSignal.value = 'Admin';
       });
     } else {
-      // Single update doesn't need batching
+      // Single update doesn't need batching, should warn, and offer autofix
       countSignal.value = 1;
-      nameSignal.value = 'User';
     }
   }, [isAdmin]);
 
@@ -571,44 +573,130 @@ export function TestSignalInTestEnvironment(): JSX.Element {
 // Test component for async operations (should not warn about missing batching across async)
 export function TestAsyncOperations(): JSX.Element {
   useSignals();
+
+  const itemsSignal = signal([1, 2, 3]);
   const loadingSignal = signal(false);
-  const dataSignal = signal<string | null>(null);
   const errorSignal = signal<Error | null>(null);
 
   const fetchData = useCallback(async () => {
-    // These will be batched together
-    batch(() => {
+    try {
       loadingSignal.value = true;
       errorSignal.value = null;
-    });
 
-    try {
-      // Simulate API call
-      const result = await new Promise<string>((resolve) => {
-        setTimeout(() => resolve('Sample Data'), 100);
-      });
+      // This is fine - these updates are not in the same tick
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // These will be batched together
-      batch(() => {
-        dataSignal.value = result;
-        loadingSignal.value = false;
-      });
+      // This is also fine - it's a single update
+      itemsSignal.value = [4, 5, 6];
+
+      // This is fine - it's a single update
+      loadingSignal.value = false;
     } catch (err) {
-      // These will be batched together
-      batch(() => {
-        errorSignal.value = err as Error;
-        loadingSignal.value = false;
-      });
+      // This is fine - error handling is a separate concern
+      errorSignal.value = err instanceof Error ? err : new Error('Unknown error');
+      loadingSignal.value = false;
     }
   }, []);
 
   return (
     <div>
+      <div>Items: {JSON.stringify(itemsSignal.value)}</div>
       <div>Loading: {loadingSignal.value.toString()}</div>
-      <div>Data: {dataSignal.value || 'No data'}</div>
       {errorSignal.value && <div>Error: {errorSignal.value.message}</div>}
-      <button type='button' onClick={fetchData} disabled={loadingSignal.value}>
-        {loadingSignal ? 'Loading...' : 'Fetch Data'}
+      <button type='button' onClick={fetchData}>
+        Fetch Data
+      </button>
+    </div>
+  );
+}
+
+// Test component for array updates in for loop (should warn)
+export function TestArrayUpdatesInForLoop(): JSX.Element {
+  useSignals();
+
+  const itemsSignal = signal([1, 2, 3, 4, 5]);
+  const handleDoubleValues = useCallback(() => {
+    // Should warn - array element updates in a loop
+    for (let i = 0; i < itemsSignal.value.length; i++) {
+      itemsSignal.value[i] *= 2; // This will trigger the warning
+    }
+  }, []);
+
+  return (
+    <div>
+      <div>Items: {JSON.stringify(itemsSignal.value)}</div>
+      <button type='button' onClick={handleDoubleValues}>
+        Double Values
+      </button>
+    </div>
+  );
+}
+
+// Test component for array updates with forEach (should warn)
+export function TestArrayUpdatesWithForEach(): JSX.Element {
+  useSignals();
+
+  const itemsSignal = signal([
+    { id: 1, value: 1 },
+    { id: 2, value: 2 },
+  ]);
+
+  const handleIncrementValues = useCallback(() => {
+    // Should warn - array element updates in forEach
+    itemsSignal.value.forEach((item, index) => {
+      itemsSignal.value[index].value += 1; // This will trigger the warning
+    });
+  }, []);
+
+  return (
+    <div>
+      <div>Items: {JSON.stringify(itemsSignal.value)}</div>
+      <button type='button' onClick={handleIncrementValues}>
+        Increment Values
+      </button>
+    </div>
+  );
+}
+
+// Test component for correct batch update pattern (should not warn)
+export function TestBatchArrayUpdate(): JSX.Element {
+  useSignals();
+
+  const itemsSignal = signal([1, 2, 3, 4, 5]);
+
+  const handleDoubleValues = useCallback(() => {
+    // Correct - using batch and array methods
+    itemsSignal.value = itemsSignal.value.map((item) => item * 2);
+  }, []);
+
+  return (
+    <div>
+      <div>Items: {JSON.stringify(itemsSignal.value)}</div>
+      <button type='button' onClick={handleDoubleValues}>
+        Double Values (Batched)
+      </button>
+    </div>
+  );
+}
+
+// Test component for complex array updates (should warn)
+export function TestComplexArrayUpdates(): JSX.Element {
+  useSignals();
+
+  const itemsSignal = signal(Array.from({ length: 5 }, (_, i) => ({ id: i, value: i * 10 })));
+
+  const updateEvenItems = useCallback(() => {
+    // Should warn - array element updates in a loop with condition
+    for (let i = 0; i < itemsSignal.value.length; i += 2) {
+      itemsSignal.value[i].value += 1; // This will trigger the warning
+    }
+  }, []);
+
+  return (
+    <div>
+      <div>Items: {JSON.stringify(itemsSignal.value)}</div>
+      <button type='button' onClick={updateEvenItems}>
+        Update Even Items
       </button>
     </div>
   );

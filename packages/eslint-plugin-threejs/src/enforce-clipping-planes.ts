@@ -3,13 +3,11 @@ import { ESLintUtils, AST_NODE_TYPES } from '@typescript-eslint/utils';
 
 import { PerformanceOperations } from './utils/performance-constants';
 
-const createRule = ESLintUtils.RuleCreator((name: string): string => {
-  return `https://github.com/ospm-app/eslint-plugin-threejs/docs/rules/${name}.md`;
-});
-
 type MessageIds = 'missingCleanup' | 'tooManyPlanes' | 'inefficientUpdate' | 'enableLocalClipping';
 
-export const enforceClippingPlanes = createRule<[], MessageIds>({
+export const enforceClippingPlanes = ESLintUtils.RuleCreator((name: string): string => {
+  return `https://github.com/ospm-app/eslint-plugin-threejs/docs/rules/${name}.md`;
+})<[], MessageIds>({
   name: 'enforce-clipping-planes',
   meta: {
     type: 'suggestion',
@@ -93,9 +91,34 @@ export const enforceClippingPlanes = createRule<[], MessageIds>({
       return null;
     }
 
+    function isInLoop(node: TSESTree.Node): boolean {
+      const ancestors = context.sourceCode.getAncestors(node);
+
+      for (let i = ancestors.length - 1; i >= 0; i--) {
+        const a = ancestors[i];
+
+        if (typeof a === 'undefined') {
+          continue;
+        }
+
+        if (
+          a.type === AST_NODE_TYPES.ForStatement ||
+          a.type === AST_NODE_TYPES.ForInStatement ||
+          a.type === AST_NODE_TYPES.ForOfStatement ||
+          a.type === AST_NODE_TYPES.WhileStatement ||
+          a.type === AST_NODE_TYPES.DoWhileStatement
+        ) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
     return {
+      '*': (_node: TSESTree.Node): void => {},
       // Track material assignments
-      'AssignmentExpression:matches([left.type="MemberExpression"])'(
+      [`${AST_NODE_TYPES.AssignmentExpression}:matches([left.type="MemberExpression"])`](
         node: TSESTree.AssignmentExpression & {
           left: TSESTree.MemberExpression;
           right: TSESTree.Node;
@@ -108,10 +131,25 @@ export const enforceClippingPlanes = createRule<[], MessageIds>({
           node.right.elements.length > 0
         ) {
           const materialName = getIdentifierName(node.left.object);
+
           if (materialName) {
             materialsNeedingClipping.set(materialName, {
               node: node.left,
               hasLocalClipping: false,
+            });
+          }
+
+          const rendererName = getIdentifierName(node.left.object);
+
+          if (rendererName !== null) {
+            const count = node.right.elements.length;
+            const prev = rendererClippingPlanes.get(rendererName);
+
+            rendererClippingPlanes.set(rendererName, {
+              node: node.left,
+              count,
+              inLoop: isInLoop(node) || prev?.inLoop === true,
+              hasCleanup: prev?.hasCleanup === true,
             });
           }
         } else if (
@@ -129,13 +167,31 @@ export const enforceClippingPlanes = createRule<[], MessageIds>({
               clipping.hasLocalClipping = true;
             }
           }
+        } else if (
+          node.left.property.type === AST_NODE_TYPES.Identifier &&
+          node.left.property.name === 'clippingPlanes' &&
+          ((node.right.type === AST_NODE_TYPES.Literal && node.right.value === null) ||
+            (node.right.type === AST_NODE_TYPES.ArrayExpression &&
+              node.right.elements.length === 0))
+        ) {
+          const rendererName = getIdentifierName(node.left.object);
+
+          if (rendererName !== null) {
+            const prev = rendererClippingPlanes.get(rendererName);
+
+            rendererClippingPlanes.set(rendererName, {
+              node: node.left,
+              count: prev?.count ?? 0,
+              inLoop: prev?.inLoop ?? false,
+              hasCleanup: true,
+            });
+          }
         }
       },
 
-      // Check for missing local clipping at the end of the program
-      'Program:exit'() {
+      [`${AST_NODE_TYPES.Program}:exit`]() {
         // Check for missing cleanup on renderers
-        for (const [name, { node, hasCleanup }] of rendererClippingPlanes) {
+        for (const [name, { node, hasCleanup, count, inLoop }] of rendererClippingPlanes) {
           if (!hasCleanup) {
             context.report({
               node,
@@ -145,6 +201,26 @@ export const enforceClippingPlanes = createRule<[], MessageIds>({
                   node,
                   `\n// TODO: Add cleanup for ${name}.clippingPlanes when no longer needed`
                 );
+              },
+            });
+          }
+
+          // Warn if too many clipping planes are used
+          if (typeof count === 'number' && count > 6) {
+            context.report({
+              node,
+              messageId: 'tooManyPlanes',
+              data: { count: String(count) },
+            });
+          }
+
+          // Warn if clipping planes are updated inside a loop (render loop)
+          if (inLoop === true) {
+            context.report({
+              node,
+              messageId: 'inefficientUpdate',
+              data: {
+                suggestion: 'Move clipping planes updates outside of tight loops or cache planes',
               },
             });
           }

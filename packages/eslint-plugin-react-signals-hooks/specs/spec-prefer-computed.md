@@ -2,6 +2,11 @@
 
 This rule encourages using `computed()` from `@preact/signals-react` instead of `useMemo` when working with signals for better performance and automatic reactivity.
 
+## Plugin Scope
+
+- Signal creators and signal methods are detected only from `@preact/signals-react`.
+- Autofix adds/augments imports from `@preact/signals-react` as needed.
+
 ## Core Functionality
 
 The `prefer-computed` rule detects `useMemo` hooks that depend on signals and suggests replacing them with `computed()` for better performance and automatic dependency tracking.
@@ -21,6 +26,8 @@ The `prefer-computed` rule detects `useMemo` hooks that depend on signals and su
 
 - Automatically adds the `computed` import if missing
 - Preserves existing imports from `@preact/signals-react`
+
+Import source: `@preact/signals-react`.
 
 ## Error Messages
 
@@ -61,3 +68,36 @@ While `computed` is preferred for signal-based computations, `useMemo` is still 
 3. Remove any `useCallback` wrappers around the computation function
 4. Update any dependencies that expect the memoized value
 5. Test for any timing differences in updates
+
+## Options
+
+```jsonc
+{
+  "rules": {
+    "react-signals-hooks/prefer-computed": [
+      "warn",
+      {
+        // Per-message severity overrides
+        "severity": {
+          "preferComputedWithSignal": "error" | "warn" | "off",
+          "preferComputedWithSignals": "error" | "warn" | "off",
+          "suggestComputed": "error" | "warn" | "off",
+          "addComputedImport": "error" | "warn" | "off",
+          "suggestAddComputedImport": "error" | "warn" | "off"
+        },
+        // Suffix used by the identifier heuristic
+        "suffix": "Signal",
+        // Performance budgets/metrics
+        "performance": {
+          "maxTime": 1000,
+          "maxMemory": 100,
+          "maxNodes": 5000,
+          "maxOperations": {},
+          "enableMetrics": false,
+          "logMetrics": false
+        }
+      }
+    ]
+  }
+}
+```

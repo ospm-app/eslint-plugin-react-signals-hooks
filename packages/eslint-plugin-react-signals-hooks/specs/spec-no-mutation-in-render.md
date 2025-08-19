@@ -2,6 +2,11 @@
 
 This rule prevents direct signal mutations during the render phase of React components, which can lead to unexpected behavior and performance issues.
 
+## Plugin Scope
+
+- Signal creators and methods are detected only from `@preact/signals-react`.
+- Any import insertions/augmentations performed by fixes target `@preact/signals-react`.
+
 ## Core Functionality
 
 The `no-mutation-in-render` rule detects and prevents direct signal mutations that occur during the render phase of React components. Signal mutations should be moved to effects, event handlers, or other side-effect contexts.

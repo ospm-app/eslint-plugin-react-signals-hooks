@@ -3,6 +3,7 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type {
 	SourceCode,
@@ -14,50 +15,28 @@ import {
 	endPhase,
 	startPhase,
 	recordMetric,
-	stopTracking,
 	startTracking,
 	trackOperation,
 	createPerformanceTracker,
 	DEFAULT_PERFORMANCE_BUDGET,
 } from "./utils/performance.js";
+import { buildSuffixRegex, hasSignalSuffix } from "./utils/suffix.js";
 import type { PerformanceBudget } from "./utils/types.js";
 import { getRuleDocUrl } from "./utils/urls.js";
 
-function getSeverity(
-	messageId: MessageIds,
-	options: Option | undefined,
-): "error" | "warn" | "off" {
-	if (!options?.severity) {
-		// Default to 'error' for all message types except performanceLimitExceeded
-		return "error";
-	}
-
-	// eslint-disable-next-line security/detect-object-injection
-	const severity = options.severity[messageId];
-
-	// Default to 'error' for all message types except performanceLimitExceeded
-	if (typeof severity === "undefined") {
-		return "error";
-	}
-
-	return severity;
-}
+type MessageIds = "preferForOverMap" | "suggestForComponent" | "addForImport";
 
 type Serenity = {
-	preferForOverMap?: "error" | "warn" | "off";
-	suggestForComponent?: "error" | "warn" | "off";
-	addForImport?: "error" | "warn" | "off";
-	performanceLimitExceeded?: "error" | "warn" | "off";
+	[key in MessageIds]?: "error" | "warn" | "off";
 };
 
 type Option = {
 	performance?: PerformanceBudget;
 	severity?: Serenity;
+	suffix?: string;
 };
 
 type Options = [Option?];
-
-type MessageIds = "preferForOverMap" | "suggestForComponent" | "addForImport";
 
 const REACT_HOOKS = new Set([
 	"useEffect",
@@ -71,12 +50,103 @@ const REACT_HOOKS = new Set([
 	"useContext",
 ]);
 
+function getSeverity(
+	messageId: MessageIds,
+	options: Option | undefined,
+): "error" | "warn" | "off" {
+	if (!options?.severity) {
+		return "error";
+	}
+
+	switch (messageId) {
+		case "preferForOverMap": {
+			return options.severity.preferForOverMap ?? "error";
+		}
+
+		case "suggestForComponent": {
+			return options.severity.suggestForComponent ?? "error";
+		}
+
+		case "addForImport": {
+			return options.severity.addForImport ?? "error";
+		}
+
+		default: {
+			return "error";
+		}
+	}
+}
+
 const signalMapCache = new WeakMap<
 	TSESTree.CallExpression,
 	{ signalName: string; hasValueAccess: boolean } | null
 >();
 
-function isSignalArrayMap(node: TSESTree.CallExpression): {
+function getBaseIdentifierFromMemberChain(
+	node: TSESTree.MemberExpression,
+): TSESTree.Identifier | null {
+	let current: TSESTree.Expression | TSESTree.PrivateIdentifier = node.object;
+
+	// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+	while (true) {
+		if (current.type === AST_NODE_TYPES.Identifier) {
+			return current;
+		}
+
+		if (current.type === AST_NODE_TYPES.MemberExpression) {
+			current = current.object;
+			continue;
+		}
+
+		return null;
+	}
+}
+
+function memberChainIncludesValue(node: TSESTree.MemberExpression): boolean {
+	let current: TSESTree.Expression | TSESTree.PrivateIdentifier = node;
+
+	// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+	while (current && current.type === AST_NODE_TYPES.MemberExpression) {
+		if (
+			current.property.type === AST_NODE_TYPES.Identifier &&
+			current.property.name === "value"
+		) {
+			return true;
+		}
+
+		current = current.object;
+	}
+
+	return false;
+}
+
+function unwrapCalleeMember(
+	callee:
+		| TSESTree.MemberExpression
+		| TSESTree.ChainExpression
+		| TSESTree.CallExpression
+		| TSESTree.Identifier,
+): TSESTree.MemberExpression | null {
+	// Handle ChainExpression wrapping a MemberExpression
+	if (callee.type === AST_NODE_TYPES.ChainExpression) {
+		const expr = callee.expression;
+		if (expr.type === AST_NODE_TYPES.MemberExpression) {
+			return expr;
+		}
+		return null;
+	}
+
+	if (callee.type === AST_NODE_TYPES.MemberExpression) {
+		return callee;
+	}
+
+	return null;
+}
+
+function isSignalArrayMap(
+	node: TSESTree.CallExpression,
+	suffixRegex: RegExp,
+): {
 	signalName: string;
 	hasValueAccess: boolean;
 } | null {
@@ -86,36 +156,40 @@ function isSignalArrayMap(node: TSESTree.CallExpression): {
 		return cached;
 	}
 
-	const result: { signalName: string; hasValueAccess: boolean } | null = null;
-	// Check for signalName.value.map(...)
-	if (
-		node.callee.type === "MemberExpression" &&
-		node.callee.property.type === "Identifier" &&
-		node.callee.property.name === "map" &&
-		node.callee.object.type === "MemberExpression" &&
-		node.callee.object.property.type === "Identifier" &&
-		node.callee.object.property.name === "value" &&
-		node.callee.object.object.type === "Identifier" &&
-		node.callee.object.object.name.endsWith("Signal")
-	) {
-		return {
-			signalName: node.callee.object.object.name,
-			hasValueAccess: true,
-		};
-	}
+	let result: { signalName: string; hasValueAccess: boolean } | null = null;
 
-	// Check for direct signal.map() (without .value)
+	const member = unwrapCalleeMember(
+		node.callee as
+			| TSESTree.MemberExpression
+			| TSESTree.ChainExpression
+			| TSESTree.CallExpression
+			| TSESTree.Identifier,
+	);
+
 	if (
-		node.callee.type === "MemberExpression" &&
-		node.callee.property.type === "Identifier" &&
-		node.callee.property.name === "map" &&
-		node.callee.object.type === "Identifier" &&
-		node.callee.object.name.endsWith("Signal")
+		member &&
+		member.property.type === AST_NODE_TYPES.Identifier &&
+		member.property.name === "map"
 	) {
-		return {
-			signalName: node.callee.object.name,
-			hasValueAccess: false,
-		};
+		const obj = member.object;
+
+		// Direct identifier receiver: fooSignal.map(...)
+		if (obj.type === AST_NODE_TYPES.Identifier) {
+			if (hasSignalSuffix(obj.name, suffixRegex)) {
+				result = { signalName: obj.name, hasValueAccess: false };
+			}
+		}
+
+		// Member chain receiver: may include .value and/or nested props
+		else if (obj.type === AST_NODE_TYPES.MemberExpression) {
+			const base = getBaseIdentifierFromMemberChain(obj);
+
+			if (base && hasSignalSuffix(base.name, suffixRegex)) {
+				const hasValue = memberChainIncludesValue(obj);
+
+				result = { signalName: base.name, hasValueAccess: hasValue };
+			}
+		}
 	}
 
 	signalMapCache.set(node, result);
@@ -126,7 +200,6 @@ function isSignalArrayMap(node: TSESTree.CallExpression): {
 function getForComponentReplacement(
 	node: TSESTree.CallExpression,
 	signalName: string,
-	hasValueAccess: boolean,
 	sourceCode: SourceCode,
 ): { replacement: string; needsParens: boolean } | null {
 	const mapCallback = node.arguments[0];
@@ -135,27 +208,78 @@ function getForComponentReplacement(
 		return null;
 	}
 
-	const signalAccess = hasValueAccess ? `${signalName}.value` : signalName;
-
 	// Handle different callback types
 	if (
-		mapCallback.type === "ArrowFunctionExpression" ||
-		mapCallback.type === "FunctionExpression"
+		mapCallback.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+		mapCallback.type === AST_NODE_TYPES.FunctionExpression
 	) {
 		const params = "params" in mapCallback ? mapCallback.params : [];
 
-		const itemParam =
-			params[0]?.type === "Identifier" ? params[0].name : "item";
+		// Build param list and potential body identifier rewrites when first param is an ObjectPattern
+		let firstParamText = "(item)";
+		let needsRewriteToItem = false;
+		const rewriteMap: Record<string, string> = {};
+
+		if (params[0]) {
+			if (params[0].type === AST_NODE_TYPES.ObjectPattern) {
+				// Capture type annotation if present
+				const typeText = params[0].typeAnnotation
+					? sourceCode.getText(params[0].typeAnnotation.typeAnnotation)
+					: undefined;
+
+				// Collect property identifiers for rewrite (simple Identifier keys only)
+				for (const prop of params[0].properties) {
+					if (
+						prop.type === AST_NODE_TYPES.Property &&
+						prop.key.type === AST_NODE_TYPES.Identifier
+					) {
+						const keyName = prop.key.name;
+						// if there is an alias `{ key: local }`, rewrite local -> item.key
+						if (prop.value.type === AST_NODE_TYPES.Identifier) {
+							rewriteMap[prop.value.name] = `item.${keyName}`;
+						} else if (
+							prop.value.type === AST_NODE_TYPES.AssignmentPattern &&
+							prop.value.left.type === AST_NODE_TYPES.Identifier
+						) {
+							rewriteMap[prop.value.left.name] = `item.${keyName}`;
+						} else {
+							// fallback: also rewrite bare key to item.key
+							// eslint-disable-next-line security/detect-object-injection
+							rewriteMap[keyName] = `item.${keyName}`;
+						}
+					}
+				}
+
+				firstParamText =
+					typeof typeText === "undefined" ? `(item)` : `(item: ${typeText})`;
+
+				needsRewriteToItem = true;
+			} else if (params[0].type === AST_NODE_TYPES.Identifier) {
+				// Preserve original identifier and any type annotation
+				const id = params[0];
+
+				const typeText = id.typeAnnotation
+					? sourceCode.getText(id.typeAnnotation.typeAnnotation)
+					: undefined;
+
+				firstParamText =
+					typeof typeText === "undefined"
+						? `(${id.name})`
+						: `(${id.name}: ${typeText})`;
+			} else {
+				firstParamText = `(item)`;
+			}
+		}
 
 		// Get the body of the callback
 		let bodyText = "";
 		let needsParens = false;
 
 		if ("body" in mapCallback) {
-			if (mapCallback.body.type === "BlockStatement") {
+			if (mapCallback.body.type === AST_NODE_TYPES.BlockStatement) {
 				// For block statements, we need to handle the return statement
 				const returnStmt = mapCallback.body.body.find(
-					(stmt) => stmt.type === "ReturnStatement",
+					(stmt) => stmt.type === AST_NODE_TYPES.ReturnStatement,
 				) as TSESTree.ReturnStatement | undefined;
 
 				if (returnStmt?.argument) {
@@ -167,39 +291,52 @@ function getForComponentReplacement(
 				// For concise arrow functions, just get the expression
 				bodyText = sourceCode.getText(mapCallback.body);
 				needsParens =
-					mapCallback.body.type !== "JSXElement" &&
-					mapCallback.body.type !== "JSXFragment";
+					mapCallback.body.type !== AST_NODE_TYPES.JSXElement &&
+					mapCallback.body.type !== AST_NODE_TYPES.JSXFragment;
 			}
 		}
 
-		// Determine if we need to include the index parameter
-		const hasIndexParam = params.length > 1;
-		const paramList = hasIndexParam
-			? `(${itemParam}, ${params[1]?.type === "Identifier" ? params[1].name : "index"})`
-			: `(${itemParam})`;
-
-		// Format the replacement
-		const replacement = hasIndexParam
-			? `<For each={${signalAccess}}>${paramList} => ${needsParens ? `(${bodyText})` : bodyText}</For>`
-			: `<For each={${signalAccess}}>${paramList} => ${needsParens ? `(${bodyText})` : bodyText}</For>`;
-
-		return { replacement, needsParens: false };
-	}
-
-	// For identifier callbacks, just use the identifier directly
-	if (mapCallback.type === "Identifier") {
-		const callbackName = sourceCode.getText(mapCallback);
+		// If we destructured, rewrite bare identifiers in body to item.<prop>
+		if (needsRewriteToItem && bodyText) {
+			for (const [from, to] of Object.entries(rewriteMap)) {
+				// replace word-boundary identifiers not already qualified (best-effort)
+				// eslint-disable-next-line security/detect-non-literal-regexp
+				const re = new RegExp(`(?<!["'.])\\b${from}\\b`, "g");
+				bodyText = bodyText.replace(re, to);
+			}
+		}
 
 		return {
-			replacement: `<For each={${signalAccess}}>{${callbackName}}</For>`,
+			replacement: `<For each={${signalName}}>{(${
+				params.length > 1 &&
+				typeof (params.length > 1
+					? params[1]?.type === AST_NODE_TYPES.Identifier
+						? params[1].name
+						: "index"
+					: undefined) !== "undefined"
+					? `${firstParamText.slice(1, -1)}, ${
+							params.length > 1
+								? params[1]?.type === AST_NODE_TYPES.Identifier
+									? params[1].name
+									: "index"
+								: undefined
+						}`
+					: firstParamText.slice(1, -1)
+			}) => ${needsParens ? `(${bodyText})` : bodyText}}</For>`,
 			needsParens: false,
 		};
 	}
 
-	// For member expressions or other call expressions
-	const callbackText = sourceCode.getText(mapCallback);
+	// For identifier callbacks, just use the identifier directly
+	if (mapCallback.type === AST_NODE_TYPES.Identifier) {
+		return {
+			replacement: `<For each={${signalName}}>{${sourceCode.getText(mapCallback)}}</For>`,
+			needsParens: false,
+		};
+	}
+
 	return {
-		replacement: `<For each={${signalAccess}}>{${callbackText}}</For>`,
+		replacement: `<For each={${signalName}}>{${sourceCode.getText(mapCallback)}}</For>`,
 		needsParens: true,
 	};
 }
@@ -211,11 +348,11 @@ function checkForImport(context: RuleContext<MessageIds, Options>): boolean {
 		importCheckCache = context.sourceCode.ast.body.some(
 			(node: TSESTree.ProgramStatement): boolean => {
 				return (
-					node.type === "ImportDeclaration" &&
-					node.source.value === "@preact/signals-react" &&
+					node.type === AST_NODE_TYPES.ImportDeclaration &&
+					node.source.value === "@preact/signals-react/utils" &&
 					node.specifiers.some((s): boolean => {
 						return (
-							s.type === "ImportSpecifier" &&
+							s.type === AST_NODE_TYPES.ImportSpecifier &&
 							"name" in s.imported &&
 							s.imported.name === "For"
 						);
@@ -254,7 +391,7 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 			preferForOverMap:
 				"Prefer using the `<For>` component instead of `.map()` for better performance with signal arrays.",
 			suggestForComponent: "Replace `.map()` with `<For>` component",
-			addForImport: "Add `For` import from @preact/signals-react",
+			addForImport: "Add `For` import from @preact/signals-react/utils",
 		},
 		schema: [
 			{
@@ -295,10 +432,6 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 								type: "string",
 								enum: ["error", "warn", "off"],
 							},
-							performanceLimitExceeded: {
-								type: "string",
-								enum: ["error", "warn", "off"],
-							},
 						},
 						additionalProperties: false,
 					},
@@ -320,20 +453,21 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 
 		startPhase(perfKey, "ruleInit");
 
-		const perf = createPerformanceTracker<Options>(
-			perfKey,
-			option?.performance,
-			context,
-		);
+		const perf = createPerformanceTracker(perfKey, option?.performance);
 
 		if (option?.performance?.enableMetrics === true) {
 			startTracking(context, perfKey, option.performance, ruleName);
 		}
 
-		console.info(
-			`${ruleName}: Initializing rule for file: ${context.filename}`,
-		);
-		console.info(`${ruleName}: Rule configuration:`, option);
+		if (
+			option?.performance?.enableMetrics === true &&
+			option.performance.logMetrics === true
+		) {
+			console.info(
+				`${ruleName}: Initializing rule for file: ${context.filename}`,
+			);
+			console.info(`${ruleName}: Rule configuration:`, option);
+		}
 
 		recordMetric(perfKey, "config", {
 			performance: {
@@ -363,6 +497,12 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 			return true;
 		}
 
+		const suffix =
+			typeof option?.suffix === "string" && option.suffix.length > 0
+				? option.suffix
+				: "Signal";
+		const suffixRegex = buildSuffixRegex(suffix);
+
 		startPhase(perfKey, "ruleExecution");
 
 		return {
@@ -370,41 +510,48 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 				if (!shouldContinue()) {
 					endPhase(perfKey, "recordMetrics");
 
-					stopTracking(perfKey);
-
 					return;
 				}
 
 				perf.trackNode(node);
 
-				trackOperation(
-					perfKey,
-					PerformanceOperations[`${node.type}Processing`],
-				);
+				const op =
+					// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+					PerformanceOperations[`${node.type}Processing`] ??
+					PerformanceOperations.nodeProcessing;
+				trackOperation(perfKey, op);
 			},
 
-			JSXElement(_node: TSESTree.Node): void {
+			[AST_NODE_TYPES.JSXElement](_node: TSESTree.Node): void {
 				inJSX = true;
+
 				jsxDepth++;
 			},
-			"JSXElement:exit"(_node: TSESTree.Node): void {
+			[`${AST_NODE_TYPES.JSXElement}:exit`](_node: TSESTree.Node): void {
 				jsxDepth--;
-				if (jsxDepth === 0) inJSX = false;
+
+				if (jsxDepth === 0) {
+					inJSX = false;
+				}
 			},
 
-			JSXFragment(_node: TSESTree.Node): void {
+			[AST_NODE_TYPES.JSXFragment](_node: TSESTree.Node): void {
 				inJSX = true;
+
 				jsxDepth++;
 			},
-			"JSXFragment:exit"(_node: TSESTree.Node): void {
+
+			[`${AST_NODE_TYPES.JSXFragment}:exit`](_node: TSESTree.Node): void {
 				jsxDepth--;
-				if (jsxDepth === 0) inJSX = false;
+
+				if (jsxDepth === 0) {
+					inJSX = false;
+				}
 			},
 
-			CallExpression(node: TSESTree.CallExpression): void {
-				// Track hook usage
+			[AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
 				if (
-					node.callee.type === "Identifier" &&
+					node.callee.type === AST_NODE_TYPES.Identifier &&
 					REACT_HOOKS.has(node.callee.name)
 				) {
 					hookDepth++;
@@ -416,12 +563,11 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 					return;
 				}
 
-				// Only apply the rule if we're in JSX and NOT in a hook
 				if (!inJSX || inHook || hookDepth > 0) {
 					return;
 				}
 
-				const signalMapInfo = isSignalArrayMap(node);
+				const signalMapInfo = isSignalArrayMap(node, suffixRegex);
 
 				if (signalMapInfo === null) {
 					return;
@@ -430,7 +576,6 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 				const replacement = getForComponentReplacement(
 					node,
 					signalMapInfo.signalName,
-					signalMapInfo.hasValueAccess,
 					context.sourceCode,
 				);
 
@@ -438,9 +583,9 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 					return;
 				}
 
-				const severity = getSeverity("preferForOverMap", option);
-
-				if (severity === "off") return;
+				if (getSeverity("preferForOverMap", option) === "off") {
+					return;
+				}
 
 				context.report({
 					node,
@@ -449,7 +594,6 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 						const replacementResult = getForComponentReplacement(
 							node,
 							signalMapInfo.signalName,
-							signalMapInfo.hasValueAccess,
 							context.sourceCode,
 						);
 
@@ -461,19 +605,18 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 							fixer.replaceText(node, replacementResult.replacement),
 						];
 
-						// Add For import if needed
 						if (
 							!checkForImport(context) &&
 							getSeverity("addForImport", option) !== "off"
 						) {
 							const forImport =
-								"import { For } from '@preact/signals-react';\n";
+								"import { For } from '@preact/signals-react/utils';\n";
 
 							const firstImport = context.sourceCode.ast.body.find(
 								(
 									n: TSESTree.ProgramStatement,
 								): n is TSESTree.ImportDeclaration => {
-									return n.type === "ImportDeclaration";
+									return n.type === AST_NODE_TYPES.ImportDeclaration;
 								},
 							);
 
@@ -504,7 +647,6 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 											const replacementResult = getForComponentReplacement(
 												node,
 												signalMapInfo.signalName,
-												signalMapInfo.hasValueAccess,
 												context.sourceCode,
 											);
 
@@ -521,13 +663,13 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 												getSeverity("addForImport", option) !== "off"
 											) {
 												const forImport =
-													"import { For } from '@preact/signals-react';\n";
+													"import { For } from '@preact/signals-react/utils';\n";
 
 												const firstImport = context.sourceCode.ast.body.find(
 													(
 														n: TSESTree.ProgramStatement,
 													): n is TSESTree.ImportDeclaration => {
-														return n.type === "ImportDeclaration";
+														return n.type === AST_NODE_TYPES.ImportDeclaration;
 													},
 												);
 
@@ -552,9 +694,10 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 								],
 				});
 			},
-			"CallExpression:exit"(node: TSESTree.CallExpression) {
+
+			[`${AST_NODE_TYPES.CallExpression}:exit`](node: TSESTree.CallExpression) {
 				if (
-					node.callee.type === "Identifier" &&
+					node.callee.type === AST_NODE_TYPES.Identifier &&
 					REACT_HOOKS.has(node.callee.name)
 				) {
 					hookDepth = Math.max(0, hookDepth - 1);
@@ -564,34 +707,8 @@ export const preferForOverMapRule = ESLintUtils.RuleCreator(
 				}
 			},
 
-			// Clean up
-			"Program:exit"(): void {
+			[`${AST_NODE_TYPES.Program}:exit`](): void {
 				startPhase(perfKey, "programExit");
-
-				try {
-					startPhase(perfKey, "recordMetrics");
-
-					const finalMetrics = stopTracking(perfKey);
-
-					if (finalMetrics) {
-						console.info(
-							`\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? "EXCEEDED" : "OK"}):`,
-						);
-						console.info(`  File: ${context.filename}`);
-						console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-						console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
-
-						if (finalMetrics.exceededBudget === true) {
-							console.warn("\n⚠️  Performance budget exceeded!");
-						}
-					}
-				} catch (error: unknown) {
-					console.error("Error recording metrics:", error);
-				} finally {
-					endPhase(perfKey, "recordMetrics");
-
-					stopTracking(perfKey);
-				}
 
 				perf["Program:exit"]();
 

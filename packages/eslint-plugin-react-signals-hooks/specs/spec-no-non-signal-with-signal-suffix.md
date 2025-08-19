@@ -2,6 +2,11 @@
 
 This rule enforces that variables, parameters, and properties with the 'Signal' suffix are actual signal instances created by signal creation functions.
 
+## Plugin Scope
+
+- Signal creator detection is scoped to `@preact/signals-react` only.
+- The rule recognizes `signal()` and `computed()` created in-file via direct, aliased, or namespace imports from `@preact/signals-react`.
+
 ## Core Functionality
 
 The `no-non-signal-with-signal-suffix` rule ensures naming consistency by requiring that any identifier with 'Signal' in its name is actually a signal instance. This helps prevent confusion and maintains code clarity by ensuring the name accurately reflects the type.
@@ -35,12 +40,24 @@ Custom signal function names to recognize
 - Default: `['signal', 'useSignal', 'createSignal']`
 - Example: `['signal', 'useSignal', 'createSignal', 'customSignal']`
 
-### `ignorePatterns` (string[])
+### `ignorePattern` (string)
 
-Patterns to ignore (regex as strings)
+Pattern to ignore (regex string). If provided and non-empty, names matching the regex will be skipped.
 
-- Default: `[]`
-- Example: `['^_', 'Signal$']` to ignore variables starting with underscore or ending with 'Signal'
+- Default: `""`
+- Example: `"^_|Signal$"` to ignore variables starting with underscore or ending with 'Signal'
+
+### `suffix` (string)
+
+Suffix to detect for signal-like names.
+
+- Default: `"Signal"`
+
+### `validateProperties` (boolean)
+
+Whether to validate object/class properties that end with the suffix.
+
+- Default: `true`
 
 ### `severity` (object)
 
@@ -73,8 +90,9 @@ Performance tuning options:
 
 ## Auto-fix Suggestions
 
-- **Rename without suffix**: Suggests renaming the identifier to remove the 'Signal' suffix
-- **Convert to signal**: Suggests converting the value to a signal (when possible)
+- This rule provides suggestions (`hasSuggestions: true`) and autofixes where safe:
+  - **Rename without suffix**: Suggests renaming the identifier to remove the 'Signal' suffix
+  - **Convert to signal**: Suggests converting the value to a signal (when possible)
 
 ## Best Practices
 

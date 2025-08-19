@@ -20,14 +20,19 @@ Signal variables must:
 
 Computed variables must follow the same naming rules as signal variables.
 
-## Auto-fix Suggestions
+## Auto-fix
 
-The rule provides automatic fixes that will:
+The rule provides a safe autofix (no separate suggestions) that will:
 
 1. Add 'Signal' suffix if missing
 2. Convert first character to lowercase
 3. Remove 'use' prefix if present at the start
 4. Preserve the rest of the name
+
+Notes:
+
+- References are updated where safe within the same scope; property names (e.g., `obj.nameSignal`) are not rewritten.
+- A collision guard prevents renaming when the target name already exists in scope; in that case, no fix is applied.
 
 ## Error Messages
 
@@ -58,11 +63,37 @@ This rule can be disabled for:
 
 ## Configuration
 
-While this rule currently doesn't have any configuration options, future versions may include:
+```json
+{
+  "react-signals-hooks/signal-variable-name": [
+    "error",
+    {
+      "suffix": "Signal",
+      "severity": {
+        "invalidSignalName": "error",
+        "invalidComputedName": "error"
+      },
+      "performance": {
+        "maxTime": 200,
+        "maxMemory": 256,
+        "maxNodes": 100000,
+        "enableMetrics": false,
+        "logMetrics": false
+      }
+    }
+  ]
+}
+```
 
-- Custom suffix for signal variables
-- Allowing specific prefixes
-- Custom naming patterns
+### Options
+
+- `suffix` (string, default: `"Signal"`): Required suffix for signal/computed names.
+- `severity` (object): Per-message severity override for `invalidSignalName` and `invalidComputedName`.
+- `performance` (object): Performance budgets and optional metrics logging.
+
+### Detection Notes
+
+- Signal/computed creators are detected via imports (direct, aliased, or namespace) from `@preact/signals-react` only (plugin scope).
 
 ## Best Practices
 

@@ -1,3 +1,9 @@
+/* eslint-disable react-signals-hooks/prefer-show-over-ternary */
+/* eslint-disable @typescript-eslint/strict-boolean-expressions */
+/* eslint-disable @typescript-eslint/no-unnecessary-condition */
+/** biome-ignore-all lint/correctness/noUnusedVariables: off */
+/** biome-ignore-all lint/correctness/useHookAtTopLevel: off */
+/** biome-ignore-all assist/source/organizeImports: off */
 import { signal } from '@preact/signals-react';
 import { useSignals } from '@preact/signals-react/runtime';
 import {
@@ -12,146 +18,174 @@ import {
 
 // This component should NOT trigger any warnings - proper signal naming
 export function TestValidSignalNaming(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  const countSignal = signal(0);
-  const [name, _setName] = useState('');
-  const isValid = true;
+  try {
+    const countSignal = signal(0);
+    const [name, _setName] = useState('');
+    const isValid = true;
 
-  return (
-    <div>
-      <div>Count: {countSignal}</div>
+    return (
+      <div>
+        <div>Count: {countSignal}</div>
 
-      <div>Name: {name}</div>
+        <div>Name: {name}</div>
 
-      <div>Is Valid: {isValid ? 'Yes' : 'No'}</div>
-    </div>
-  );
+        <div>Is Valid: {isValid ? 'Yes' : 'No'}</div>
+      </div>
+    );
+  } finally {
+    store.f();
+  }
 }
 
 // This component should trigger a warning - non-signal variable with 'Signal' suffix
 export function TestInvalidSignalNaming(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  const countSignal = signal(0);
-  const [nameSignal, _setName] = useState(''); // Should warn about nameSignal
-  const isValidSignal = true; // Should warn about isValidSignal
+  try {
+    const countSignal = signal(0);
+    const [nameSignal, _setName] = useState(''); // Should warn about nameSignal
+    const isValidSignal = true; // Should warn about isValidSignal
 
-  return (
-    <div>
-      <div>Count: {countSignal}</div>
+    return (
+      <div>
+        <div>Count: {countSignal}</div>
 
-      <div>Name: {nameSignal}</div>
+        <div>Name: {nameSignal}</div>
 
-      <div>Is Valid: {isValidSignal ? 'Yes' : 'No'}</div>
-    </div>
-  );
+        <div>Is Valid: {isValidSignal ? 'Yes' : 'No'}</div>
+      </div>
+    );
+  } finally {
+    store.f();
+  }
 }
 
 // This component should NOT trigger warnings - signal variables with 'Signal' suffix
 export function TestSignalVariables(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  const countSignal = signal(0);
+  try {
+    const countSignal = signal(0);
 
-  const nameSignal = signal('');
+    const nameSignal = signal('');
 
-  const isValidSignalSignal = signal(true);
+    const isValidSignalSignal = signal(true);
 
-  return (
-    <div>
-      <div>Count: {countSignal}</div>
+    return (
+      <div>
+        <div>Count: {countSignal}</div>
 
-      <div>Name: {nameSignal}</div>
+        <div>Name: {nameSignal}</div>
 
-      <div>Is Valid: {isValidSignalSignal ? 'Yes' : 'No'}</div>
-    </div>
-  );
+        <div>Is Valid: {isValidSignalSignal ? 'Yes' : 'No'}</div>
+      </div>
+    );
+  } finally {
+    store.f();
+  }
 }
 
 // This component should trigger warnings for destructured non-signal values with 'Signal' suffix
 export function TestDestructuredProps({ userSignal }: { userSignal: string }): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  // Should warn about userSignal prop
-  const [isLoadingSignal, _setIsLoading] = useState(false); // Should warn about isLoadingSignal
-  const dataSignal = signal<Record<string, unknown>>({});
+  try {
+    // Should warn about userSignal prop
+    const [isLoadingSignal, _setIsLoading] = useState(false); // Should warn about isLoadingSignal
+    const dataSignal = signal<Record<string, unknown>>({});
 
-  return (
-    <div>
-      <div>User: {userSignal}</div>
+    return (
+      <div>
+        <div>User: {userSignal}</div>
 
-      <div>Loading: {isLoadingSignal ? 'Yes' : 'No'}</div>
+        <div>Loading: {isLoadingSignal ? 'Yes' : 'No'}</div>
 
-      <div>Data: {JSON.stringify(dataSignal.value)}</div>
-    </div>
-  );
+        <div>Data: {JSON.stringify(dataSignal.value)}</div>
+      </div>
+    );
+  } finally {
+    store.f();
+  }
 }
 
 // This component should NOT trigger warnings for destructured signal values with 'Signal' suffix
 export function TestDestructuredSignals(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  const userSignal = signal({ name: 'John', id: 1 });
+  try {
+    const userSignal = signal({ name: 'John', id: 1 });
 
-  const { name: userNameSignal, id: userIdSignal } = userSignal.value;
+    const { name: userNameSignal, id: userIdSignal } = userSignal.value;
 
-  // Should not warn about destructured values from signals
-  return (
-    <div>
-      <div>User: {userNameSignal}</div>
+    // Should not warn about destructured values from signals
+    return (
+      <div>
+        <div>User: {userNameSignal}</div>
 
-      <div>ID: {userIdSignal}</div>
-    </div>
-  );
+        <div>ID: {userIdSignal}</div>
+      </div>
+    );
+  } finally {
+    store.f();
+  }
 }
 
 // This component tests function parameters with 'Signal' suffix
 export function TestFunctionParameters(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  const handleClick = (eventSignal: React.MouseEvent) => {
-    // Should warn about eventSignal
-    console.info('Clicked:', eventSignal);
-  };
+  try {
+    const handleClick = (eventSignal: React.MouseEvent) => {
+      // Should warn about eventSignal
+      console.info('Clicked:', eventSignal);
+    };
 
-  const processData = useCallback((dataSignal: unknown) => {
-    // Should warn about dataSignal
-    return JSON.stringify(dataSignal);
-  }, []);
+    const processData = useCallback((dataSignal: unknown) => {
+      // Should warn about dataSignal
+      return JSON.stringify(dataSignal);
+    }, []);
 
-  return (
-    <button type='button' onClick={handleClick}>
-      Click Me {processData({ test: 'test' })}
-    </button>
-  );
+    return (
+      <button type='button' onClick={handleClick}>
+        Click Me {processData({ test: 'test' })}
+      </button>
+    );
+  } finally {
+    store.f();
+  }
 }
 
 // This component tests type aliases with 'Signal' suffix
+// Should NOT warn about UserSignal, types are not variables
 type UserSignal = {
-  // Should not warn about UserSignal, types are not variables
   id: number;
   name: string;
 };
 
+// Should NOT warn about ConfigSignal, types are not variables
 interface ConfigSignal {
-  // Should not warn about ConfigSignal, types are not variables
   theme: string;
   isDark: boolean;
 }
 
 export function TestTypeAliases(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  const user: UserSignal = { id: 1, name: 'John' };
-  const config: ConfigSignal = { theme: 'light', isDark: false };
+  try {
+    const user: UserSignal = { id: 1, name: 'John' };
+    const config: ConfigSignal = { theme: 'light', isDark: false };
 
-  return (
-    <div>
-      <div>User: {user.name}</div>
-      <div>Theme: {config.theme}</div>
-    </div>
-  );
+    return (
+      <div>
+        <div>User: {user.name}</div>
+        <div>Theme: {config.theme}</div>
+      </div>
+    );
+  } finally {
+    store.f();
+  }
 }
 
 // Class component with properties and methods
@@ -179,20 +213,24 @@ export class TestClassComponent extends Component {
 
 // Test component using React refs
 export function TestRefs(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  // Should warn - ref with Signal suffix that's not a signal
-  const inputRefSignal = useRef<HTMLInputElement>(null);
+  try {
+    // Should warn - ref with Signal suffix that's not a signal
+    const inputRefSignal = useRef<HTMLInputElement>(null);
 
-  // Should not warn - signal with Signal suffix
-  const counterSignal = signal(0);
+    // Should not warn - signal with Signal suffix
+    const counterSignal = signal(0);
 
-  return (
-    <div>
-      <input ref={inputRefSignal} />
-      <div>Count: {counterSignal}</div>
-    </div>
-  );
+    return (
+      <div>
+        <input ref={inputRefSignal} />
+        <div>Count: {counterSignal}</div>
+      </div>
+    );
+  } finally {
+    store.f();
+  }
 }
 
 // Test context with Signal suffix
@@ -200,46 +238,65 @@ const UserContextSignal = createContext<{ name: string }>({ name: 'John' });
 
 // Custom hook with Signal suffix
 export function useUserSignal() {
-  // Should warn - return value has Signal suffix but is not a signal
-  const user = useContext(UserContextSignal);
-  return user;
+  const store = useSignals(2);
+
+  try {
+    // Should warn - return value has Signal suffix but is not a signal
+    const user = useContext(UserContextSignal);
+
+    return user;
+  } finally {
+    store.f();
+  }
 }
 
 // Test component using context and custom hook
 export function TestContextAndHooks(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  // Should not warn - signal with Signal suffix
-  const themeSignal = signal('light');
+  try {
+    // Should not warn - signal with Signal suffix
+    const themeSignal = signal('light');
 
-  // Should warn - hook return value with Signal suffix that's not a signal
-  const userSignal = useUserSignal();
+    // Should warn - hook return value with Signal suffix that's not a signal
+    const userSignal = useUserSignal();
 
-  return (
-    <UserContextSignal.Provider value={{ name: 'John' }}>
-      <div>
-        <div>Theme: {themeSignal}</div>
-        <div>User: {userSignal.name}</div>
-      </div>
-    </UserContextSignal.Provider>
-  );
+    return (
+      <UserContextSignal.Provider value={{ name: 'John' }}>
+        <div>
+          <div>Theme: {themeSignal}</div>
+          <div>User: {userSignal.name}</div>
+        </div>
+      </UserContextSignal.Provider>
+    );
+  } finally {
+    store.f();
+  }
 }
 
 // Test component with generic type parameters
-export function TestGenerics<T extends { id: number }>({ items }: { items: T[] }): JSX.Element {
-  useSignals();
+export function TestGenerics<T extends { id: number }>({
+  items,
+}: {
+  items: Array<T>;
+}): JSX.Element {
+  const store = useSignals(1);
 
-  // Should warn - non-signal with Signal suffix
-  const selectedItemSignal = items[0];
+  try {
+    // Should warn - non-signal with Signal suffix
+    const selectedItemSignal = items[0];
 
-  // Should not warn - signal with Signal suffix
-  const selectedItemIdSignal = signal(selectedItemSignal?.id ?? 0);
+    // Should not warn - signal with Signal suffix
+    const selectedItemIdSignal = signal(selectedItemSignal?.id ?? 0);
 
-  return (
-    <div>
-      {selectedItemIdSignal} - {selectedItemSignal.id}
-    </div>
-  );
+    return (
+      <div>
+        {selectedItemIdSignal} - {selectedItemSignal?.id}
+      </div>
+    );
+  } finally {
+    store.f();
+  }
 }
 
 // Test component with mapped types
@@ -259,71 +316,96 @@ export function TestMappedTypes(): JSX.Element {
 
 // Test component with complex destructuring
 export function TestComplexDestructuring(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  const state = {
-    userSignal: { name: 'John' }, // Should warn - nested non-signal with Signal suffix
-    settings: { themeSignal: 'dark' }, // Should warn - nested non-signal with Signal suffix
-  };
+  try {
+    const state = {
+      userSignal: { name: 'John' }, // Should warn - nested non-signal with Signal suffix
+      settings: { themeSignal: 'dark' }, // Should warn - nested non-signal with Signal suffix
+    };
 
-  // Should not warn - destructured values don't have Signal suffix
-  const {
-    userSignal: user,
-    settings: { themeSignal: theme },
-  } = state;
+    // Should not warn - destructured values don't have Signal suffix
+    const {
+      userSignal: user,
+      settings: { themeSignal: theme },
+    } = state;
 
-  // Should not warn - signal with Signal suffix
-  const themeSignal = signal(theme);
+    // Should not warn - signal with Signal suffix
+    const themeSignal = signal(theme);
 
-  return (
-    <div>
-      <div>User: {user.name}</div>
-      <div>Theme: {themeSignal}</div>
-    </div>
-  );
+    return (
+      <div>
+        <div>User: {user.name}</div>
+        <div>Theme: {themeSignal}</div>
+      </div>
+    );
+  } finally {
+    store.f();
+  }
 }
 
 // Test component with computed property names
 export function TestComputedProperties(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  const suffix = 'Signal';
-  const key = `count${suffix}`;
+  try {
+    const suffix = 'Signal';
+    const key = `count${suffix}`;
 
-  // Should not warn - computed property name is not a variable declaration
-  const state = {
-    [key]: 42, // This is fine - not a variable declaration
-    [`user${suffix}`]: 'John', // This is also fine
-  };
+    // Should not warn - computed property name is not a variable declaration
+    const state = {
+      [key]: 42, // This is fine - not a variable declaration
+      [`user${suffix}`]: 'John', // This is also fine
+    };
 
-  // Should warn - non-signal with Signal suffix
-  const countSignal = state.countSignal;
+    // Should warn - non-signal with Signal suffix
+    const countSignal = state.countSignal;
 
-  return <div>{countSignal}</div>;
+    return <div>{countSignal}</div>;
+  } finally {
+    store.f();
+  }
 }
+
+// --- Additional fixtures for safer-fix scenarios ---
+
+// 1) Named export with Signal suffix (reported only when validateExported: true)
+export const exportedValueSignal = 42; // Should be reported if validateExported is enabled
+
+// 2) Multi-declarator const — only rename should be suggested, not convert
+export const multiSignal = 1,
+  alsoHere = 2; // multiSignal should be reported; convert suggestion should NOT be offered
+
+// 3) let/var declarations — only rename should be suggested, not convert
+export let tempSignal = 0; // Should be reported; convert suggestion should NOT be offered
+export var legacySignal = 'x'; // Should be reported; convert suggestion should NOT be offered
 
 // Test component with variables that have 'Signal' in the middle
 export function TestSignalInMiddle(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  // Should not warn - 'Signal' is in the middle of the variable name
-  const userSignalData = { name: 'John' };
+  try {
+    // Should not warn - 'Signal' is in the middle of the variable name
+    const userSignalData = { name: 'John' };
 
-  // Should not warn - 'Signal' is part of a larger word
-  const signalProcessor = { process: () => {} };
+    // Should not warn - 'Signal' is part of a larger word
+    const signalProcessor = { process: () => {} };
 
-  // Should not warn - 'Signal' is not a suffix
-  // oxlint-disable-next-line no-unused-vars
-  const _signalProcessorInstance = signalProcessor;
-  // oxlint-disable-next-line no-unused-vars
+    // Should not warn - 'Signal' is not a suffix
+    // oxlint-disable-next-line no-unused-vars
+    const _signalProcessorInstance = signalProcessor;
+    // oxlint-disable-next-line no-unused-vars
 
-  return (
-    <div>
-      <div>User: {userSignalData.name}</div>
+    return (
+      <div>
+        <div>User: {userSignalData.name}</div>
 
-      <button type='button' onClick={signalProcessor.process}>
-        Process
-      </button>
-    </div>
-  );
+        <button type='button' onClick={signalProcessor.process}>
+          Process
+        </button>
+      </div>
+    );
+  } finally {
+    store.f();
+  }
 }

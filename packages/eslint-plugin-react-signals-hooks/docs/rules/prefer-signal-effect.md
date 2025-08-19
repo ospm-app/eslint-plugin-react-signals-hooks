@@ -1,10 +1,15 @@
 # Prefer Signal Effect Rule
 
-This rule enforces the use of the `effect()` function from `@preact/signals` instead of React's `useEffect` hook when all dependencies are signals. The `effect()` function provides automatic dependency tracking for signals, leading to more maintainable and less error-prone code.
+This rule enforces the use of the `effect()` function from `@preact/signals-react` instead of React's `useEffect` hook when all dependencies are signals. The `effect()` function provides automatic dependency tracking for signals, leading to more maintainable and less error-prone code.
+
+## Plugin Scope
+
+- Only signals imported from `@preact/signals-react` are considered by this plugin.
+- Autofixes add or augment imports from `@preact/signals-react`.
 
 ## Rule Details
 
-This rule detects `useEffect` hooks where all dependencies are signals and suggests replacing them with `effect()` from `@preact/signals`. The `effect()` function automatically tracks signal dependencies, eliminating the need to manually specify them in a dependency array.
+This rule detects `useEffect` hooks where all dependencies are signals and suggests replacing them with `effect()` from `@preact/signals-react`. The `effect()` function automatically tracks signal dependencies, eliminating the need to manually specify them in a dependency array.
 
 ### Why use effect()?
 
@@ -72,8 +77,7 @@ function Counter() {
 ### ✅ Correct
 
 ```typescript
-import { effect } from '@preact/signals';
-import { signal } from '@preact/signals-react';
+import { effect, signal } from '@preact/signals-react';
 
 const count = signal(0);
 
@@ -96,16 +100,27 @@ This rule provides an auto-fix that can automatically convert `useEffect` to `ef
 
 ## Options
 
-This rule currently doesn't have any configuration options, but future versions might include:
-
-```typescript
+```jsonc
 {
   "rules": {
     "react-signals-hooks/prefer-signal-effect": [
-      "error",
+      "warn",
       {
-        "ignorePattern": "^_", // Ignore variables matching this pattern
-        "allowNonSignalDeps": false // Whether to allow non-signal dependencies
+        // Per-message severity overrides
+        "severity": {
+          "preferSignalEffect": "error" | "warn" | "off",
+          "suggestEffect": "error" | "warn" | "off",
+          "addEffectImport": "error" | "warn" | "off"
+        },
+        // Performance budgets/metrics
+        "performance": {
+          "maxTime": 1000,
+          "maxMemory": 100,
+          "maxNodes": 5000,
+          "maxOperations": {},
+          "enableMetrics": false,
+          "logMetrics": false
+        }
       }
     ]
   }

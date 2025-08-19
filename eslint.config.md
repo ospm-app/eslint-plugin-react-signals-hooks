@@ -148,7 +148,7 @@
   - Disable rules that conflict with TypeScript
   - Consider using `@babel/eslint-parser` for better ES features support
 
-### eslint-plugin-eslint-plugin (v6.5.0)
+### eslint-plugin-eslint-plugin (v7.0.0)
 
 - **Type**: Development
 - **Purpose**: Linting rules for ESLint plugins

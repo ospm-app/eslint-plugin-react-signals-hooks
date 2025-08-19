@@ -3,33 +3,48 @@ import {
 	ESLintUtils,
 	type TSESLint,
 	type TSESTree,
+	AST_NODE_TYPES,
 } from "@typescript-eslint/utils";
 import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
 
+import {
+	buildNamedImport,
+	getPreferredQuote,
+	getPreferredSemicolon,
+} from "./utils/import-format.js";
 import { PerformanceOperations } from "./utils/performance-constants.js";
 import {
 	endPhase,
 	startPhase,
 	recordMetric,
-	stopTracking,
 	startTracking,
 	trackOperation,
 	createPerformanceTracker,
 	DEFAULT_PERFORMANCE_BUDGET,
 } from "./utils/performance.js";
+import { buildSuffixRegex, hasSignalSuffix } from "./utils/suffix.js";
 import type { PerformanceBudget } from "./utils/types.js";
 import { getRuleDocUrl } from "./utils/urls.js";
 
-type MessageIds = "missingUseSignals";
+type MessageIds =
+	| "missingUseSignalsInComponent"
+	| "missingUseSignalsInCustomHook"
+	| "wrongUseSignalsArg";
 
 type Severity = {
-	missingUseSignals?: "error" | "warn" | "off";
+	[key in MessageIds]?: "error" | "warn" | "off";
 };
 
 type Option = {
 	ignoreComponents?: Array<string>;
 	performance?: PerformanceBudget;
 	severity?: Severity;
+	/** Configurable suffix to recognize as signals (default: 'Signal') */
+	suffix?: string;
+	/** When true, also fix concise arrow function components/hooks by wrapping body in a block with useSignals try/finally. */
+	wrapConciseArrows?: boolean;
+  /** Additional module specifiers that may export `signal`/`computed`. */
+  extraCreatorModules?: Array<string>;
 };
 
 type Options = [Option?];
@@ -39,33 +54,468 @@ function getSeverity(
 	options: Option | undefined,
 ): "error" | "warn" | "off" {
 	if (!options?.severity) {
-		return "error"; // Default to 'error' if no severity is specified
+		return "error";
 	}
 
-	// eslint-disable-next-line security/detect-object-injection
-	const severity = options.severity[messageId];
+	switch (messageId) {
+		case "missingUseSignalsInComponent": {
+			return options.severity.missingUseSignalsInComponent ?? "error";
+		}
 
-	// Default to 'error' if no severity is specified for this messageId
-	return severity ?? "error";
+		case "missingUseSignalsInCustomHook": {
+			return options.severity.missingUseSignalsInCustomHook ?? "error";
+		}
+
+		case "wrongUseSignalsArg": {
+			return options.severity.wrongUseSignalsArg ?? "error";
+		}
+
+		default: {
+			return "error";
+		}
+	}
 }
 
-function isSignalUsage(node: TSESTree.Node): boolean {
-	if (node.type === "MemberExpression") {
-		return (
-			node.property.type === "Identifier" &&
-			node.property.name === "value" &&
-			node.object.type === "Identifier" &&
-			node.object.name.endsWith("Signal")
-		);
+function isSignalUsageLocal(node: TSESTree.Node, suffixRegex: RegExp): boolean {
+	if (node.type === AST_NODE_TYPES.ChainExpression) {
+		return isSignalUsageLocal(node.expression, suffixRegex);
 	}
 
-	if (node.type === "Identifier") {
-		return (
-			node.name.endsWith("Signal") && node.parent.type !== "MemberExpression"
-		);
+	if (node.type === AST_NODE_TYPES.MemberExpression) {
+		if (
+			node.property.type === AST_NODE_TYPES.Identifier &&
+			(node.property.name === "value" || node.property.name === "peek")
+		) {
+			if (
+				node.property.name === "peek" && // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
+				(!node.parent ||
+					!(
+						(node.parent.type === AST_NODE_TYPES.CallExpression &&
+							node.parent.callee === node) ||
+						(node.parent.type === AST_NODE_TYPES.ChainExpression &&
+							node.parent.expression.type === AST_NODE_TYPES.CallExpression &&
+							node.parent.expression.callee === node)
+					))
+			) {
+				return false;
+			}
+
+			let base: TSESTree.Expression | TSESTree.PrivateIdentifier = node.object;
+
+			// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+			while (base && base.type === AST_NODE_TYPES.MemberExpression) {
+				base = base.object;
+			}
+
+			// Unwrap chain at base as well
+			// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+			if (base && base.type === AST_NODE_TYPES.ChainExpression) {
+				base = base.expression;
+			}
+
+			return (
+				// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
+				!!base &&
+				base.type === AST_NODE_TYPES.Identifier &&
+				hasSignalSuffix(base.name, suffixRegex)
+			);
+		}
+
+		return false;
+	}
+
+	if (node.type === AST_NODE_TYPES.Identifier) {
+		// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
+		if (!node.parent) {
+			return false;
+		}
+
+		// Skip when part of a MemberExpression (handled above when accessing .value/.peek)
+		if (
+			node.parent.type === AST_NODE_TYPES.MemberExpression &&
+			node.parent.object === node
+		) {
+			return false;
+		}
+
+		// Skip import/export specifiers and type positions
+		if (
+			node.parent.type === AST_NODE_TYPES.ImportSpecifier ||
+			node.parent.type === AST_NODE_TYPES.ExportSpecifier ||
+			node.parent.type === AST_NODE_TYPES.TSTypeReference ||
+			node.parent.type === AST_NODE_TYPES.TSTypeAnnotation ||
+			node.parent.type === AST_NODE_TYPES.TSQualifiedName ||
+			node.parent.type === AST_NODE_TYPES.TSTypeParameter ||
+			node.parent.type === AST_NODE_TYPES.TSEnumMember ||
+			node.parent.type === AST_NODE_TYPES.TSTypeAliasDeclaration
+		) {
+			return false;
+		}
+		// Skip label and property key/name contexts
+		if (
+			node.parent.type === AST_NODE_TYPES.LabeledStatement ||
+			(node.parent.type === AST_NODE_TYPES.Property &&
+				node.parent.key === node &&
+				node.parent.computed === false) ||
+			node.parent.type === AST_NODE_TYPES.PropertyDefinition ||
+			(node.parent.type === AST_NODE_TYPES.MethodDefinition &&
+				node.parent.key === node)
+		) {
+			return false;
+		}
+		// Skip JSX identifier/name contexts
+		if (
+			node.parent.type === AST_NODE_TYPES.JSXIdentifier ||
+			node.parent.type === AST_NODE_TYPES.JSXAttribute ||
+			node.parent.type === AST_NODE_TYPES.JSXMemberExpression
+		) {
+			return false;
+		}
+
+		return hasSignalSuffix(node.name, suffixRegex);
 	}
 
 	return false;
+}
+
+// Helper: find or create a store declaration within the component body.
+// Reuses an existing `const <name> = useSignals(...)` if found; otherwise inserts
+// a unique declaration after directives and returns the chosen name.
+function findOrCreateStoreDeclaration(
+	componentNode:
+		| TSESTree.FunctionDeclaration
+		| TSESTree.FunctionExpression
+		| TSESTree.ArrowFunctionExpression,
+	fixer: TSESLint.RuleFixer,
+	fixes: Array<TSESLint.RuleFix>,
+	context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
+): string {
+	let storeName = "store";
+
+	let hasExistingStoreDecl = false;
+
+	if ("body" in componentNode.body && Array.isArray(componentNode.body.body)) {
+		for (const stmt of componentNode.body.body) {
+			if (stmt.type !== AST_NODE_TYPES.VariableDeclaration) {
+				continue;
+			}
+
+			for (const decl of stmt.declarations) {
+				if (
+					decl.id.type === AST_NODE_TYPES.Identifier &&
+					decl.init &&
+					((decl.init.type === AST_NODE_TYPES.CallExpression &&
+						decl.init.callee.type === AST_NODE_TYPES.Identifier &&
+						decl.init.callee.name === "useSignals") ||
+						(decl.init.type === AST_NODE_TYPES.ChainExpression &&
+							decl.init.expression.type === AST_NODE_TYPES.CallExpression &&
+							decl.init.expression.callee.type === AST_NODE_TYPES.Identifier &&
+							decl.init.expression.callee.name === "useSignals"))
+				) {
+					storeName = decl.id.name;
+
+					hasExistingStoreDecl = true;
+
+					break;
+				}
+			}
+
+			if (hasExistingStoreDecl) {
+				break;
+			}
+		}
+	}
+
+	if (!hasExistingStoreDecl) {
+		let __idx = 1;
+
+		while (
+			// eslint-disable-next-line security/detect-non-literal-regexp
+			new RegExp(`\\b(?:const|let|var)\\s+${storeName}\\b`).test(
+				context.sourceCode.getText(componentNode.body),
+			)
+		) {
+			storeName = `store${__idx++}`;
+		}
+	}
+
+	// Insert const store = useSignals(X) after directives if it doesn't exist
+	if (!hasExistingStoreDecl) {
+		let lastDirectiveEnd: number | null = null;
+
+		if (
+			"body" in componentNode.body &&
+			Array.isArray(componentNode.body.body)
+		) {
+			for (const stmt of componentNode.body.body) {
+				if (
+					stmt.type === AST_NODE_TYPES.ExpressionStatement &&
+					stmt.expression.type === AST_NODE_TYPES.Literal &&
+					typeof stmt.expression.value === "string"
+				) {
+					lastDirectiveEnd = stmt.range[1];
+
+					continue;
+				}
+
+				break;
+			}
+		}
+
+		const insertDeclPos = lastDirectiveEnd ?? componentNode.body.range[0] + 1;
+
+		fixes.push(
+			fixer.insertTextAfterRange(
+				[insertDeclPos, insertDeclPos],
+				`\nconst ${storeName} = useSignals(${computeExpectedArg(componentNode)});\n`,
+			),
+		);
+	}
+
+	return storeName;
+}
+
+// Helper: ensure there is a try/finally calling store.f(). If a try/finally
+// exists, append `${storeName}.f();` if not present; else wrap the body.
+function wrapBodyInTryFinally(
+	componentNode:
+		| TSESTree.FunctionDeclaration
+		| TSESTree.FunctionExpression
+		| TSESTree.ArrowFunctionExpression,
+	storeName: string,
+	hasTryFinallyInCurrent: boolean,
+	fixer: TSESLint.RuleFixer,
+	fixes: Array<TSESLint.RuleFix>,
+	context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
+): void {
+	if (
+		hasTryFinallyInCurrent &&
+		"body" in componentNode.body &&
+		Array.isArray(componentNode.body.body)
+	) {
+		const tryWithFinally = componentNode.body.body.find(
+			(s: TSESTree.Statement): s is TSESTree.TryStatement => {
+				return s.type === AST_NODE_TYPES.TryStatement && s.finalizer != null;
+			},
+		);
+
+		if (tryWithFinally?.finalizer) {
+			const beforeClose = tryWithFinally.finalizer.range[1] - 1;
+			if (
+				!/\.f\s*\(\s*\)\s*;?/.test(
+					context.sourceCode.getText(tryWithFinally.finalizer),
+				)
+			) {
+				fixes.push(
+					fixer.insertTextBeforeRange(
+						[beforeClose, beforeClose],
+						`\n${storeName}.f();\n`,
+					),
+				);
+			}
+		}
+		return;
+	}
+
+	// No try/finally exists. Wrap the remaining body in try/finally
+	let directiveCount = 0;
+
+	if ("body" in componentNode.body && Array.isArray(componentNode.body.body)) {
+		for (const stmt of componentNode.body.body) {
+			if (
+				stmt.type === AST_NODE_TYPES.ExpressionStatement &&
+				stmt.expression.type === AST_NODE_TYPES.Literal &&
+				typeof stmt.expression.value === "string"
+			) {
+				directiveCount++;
+				continue;
+			}
+
+			break;
+		}
+
+		const firstNonDirective = componentNode.body.body[directiveCount as number];
+		const insertDeclPos =
+			typeof firstNonDirective === "undefined"
+				? componentNode.body.range[0] + 1
+				: firstNonDirective.range[0];
+
+		fixes.push(
+			fixer.insertTextBeforeRange([insertDeclPos, insertDeclPos], "try {\n"),
+		);
+	}
+
+	const beforeBodyClose = componentNode.body.range[1] - 1;
+
+	fixes.push(
+		fixer.insertTextBeforeRange(
+			[beforeBodyClose, beforeBodyClose],
+			`\n} finally {\n${storeName}.f();\n}\n`,
+		),
+	);
+}
+
+function isHook(node: TSESTree.Node | null): boolean {
+	if (
+		node?.type === AST_NODE_TYPES.FunctionDeclaration &&
+		typeof node.id?.name === "string"
+	) {
+		return /^use[A-Z]/.test(node.id.name);
+	}
+	if (
+		(node?.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+			node?.type === AST_NODE_TYPES.FunctionExpression) &&
+		// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+		node.parent &&
+		node.parent.type === AST_NODE_TYPES.VariableDeclarator &&
+		node.parent.id.type === AST_NODE_TYPES.Identifier
+	) {
+		return /^use[A-Z]/.test(node.parent.id.name);
+	}
+	return false;
+}
+
+function inferIsHook(n: TSESTree.Node): boolean {
+	if (
+		n.type === AST_NODE_TYPES.FunctionDeclaration &&
+		typeof n.id?.name === "string"
+	) {
+		return /^use[A-Z]/.test(n.id.name);
+	}
+	if (
+		(n.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+			n.type === AST_NODE_TYPES.FunctionExpression) &&
+		// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+		n.parent &&
+		n.parent.type === AST_NODE_TYPES.VariableDeclarator &&
+		n.parent.id.type === AST_NODE_TYPES.Identifier
+	) {
+		return /^use[A-Z]/.test(n.parent.id.name);
+	}
+
+	return false;
+}
+
+// Helper: is the node inside the current component's function body?
+function isInsideCurrentComponent(
+	n: TSESTree.Node,
+	componentNode: TSESTree.Node | null,
+): boolean {
+	if (componentNode === null) {
+		return false;
+	}
+
+	const [nStart, nEnd] = n.range;
+
+	const [cStart, cEnd] = componentNode.range;
+
+	return nStart >= cStart && nEnd <= cEnd;
+}
+
+// Helper: map component to expected useSignals(...) argument
+function computeExpectedArg(
+	componentNode:
+		| TSESTree.FunctionDeclaration
+		| TSESTree.FunctionExpression
+		| TSESTree.ArrowFunctionExpression,
+): number {
+	return inferIsHook(componentNode) ? 2 : 1;
+}
+
+function ensureUseSignalsImport(
+	fixer: TSESLint.RuleFixer,
+	fixes: Array<TSESLint.RuleFix>,
+	context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
+): void {
+	const signalsImport = context.sourceCode.ast.body.find(
+		(n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
+			return (
+				n.type === AST_NODE_TYPES.ImportDeclaration &&
+				n.source.value === "@preact/signals-react/runtime"
+			);
+		},
+	);
+
+	if (typeof signalsImport === "undefined") {
+		// Insert a fresh value import right after the last top-level import declaration
+		const body = context.sourceCode.ast.body;
+
+		const lastTopImport = (() => {
+			let last: TSESTree.ProgramStatement | undefined;
+			for (const stmt of body) {
+				if (stmt.type === AST_NODE_TYPES.ImportDeclaration) {
+					last = stmt;
+				} else {
+					break;
+				}
+			}
+			return last;
+		})();
+
+		const quote = getPreferredQuote(context.sourceCode);
+
+		const semi = getPreferredSemicolon(context.sourceCode);
+
+		const text = buildNamedImport(
+			"@preact/signals-react/runtime",
+			["useSignals"],
+			quote,
+			semi,
+		);
+
+		if (typeof lastTopImport !== "undefined") {
+			fixes.push(fixer.insertTextAfter(lastTopImport, text));
+		} else if (typeof body[0] !== "undefined") {
+			fixes.push(fixer.insertTextBefore(body[0], text));
+		} else {
+			// Empty file fallback
+			fixes.push(fixer.insertTextAfterRange([0, 0], text));
+		}
+		return;
+	}
+
+	if (
+		!signalsImport.specifiers.some(
+			(s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
+				return (
+					s.type === AST_NODE_TYPES.ImportSpecifier &&
+					s.imported.type === AST_NODE_TYPES.Identifier &&
+					s.imported.name === "useSignals"
+				);
+			},
+		)
+	) {
+		const lastNamed = [...signalsImport.specifiers]
+			.reverse()
+			.find((s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
+				return s.type === AST_NODE_TYPES.ImportSpecifier;
+			});
+
+		if (
+			typeof lastNamed !== "undefined" &&
+			// append only when this import is a value import
+			(typeof signalsImport.importKind === "undefined" ||
+				signalsImport.importKind === "value")
+		) {
+			fixes.push(fixer.insertTextAfter(lastNamed, ", useSignals"));
+		} else {
+			const quote = getPreferredQuote(context.sourceCode);
+
+			const semi = getPreferredSemicolon(context.sourceCode);
+
+			fixes.push(
+				fixer.insertTextAfter(
+					signalsImport,
+					`\n${buildNamedImport(
+						"@preact/signals-react/runtime",
+						["useSignals"],
+						quote,
+						semi,
+					)}`,
+				),
+			);
+		}
+	}
 }
 
 let hasUseSignals = false;
@@ -74,6 +524,8 @@ let hasSignalUsage = false;
 
 let componentName = "";
 let componentNode: TSESTree.Node | null = null;
+let isHookContext = false;
+let hasTryFinallyInCurrent = false;
 
 const ruleName = "require-use-signals";
 
@@ -87,13 +539,17 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator(
 		type: "problem", // Changed from 'suggestion' to 'problem' as missing useSignals() can break reactivity
 		docs: {
 			description:
-				"Ensures that components using signals properly import and call the `useSignals()` hook. This hook is essential for signal reactivity in React components. The rule helps prevent subtle bugs by ensuring that any component using signals has the necessary hook in place.",
+				"Ensures that components and custom hooks using signals properly import and call the `useSignals()` hook. This hook is essential for signal reactivity in React components and hooks. The rule helps prevent subtle bugs by ensuring that any component or hook using signals has the necessary hook in place.",
 			url: getRuleDocUrl(ruleName),
 		},
 		hasSuggestions: true,
 		messages: {
-			missingUseSignals:
-				"Component '{{componentName}}' uses signals but is missing useSignals() hook",
+			missingUseSignalsInComponent:
+				"Component '{{componentName}}' reads signals; call useSignals() to subscribe for updates",
+			missingUseSignalsInCustomHook:
+				"Custom hook '{{hookName}}' reads signals; call useSignals() to subscribe for updates",
+			wrongUseSignalsArg:
+				"'useSignals({{got}})' is not appropriate here; expected 'useSignals({{expected}})' when used with try/finally in a {{contextKind}}",
 		},
 		schema: [
 			{
@@ -105,10 +561,24 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator(
 						items: { type: "string" },
 						description: "List of component names to ignore",
 					},
+					wrapConciseArrows: {
+						type: "boolean",
+						default: false,
+						description:
+							"When true, transform concise arrow components/hooks to block bodies to insert useSignals try/finally during autofix.",
+					},
 					severity: {
 						type: "object",
 						properties: {
-							missingUseSignals: {
+							missingUseSignalsInComponent: {
+								type: "string",
+								enum: ["error", "warn", "off"],
+							},
+							missingUseSignalsInCustomHook: {
+								type: "string",
+								enum: ["error", "warn", "off"],
+							},
+							wrongUseSignalsArg: {
 								type: "string",
 								enum: ["error", "warn", "off"],
 							},
@@ -135,6 +605,19 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator(
 						},
 						additionalProperties: false,
 					},
+					suffix: {
+						description:
+							"Configurable suffix used to detect signal identifiers (default: 'Signal')",
+						type: "string",
+						default: "Signal",
+					},
+          extraCreatorModules: {
+            description:
+              "Additional module specifiers that export signal/computed (in addition to '@preact/signals-react')",
+            type: "array",
+            items: { type: "string", minLength: 1 },
+            default: [],
+          },
 				},
 			},
 		],
@@ -143,6 +626,8 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator(
 	defaultOptions: [
 		{
 			ignoreComponents: [],
+			suffix: "Signal",
+			wrapConciseArrows: false,
 			performance: DEFAULT_PERFORMANCE_BUDGET,
 		} satisfies Option,
 	],
@@ -152,22 +637,31 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator(
 	): ESLintUtils.RuleListener {
 		const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
+		const suffixRegex = buildSuffixRegex(option?.suffix);
+
+		// Only run this rule for TSX files (React components). Avoids leaking into non-React TS/JS files.
+		if (!/\.tsx$/i.test(context.filename)) {
+			return {};
+		}
+
 		startPhase(perfKey, "ruleInit");
 
-		const perf = createPerformanceTracker<Options>(
-			perfKey,
-			option?.performance,
-			context,
-		);
+		const perf = createPerformanceTracker(perfKey, option?.performance);
 
 		if (option?.performance?.enableMetrics === true) {
 			startTracking(context, perfKey, option.performance, ruleName);
 		}
 
-		console.info(
-			`${ruleName}: Initializing rule for file: ${context.filename}`,
-		);
-		console.info(`${ruleName}: Rule configuration:`, option);
+		if (
+			option?.performance?.enableMetrics === true &&
+			option.performance.logMetrics === true
+		) {
+			console.info(
+				`${ruleName}: Initializing rule for file: ${context.filename}`,
+			);
+
+			console.info(`${ruleName}: Rule configuration:`, option);
+		}
 
 		recordMetric(perfKey, "config", {
 			performance: {
@@ -181,6 +675,18 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator(
 		endPhase(perfKey, "ruleInit");
 
 		startPhase(perfKey, "ruleExecution");
+
+		const useSignalsLocalNames = new Set<string>(["useSignals"]);
+		const signalCreatorLocals = new Set<string>(["signal"]);
+		const computedCreatorLocals = new Set<string>(["computed"]);
+		const creatorNamespaces = new Set<string>();
+		const creatorModules = new Set<string>([
+			"@preact/signals-react",
+			...(Array.isArray(option?.extraCreatorModules)
+				? option.extraCreatorModules
+				: []),
+		]);
+		const signalVariables = new Set<string>();
 
 		let nodeCount = 0;
 
@@ -199,186 +705,492 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator(
 			return true;
 		}
 
-		startPhase(perfKey, "ruleExecution");
-
 		return {
 			"*": (node: TSESTree.Node): void => {
 				if (!shouldContinue()) {
 					endPhase(perfKey, "recordMetrics");
-
-					stopTracking(perfKey);
 
 					return;
 				}
 
 				perf.trackNode(node);
 
-				trackOperation(
-					perfKey,
-					PerformanceOperations[`${node.type}Processing`],
-				);
+				const dynamicOp =
+					// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+					PerformanceOperations[`${node.type}Processing`] ??
+					PerformanceOperations.nodeProcessing;
+
+				trackOperation(perfKey, dynamicOp);
 			},
 
-			FunctionDeclaration(node: TSESTree.FunctionDeclaration): void {
-				if (typeof node.id?.name === "string" && /^[A-Z]/.test(node.id.name)) {
+			[AST_NODE_TYPES.FunctionDeclaration](
+				node: TSESTree.FunctionDeclaration,
+			): void {
+				if (typeof node.id?.name !== "string") {
+					return;
+				}
+
+				if (/^[A-Z]/.test(node.id.name)) {
+					// React component
 					componentName = node.id.name;
-
 					componentNode = node;
-
-					hasUseSignals = false;
-
-					hasSignalUsage = false;
-				}
-			},
-
-			ArrowFunctionExpression(node: TSESTree.ArrowFunctionExpression): void {
-				if (
-					node.parent.type === "VariableDeclarator" &&
-					node.parent.id.type === "Identifier" &&
-					/^[A-Z]/.test(node.parent.id.name)
-				) {
-					componentName = node.parent.id.name;
-
+					isHookContext = false;
+				} else if (/^use[A-Z]/.test(node.id.name)) {
+					// Custom hook
+					componentName = node.id.name;
 					componentNode = node;
-
-					hasUseSignals = false;
-
-					hasSignalUsage = false;
+					isHookContext = true;
+				} else {
+					return;
 				}
-			},
 
-			CallExpression(node: TSESTree.CallExpression): void {
-				if (
-					node.callee.type === "Identifier" &&
-					node.callee.name === "useSignals"
-				) {
-					hasUseSignals = true;
-				}
-			},
-
-			MemberExpression(node: TSESTree.MemberExpression): void {
-				if (isSignalUsage(node)) {
-					hasSignalUsage = true;
-				}
-			},
-
-			Identifier(node: TSESTree.Identifier): void {
-				if (isSignalUsage(node)) {
-					hasSignalUsage = true;
-				}
-			},
-
-			"Program:exit"(): void {
-				try {
-					startPhase(perfKey, "recordMetrics");
-
-					const finalMetrics = stopTracking(perfKey);
-
-					if (finalMetrics) {
-						console.info(
-							`\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? "EXCEEDED" : "OK"}):`,
+				hasUseSignals = false;
+				hasSignalUsage = false;
+				hasTryFinallyInCurrent =
+					// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+					node.body?.type === AST_NODE_TYPES.BlockStatement &&
+					node.body.body.some((s: TSESTree.Statement): boolean => {
+						return (
+							s.type === AST_NODE_TYPES.TryStatement && s.finalizer != null
 						);
-						console.info(`  File: ${context.filename}`);
-						console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-						console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+					});
+			},
 
-						if (finalMetrics.exceededBudget === true) {
-							console.warn("\n⚠️  Performance budget exceeded!");
+			[AST_NODE_TYPES.ArrowFunctionExpression](
+				node: TSESTree.ArrowFunctionExpression,
+			): void {
+				if (
+					!(
+						node.parent.type === AST_NODE_TYPES.VariableDeclarator &&
+						node.parent.id.type === AST_NODE_TYPES.Identifier &&
+						(/^[A-Z]/.test(node.parent.id.name) ||
+							/^use[A-Z]/.test(node.parent.id.name))
+					)
+				) {
+					return;
+				}
+
+				componentName = node.parent.id.name;
+				componentNode = node;
+				isHookContext = /^use[A-Z]/.test(node.parent.id.name);
+				hasUseSignals = false;
+				hasSignalUsage = false;
+				hasTryFinallyInCurrent =
+					node.body.type === AST_NODE_TYPES.BlockStatement &&
+					node.body.body.some((s: TSESTree.Statement): boolean => {
+						return (
+							s.type === AST_NODE_TYPES.TryStatement && s.finalizer != null
+						);
+					});
+			},
+
+			[AST_NODE_TYPES.FunctionExpression](
+				node: TSESTree.FunctionExpression,
+			): void {
+				if (
+					!(
+						node.parent.type === AST_NODE_TYPES.VariableDeclarator &&
+						node.parent.id.type === AST_NODE_TYPES.Identifier &&
+						(/^[A-Z]/.test(node.parent.id.name) ||
+							/^use[A-Z]/.test(node.parent.id.name))
+					)
+				) {
+					return;
+				}
+
+				componentName = node.parent.id.name;
+				componentNode = node;
+				isHookContext = /^use[A-Z]/.test(node.parent.id.name);
+				hasUseSignals = false;
+				hasSignalUsage = false;
+				hasTryFinallyInCurrent =
+					// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+					node.body.type === AST_NODE_TYPES.BlockStatement &&
+					node.body.body.some((s: TSESTree.Statement): boolean => {
+						return (
+							s.type === AST_NODE_TYPES.TryStatement && s.finalizer != null
+						);
+					});
+			},
+
+			[AST_NODE_TYPES.ExportDefaultDeclaration](
+				node: TSESTree.ExportDefaultDeclaration,
+			): void {
+				if (node.declaration.type === AST_NODE_TYPES.FunctionDeclaration) {
+					if (node.declaration.id && /^[A-Z]/.test(node.declaration.id.name)) {
+						componentName = node.declaration.id.name;
+						componentNode = node.declaration;
+						isHookContext = false;
+						hasUseSignals = false;
+						hasSignalUsage = false;
+					} else if (!node.declaration.id) {
+						componentName = "default";
+						componentNode = node.declaration;
+						isHookContext = false;
+						hasUseSignals = false;
+						hasSignalUsage = false;
+					}
+				} else if (
+					node.declaration.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+					node.declaration.type === AST_NODE_TYPES.FunctionExpression
+				) {
+					componentName = "default";
+					componentNode = node.declaration;
+					isHookContext = false;
+					hasUseSignals = false;
+					hasSignalUsage = false;
+				}
+			},
+
+			[AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
+				if (
+					(node.callee.type === AST_NODE_TYPES.Identifier &&
+						useSignalsLocalNames.has(node.callee.name)) ||
+					(node.callee.type === AST_NODE_TYPES.MemberExpression &&
+						node.callee.property.type === AST_NODE_TYPES.Identifier &&
+						node.callee.property.name === "useSignals")
+				) {
+					if (isInsideCurrentComponent(node, componentNode)) {
+						hasUseSignals = true;
+					} else {
+						return;
+					}
+
+					if (hasTryFinallyInCurrent) {
+						const expected = isHookContext ? 2 : 1;
+
+						if (node.arguments.length === 0) {
+							if (getSeverity("wrongUseSignalsArg", option) !== "off") {
+								context.report({
+									node,
+									messageId: "wrongUseSignalsArg",
+									data: {
+										got: "none",
+										expected: String(expected),
+										contextKind: isHookContext ? "custom hook" : "component",
+									},
+									fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+										// Insert expected argument before the closing parenthesis
+										return fixer.insertTextBeforeRange(
+											[node.range[1] - 1, node.range[1] - 1],
+											String(expected),
+										);
+									},
+								});
+							}
+						} else if (
+							node.arguments[0]?.type === AST_NODE_TYPES.Literal &&
+							typeof node.arguments[0].value === "number"
+						) {
+							if (
+								node.arguments[0].value !== expected &&
+								getSeverity("wrongUseSignalsArg", option) !== "off"
+							) {
+								context.report({
+									node: node.arguments[0],
+									messageId: "wrongUseSignalsArg",
+									data: {
+										got: String(node.arguments[0].value),
+										expected: String(expected),
+										contextKind: isHookContext ? "custom hook" : "component",
+									},
+									fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+										if (typeof node.arguments[0] === "undefined") {
+											return null;
+										}
+
+										return fixer.replaceText(
+											node.arguments[0],
+											String(expected),
+										);
+									},
+								});
+							}
+						}
+					}
+				}
+			},
+
+			[AST_NODE_TYPES.MemberExpression](node: TSESTree.MemberExpression): void {
+				if (!isInsideCurrentComponent(node, componentNode)) {
+					return;
+				}
+
+				if (isSignalUsageLocal(node, suffixRegex)) {
+					hasSignalUsage = true;
+
+					return;
+				}
+
+				if (
+					!(
+						node.property.type === AST_NODE_TYPES.Identifier &&
+						(node.property.name === "value" || node.property.name === "peek")
+					)
+				) {
+					return;
+				}
+
+				let base: TSESTree.Expression | TSESTree.PrivateIdentifier =
+					node.object;
+
+				// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+				while (base && base.type === AST_NODE_TYPES.MemberExpression) {
+					base = base.object;
+				}
+
+				if (
+					// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+					base &&
+					base.type === AST_NODE_TYPES.Identifier &&
+					signalVariables.has(base.name)
+				) {
+					hasSignalUsage = true;
+				}
+			},
+
+			[AST_NODE_TYPES.VariableDeclarator](
+				node: TSESTree.VariableDeclarator,
+			): void {
+				if (!isInsideCurrentComponent(node, componentNode)) {
+					return;
+				}
+
+				if (!(node.id.type === AST_NODE_TYPES.ObjectPattern && node.init)) {
+					return;
+				}
+
+				const hasValueOrPeek = node.id.properties.some((p) => {
+					return (
+						p.type === AST_NODE_TYPES.Property &&
+						p.key.type === AST_NODE_TYPES.Identifier &&
+						(p.key.name === "value" || p.key.name === "peek")
+					);
+				});
+
+				if (!hasValueOrPeek) {
+					return;
+				}
+
+				// Walk to base of init
+				let base: TSESTree.Expression | TSESTree.PrivateIdentifier | null =
+					node.init;
+
+				// Unwrap optional chain wrapper
+				// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+				if (base && base.type === AST_NODE_TYPES.ChainExpression) {
+					base = base.expression;
+				}
+
+				// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+				while (base && base.type === AST_NODE_TYPES.MemberExpression) {
+					base = base.object;
+					// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+					if (base && base.type === AST_NODE_TYPES.ChainExpression) {
+						base = base.expression;
+					}
+				}
+
+				if (
+					// eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+					base &&
+					base.type === AST_NODE_TYPES.Identifier &&
+					(hasSignalSuffix(base.name, suffixRegex) ||
+						signalVariables.has(base.name))
+				) {
+					hasSignalUsage = true;
+				}
+			},
+
+			[AST_NODE_TYPES.Identifier](node: TSESTree.Identifier): void {
+				if (!isInsideCurrentComponent(node, componentNode)) {
+					return;
+				}
+
+				if (isSignalUsageLocal(node, suffixRegex)) {
+					hasSignalUsage = true;
+
+					return;
+				}
+
+				// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
+				if (!node.parent) {
+					return;
+				}
+
+				if (
+					node.parent.type === AST_NODE_TYPES.MemberExpression &&
+					node.parent.object === node
+				) {
+					return;
+				}
+
+				if (
+					node.parent.type === AST_NODE_TYPES.ImportSpecifier ||
+					node.parent.type === AST_NODE_TYPES.ExportSpecifier ||
+					node.parent.type === AST_NODE_TYPES.TSTypeReference ||
+					node.parent.type === AST_NODE_TYPES.TSTypeAnnotation ||
+					node.parent.type === AST_NODE_TYPES.TSQualifiedName ||
+					node.parent.type === AST_NODE_TYPES.TSTypeParameter ||
+					node.parent.type === AST_NODE_TYPES.TSEnumMember ||
+					node.parent.type === AST_NODE_TYPES.TSTypeAliasDeclaration ||
+					node.parent.type === AST_NODE_TYPES.LabeledStatement ||
+					(node.parent.type === AST_NODE_TYPES.Property &&
+						node.parent.key === node &&
+						node.parent.computed === false) ||
+					node.parent.type === AST_NODE_TYPES.PropertyDefinition ||
+					(node.parent.type === AST_NODE_TYPES.MethodDefinition &&
+						node.parent.key === node) ||
+					node.parent.type === AST_NODE_TYPES.JSXIdentifier ||
+					node.parent.type === AST_NODE_TYPES.JSXAttribute ||
+					node.parent.type === AST_NODE_TYPES.JSXMemberExpression
+				) {
+					return;
+				}
+				if (signalVariables.has(node.name)) {
+					hasSignalUsage = true;
+				}
+			},
+
+			[AST_NODE_TYPES.Program](node: TSESTree.Program): void {
+				for (const stmt of node.body) {
+					if (stmt.type !== AST_NODE_TYPES.ImportDeclaration) {
+						continue;
+					}
+
+					if (stmt.source.value === "@preact/signals-react/runtime") {
+						for (const spec of stmt.specifiers) {
+							if (
+								spec.type === AST_NODE_TYPES.ImportSpecifier &&
+								spec.imported.type === AST_NODE_TYPES.Identifier &&
+								spec.imported.name === "useSignals"
+							) {
+								useSignalsLocalNames.add(spec.local.name);
+							}
 						}
 					}
 
 					if (
-						hasSignalUsage &&
-						!hasUseSignals &&
-						componentName &&
-						!new Set(context.options[0]?.ignoreComponents ?? []).has(
-							componentName,
-						) &&
-						componentNode
+						typeof stmt.source.value === "string" &&
+						creatorModules.has(stmt.source.value)
 					) {
-						const severity = getSeverity("missingUseSignals", option);
-						if (severity !== "off") {
-							context.report({
-								node: componentNode,
-								messageId: "missingUseSignals",
-								data: { componentName },
-								fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
-									const fixes: Array<TSESLint.RuleFix> = [];
-
-									if (!componentNode) {
-										return null;
-									}
-
-									const insertionPoint =
-										(componentNode.type === "FunctionDeclaration" ||
-											componentNode.type === "ArrowFunctionExpression") &&
-										componentNode.body.type === "BlockStatement" &&
-										componentNode.body.body.length > 0
-											? componentNode.body.body[0]
-											: null;
-
-									if (
-										insertionPoint !== null &&
-										typeof insertionPoint !== "undefined"
-									) {
-										fixes.push(
-											fixer.insertTextBefore(
-												insertionPoint,
-												"\tuseSignals();\n",
-											),
-										);
-									}
-
-									if (
-										!context.sourceCode.ast.body
-											.filter(
-												(
-													node: TSESTree.ProgramStatement,
-												): node is TSESTree.ImportDeclaration => {
-													return node.type === "ImportDeclaration";
-												},
-											)
-											.some((node: TSESTree.ImportDeclaration): boolean => {
-												return (
-													node.source.value === "@preact/signals-react" &&
-													node.specifiers.some(
-														(s: TSESTree.ImportClause): boolean => {
-															return (
-																s.type === "ImportSpecifier" &&
-																s.imported.type === "Identifier" &&
-																s.imported.name === "useSignals"
-															);
-														},
-													)
-												);
-											}) &&
-										context.sourceCode.ast.body.length > 0
-									) {
-										const b = context.sourceCode.ast.body[0];
-
-										if (!b) {
-											return null;
-										}
-
-										fixes.push(
-											fixer.insertTextBefore(
-												b,
-												"import { useSignals } from '@preact/signals-react';\n",
-											),
-										);
-									}
-
-									return fixes.length > 0 ? fixes : null;
-								},
-							});
+						for (const spec of stmt.specifiers) {
+							if (spec.type === AST_NODE_TYPES.ImportSpecifier) {
+								if (
+									spec.imported.type === AST_NODE_TYPES.Identifier &&
+									spec.imported.name === "signal"
+								) {
+									signalCreatorLocals.add(spec.local.name);
+								} else if (
+									spec.imported.type === AST_NODE_TYPES.Identifier &&
+									spec.imported.name === "computed"
+								) {
+									computedCreatorLocals.add(spec.local.name);
+								}
+							} else if (
+								spec.type === AST_NODE_TYPES.ImportNamespaceSpecifier
+							) {
+								creatorNamespaces.add(spec.local.name);
+							}
 						}
 					}
-				} catch (error: unknown) {
-					console.error("Error recording metrics:", error);
-				} finally {
-					endPhase(perfKey, "recordMetrics");
+				}
+			},
 
-					stopTracking(perfKey);
+			[`${AST_NODE_TYPES.Program}:exit`](): void {
+				startPhase(perfKey, "programExit");
+
+				if (
+					hasSignalUsage &&
+					!hasUseSignals &&
+					componentName &&
+					!new Set(context.options[0]?.ignoreComponents ?? []).has(
+						componentName,
+					) &&
+					componentNode
+				) {
+					const missingId: MessageIds = isHook(componentNode)
+						? "missingUseSignalsInCustomHook"
+						: "missingUseSignalsInComponent";
+
+					if (getSeverity(missingId, option) === "off") {
+						return;
+					}
+
+					context.report({
+						node: componentNode,
+						messageId: missingId,
+						data: { componentName },
+						fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+							const fixes: Array<TSESLint.RuleFix> = [];
+
+							if (!componentNode) {
+								return null;
+							}
+
+							// Handle block bodies directly
+							if (
+								(componentNode.type === AST_NODE_TYPES.FunctionDeclaration ||
+									componentNode.type === AST_NODE_TYPES.FunctionExpression ||
+									componentNode.type ===
+										AST_NODE_TYPES.ArrowFunctionExpression) &&
+								componentNode.body.type === AST_NODE_TYPES.BlockStatement
+							) {
+								wrapBodyInTryFinally(
+									componentNode,
+									findOrCreateStoreDeclaration(
+										componentNode,
+										fixer,
+										fixes,
+										context,
+									),
+									hasTryFinallyInCurrent,
+									fixer,
+									fixes,
+									context,
+								);
+							} else if (
+								option?.wrapConciseArrows === true &&
+								componentNode.type === AST_NODE_TYPES.ArrowFunctionExpression &&
+								componentNode.body.type !== AST_NODE_TYPES.BlockStatement
+							) {
+								// Basic unique store name generation against current function text
+								let storeName = "store";
+
+								let suffixIdx = 1;
+
+								while (
+									// eslint-disable-next-line security/detect-non-literal-regexp
+									new RegExp(`\\b${storeName}\\b`).test(
+										context.sourceCode.getText(componentNode),
+									)
+								) {
+									storeName = `store${suffixIdx++}`;
+								}
+
+								// const quote = getPreferredQuote(context.sourceCode);
+								const semi = getPreferredSemicolon(context.sourceCode);
+
+								const newBlock = `{
+                const ${storeName} = useSignals(${computeExpectedArg(componentNode)})${semi}
+
+                try {
+                  return ${context.sourceCode.getText(componentNode.body)};
+                } finally {
+                  ${storeName}.f()${semi}
+                }
+              }`;
+
+								fixes.push(fixer.replaceText(componentNode.body, newBlock));
+
+								ensureUseSignalsImport(fixer, fixes, context);
+							}
+
+							ensureUseSignalsImport(fixer, fixes, context);
+
+							return fixes.length > 0 ? fixes : null;
+						},
+					});
 				}
 
 				perf["Program:exit"]();

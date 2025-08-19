@@ -1,625 +1,1901 @@
 /** biome-ignore-all assist/source/organizeImports: off */
-import { ESLintUtils } from "@typescript-eslint/utils";
-import type { TSESLint, TSESTree } from "@typescript-eslint/utils";
-import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
+import type { Definition, Variable } from '@typescript-eslint/scope-manager';
+import { ESLintUtils, AST_NODE_TYPES } from '@typescript-eslint/utils';
+import type { TSESLint, TSESTree } from '@typescript-eslint/utils';
+import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
+import ts from 'typescript';
 
-import { PerformanceOperations } from "./utils/performance-constants.js";
+import { ensureNamedImportFixes } from './utils/imports.js';
+import { PerformanceOperations } from './utils/performance-constants.js';
 import {
-	endPhase,
-	startPhase,
-	recordMetric,
-	stopTracking,
-	startTracking,
-	trackOperation,
-	createPerformanceTracker,
-	DEFAULT_PERFORMANCE_BUDGET,
-} from "./utils/performance.js";
-import type { PerformanceBudget } from "./utils/types.js";
-import { getRuleDocUrl } from "./utils/urls.js";
+  endPhase,
+  startPhase,
+  recordMetric,
+  startTracking,
+  trackOperation,
+  createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
+} from './utils/performance.js';
+import type { PerformanceBudget } from './utils/types.js';
+import { getRuleDocUrl } from './utils/urls.js';
 
 type SignalUpdate = {
-	node: TSESTree.AssignmentExpression | TSESTree.CallExpression;
-	isTopLevel: boolean;
-	signalName: string;
-	updateType: "assignment" | "method";
+  node: TSESTree.Node;
+  isTopLevel: boolean;
+  signalName: string;
+  updateType: 'assignment' | 'method' | 'update';
+  scopeDepth: number;
 };
 
+// Per-context caches to avoid repeated subtree walks
+const updateCacheByContext = new WeakMap<object, WeakMap<TSESTree.Node, boolean>>();
+const readCacheByContext = new WeakMap<object, WeakMap<TSESTree.Node, boolean>>();
+
+// Narrow unknown object values to ESTree nodes
+function isESTreeNode(value: unknown): value is TSESTree.Node {
+  return typeof value === 'object' && value !== null && 'type' in value;
+}
+
+// Recursively check if a node subtree contains any signal update
+function containsSignalUpdate(
+  node: TSESTree.Node,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): boolean {
+  let cache = updateCacheByContext.get(context);
+
+  if (!cache) {
+    cache = new WeakMap();
+
+    updateCacheByContext.set(context, cache);
+  }
+
+  const cached = cache.get(node);
+  if (typeof cached !== 'undefined') {
+    return cached;
+  }
+
+  // If this node itself is an update, return true
+  if (isSignalUpdate(node, context)) {
+    cache.set(node, true);
+
+    return true;
+  }
+
+  // For block statements, explicitly iterate children
+  if (node.type === AST_NODE_TYPES.BlockStatement) {
+    for (const s of node.body) {
+      if (containsSignalUpdate(s, context)) {
+        cache.set(node, true);
+        return true;
+      }
+    }
+
+    cache.set(node, false);
+
+    return false;
+  }
+
+  // Generic shallow walk similar to containsSignalRead
+  for (const key of Object.keys(node)) {
+    if (key === 'parent') {
+      continue;
+    }
+
+    const value = node[key as keyof typeof node];
+
+    if (typeof value === 'undefined') {
+      continue;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (isESTreeNode(item) && containsSignalUpdate(item, context)) {
+          cache.set(node, true);
+
+          return true;
+        }
+      }
+    } else if (isESTreeNode(value) && containsSignalUpdate(value, context)) {
+      cache.set(node, true);
+
+      return true;
+    }
+  }
+
+  cache.set(node, false);
+
+  return false;
+}
+
+// Heuristic: statements considered trivial/ignorable for batching contiguity
+function isTriviallyIgnorableStatement(
+  s: TSESTree.Statement,
+  _context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): boolean {
+  switch (s.type) {
+    case AST_NODE_TYPES.EmptyStatement: {
+      return true;
+    }
+    case AST_NODE_TYPES.VariableDeclaration: {
+      // Safe only if no initializers at all
+      return s.declarations.every(
+        (
+          d: TSESTree.VariableDeclaratorDefiniteAssignment | TSESTree.VariableDeclaratorMaybeInit
+        ) => {
+          return typeof d.init === 'undefined' || d.init === null;
+        }
+      );
+    }
+
+    case AST_NODE_TYPES.ExpressionStatement: {
+      // Allow pure literals or template literals with no expressions
+      const e = s.expression;
+
+      if (e.type === AST_NODE_TYPES.Literal) {
+        return true;
+      }
+
+      if (e.type === AST_NODE_TYPES.TemplateLiteral && e.expressions.length === 0) {
+        return true;
+      }
+
+      return false;
+    }
+
+    default: {
+      return false;
+    }
+  }
+}
+
+function onlyTrivialBetween(
+  first: TSESTree.Node,
+  last: TSESTree.Node,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): boolean {
+  const block = context.sourceCode
+    .getAncestors(first)
+    .reverse()
+    .find(
+      (a: TSESTree.Node): a is TSESTree.BlockStatement => a.type === AST_NODE_TYPES.BlockStatement
+    );
+
+  if (!block) {
+    return false;
+  }
+
+  const idxFirst = block.body.findIndex((s: TSESTree.Statement): boolean => {
+    return first.range[0] >= s.range[0] && first.range[1] <= s.range[1];
+  });
+  const idxLast = block.body.findIndex((s: TSESTree.Statement): boolean => {
+    return last.range[0] >= s.range[0] && last.range[1] <= s.range[1];
+  });
+
+  if (idxFirst === -1 || idxLast === -1 || idxLast < idxFirst) {
+    return false;
+  }
+
+  for (let i = idxFirst + 1; i < idxLast; i++) {
+    // eslint-disable-next-line security/detect-object-injection
+    const s = block.body[i];
+
+    if (!s) {
+      continue;
+    }
+
+    if (!isTriviallyIgnorableStatement(s, context)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// Count statements between first and last that are NOT trivially ignorable
+function countNonTrivialBetween(
+  first: TSESTree.Node,
+  last: TSESTree.Node,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): number {
+  const block = context.sourceCode
+    .getAncestors(first)
+    .reverse()
+    .find(
+      (a: TSESTree.Node): a is TSESTree.BlockStatement => a.type === AST_NODE_TYPES.BlockStatement
+    );
+
+  if (!block) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const idxFirst = block.body.findIndex((s: TSESTree.Statement): boolean => {
+    return first.range[0] >= s.range[0] && first.range[1] <= s.range[1];
+  });
+
+  const idxLast = block.body.findIndex((s: TSESTree.Statement): boolean => {
+    return last.range[0] >= s.range[0] && last.range[1] <= s.range[1];
+  });
+
+  if (idxFirst === -1 || idxLast === -1 || idxLast < idxFirst) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  let count = 0;
+
+  for (let i = idxFirst + 1; i < idxLast; i++) {
+    // eslint-disable-next-line security/detect-object-injection
+    const s = block.body[i];
+
+    if (!s) {
+      continue;
+    }
+
+    if (!isTriviallyIgnorableStatement(s, context)) count += 1;
+  }
+  return count;
+}
+
+function isSafeAutofixRange(
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
+  start: number,
+  end: number
+): boolean {
+  if (end <= start) {
+    return true;
+  }
+
+  return (
+    context.sourceCode.text
+      .slice(start, end)
+      // eslint-disable-next-line optimize-regex/optimize-regex
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|\n)\s*\/\/.*(?=\n|$)/g, '\n')
+      .replace(/[\s;]+/g, '').length === 0
+  );
+}
+
+// Conservative CFG-aware guard: avoid wrapping across control-flow/structural statements
+function hasControlFlowBoundaryBetween(
+  first: TSESTree.Node,
+  last: TSESTree.Node,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): boolean {
+  const block = context.sourceCode
+    .getAncestors(first)
+    .reverse()
+    .find((a: TSESTree.Node): a is TSESTree.BlockStatement => {
+      return a.type === AST_NODE_TYPES.BlockStatement;
+    });
+
+  if (!block) {
+    return true;
+  }
+
+  const idxFirst = block.body.findIndex((s: TSESTree.Statement): boolean => {
+    return first.range[0] >= s.range[0] && first.range[1] <= s.range[1];
+  });
+
+  const idxLast = block.body.findIndex((s: TSESTree.Statement): boolean => {
+    return last.range[0] >= s.range[0] && last.range[1] <= s.range[1];
+  });
+
+  if (idxFirst === -1 || idxLast === -1 || idxLast < idxFirst) {
+    return true;
+  }
+
+  for (let i = idxFirst + 1; i < idxLast; i++) {
+    // eslint-disable-next-line security/detect-object-injection
+    const s = block.body[i];
+
+    if (typeof s === 'undefined') {
+      continue;
+    }
+
+    switch (s.type) {
+      case AST_NODE_TYPES.ReturnStatement:
+      case AST_NODE_TYPES.ThrowStatement:
+      case AST_NODE_TYPES.BreakStatement:
+      case AST_NODE_TYPES.ContinueStatement:
+      case AST_NODE_TYPES.IfStatement:
+      case AST_NODE_TYPES.SwitchStatement:
+      case AST_NODE_TYPES.TryStatement:
+      case AST_NODE_TYPES.ForStatement:
+      case AST_NODE_TYPES.ForInStatement:
+      case AST_NODE_TYPES.ForOfStatement:
+      case AST_NODE_TYPES.WhileStatement:
+      case AST_NODE_TYPES.DoWhileStatement:
+      case AST_NODE_TYPES.LabeledStatement:
+      case AST_NODE_TYPES.WithStatement:
+        return true;
+      default:
+        break;
+    }
+  }
+
+  return false;
+}
+
+type MessageIds =
+  | 'useBatch'
+  | 'suggestUseBatch'
+  | 'addBatchImport'
+  | 'wrapWithBatch'
+  | 'useBatchSuggestion'
+  | 'removeUnnecessaryBatch'
+  | 'nonUpdateSignalInBatch'
+  | 'updatesSeparatedByCode';
+
 type Severity = {
-	useBatch?: "error" | "warn" | "off";
-	suggestUseBatch?: "error" | "warn" | "off";
-	addBatchImport?: "error" | "warn" | "off";
-	wrapWithBatch?: "error" | "warn" | "off";
-	useBatchSuggestion?: "error" | "warn" | "off";
-	performanceLimitExceeded?: "error" | "warn" | "off";
+  [key in MessageIds]?: 'error' | 'warn' | 'off';
 };
 
 type Option = {
-	minUpdates?: number;
-	performance?: PerformanceBudget;
-	severity?: Severity;
+  minUpdates?: number;
+  performance?: PerformanceBudget;
+  severity?: Severity;
+  extraSignalModules?: Array<string>;
+  detection?: {
+    allowSingleReads?: number;
+    // Allow up to N non-trivial statements between updates to still consider them contiguous
+    allowNonTrivialBetween?: number;
+    // Treat `.update(...)` method calls as non-updates when true
+    ignoreUpdateCalls?: boolean;
+  };
 };
 
 type Options = [Option?];
 
-type MessageIds =
-	| "useBatch"
-	| "suggestUseBatch"
-	| "addBatchImport"
-	| "wrapWithBatch"
-	| "useBatchSuggestion"
-	| "performanceLimitExceeded";
+function getSeverity(messageId: MessageIds, options: Option | undefined): 'error' | 'warn' | 'off' {
+  if (typeof options?.severity === 'undefined') {
+    return 'error';
+  }
 
-function getSeverity(
-	messageId: MessageIds,
-	options: Option | undefined,
-): "error" | "warn" | "off" {
-	if (!options?.severity) {
-		return "error"; // Default to 'error' if no severity is specified
-	}
+  switch (messageId) {
+    case 'useBatch': {
+      return options.severity.useBatch ?? 'error';
+    }
 
-	// Handle performance limit exceeded as a special case
-	if (messageId === "performanceLimitExceeded") {
-		return options.severity.performanceLimitExceeded || "warn"; // Default to 'warn' for performance issues
-	}
+    case 'suggestUseBatch': {
+      return options.severity.suggestUseBatch ?? 'warn';
+    }
 
-	// Handle specific message IDs with their corresponding severity settings
-	switch (messageId) {
-		case "useBatch":
-			return options.severity.useBatch ?? "error";
-		case "suggestUseBatch":
-			return options.severity.suggestUseBatch ?? "warn";
-		case "addBatchImport":
-			return options.severity.addBatchImport ?? "error";
-		case "wrapWithBatch":
-			return options.severity.wrapWithBatch ?? "error";
-		case "useBatchSuggestion":
-			return options.severity.useBatchSuggestion ?? "warn";
-		default:
-			return "error"; // Default to 'error' for any other message IDs
-	}
+    case 'addBatchImport': {
+      return options.severity.addBatchImport ?? 'error';
+    }
+
+    case 'wrapWithBatch': {
+      return options.severity.wrapWithBatch ?? 'error';
+    }
+
+    case 'useBatchSuggestion': {
+      return options.severity.useBatchSuggestion ?? 'warn';
+    }
+
+    case 'removeUnnecessaryBatch': {
+      return options.severity.removeUnnecessaryBatch ?? 'error';
+    }
+
+    case 'nonUpdateSignalInBatch': {
+      return options.severity.nonUpdateSignalInBatch ?? 'warn';
+    }
+
+    case 'updatesSeparatedByCode': {
+      return options.severity.updatesSeparatedByCode ?? 'warn';
+    }
+
+    default: {
+      return 'error';
+    }
+  }
 }
 
+let isProcessedByHandlers = false;
+
+const DEFAULT_MIN_UPDATES = 2;
+
+const updatesInScope: Array<SignalUpdate> = [];
+
+const allUpdates: Array<SignalUpdate> = [];
+
+let trackedSignalVars: Set<string> = new Set();
+
 function processBlock(
-	statements: Array<
-		TSESTree.ExpressionStatement | TSESTree.VariableDeclaration
-	>,
-	context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
-	option?: Option | undefined,
-): void {
-	const key = context.getFilename();
+  statements: Array<TSESTree.Statement>,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>,
+  perfKey: string,
+  scopeDepth = 0,
+  inBatch: boolean = false
+): Array<SignalUpdate> {
+  if (isProcessedByHandlers) {
+    return [];
+  }
 
-	recordMetric(key, "processBlockStart", { statementCount: statements.length });
+  // Reset accumulators for a fresh analysis pass at the top-level invocation
+  if (scopeDepth === 0) {
+    updatesInScope.length = 0;
+    allUpdates.length = 0;
+  }
 
-	const hasBatchImport = context.sourceCode.ast.body.some(
-		(node: TSESTree.ProgramStatement): boolean => {
-			return (
-				node.type === "ImportDeclaration" &&
-				node.source.value === "@preact/signals-react" &&
-				node.specifiers.some((specifier: TSESTree.ImportClause): boolean => {
-					return (
-						"imported" in specifier &&
-						"name" in specifier.imported &&
-						specifier.imported.name === "batch"
-					);
-				})
-			);
-		},
-	);
+  const minUpdates = context.options[0]?.minUpdates ?? DEFAULT_MIN_UPDATES;
 
-	const updatesInBlock: Array<SignalUpdate> = [];
+  if (inBatch) {
+    recordMetric(perfKey, PerformanceOperations.skipProcessing, {
+      scopeDepth,
+      statementCount: statements.length,
+    });
 
-	let signalUpdateCount = 0;
+    return [];
+  }
 
-	for (const stmt of statements) {
-		// Skip non-expression statements and variable declarations
-		if (stmt.type !== "ExpressionStatement") {
-			continue;
-		}
+  recordMetric(perfKey, 'processBlockStart', {
+    scopeDepth,
+    inBatch,
+    statementCount: statements.length,
+  });
 
-		// Handle expression statements (direct assignments or function calls)
+  const hasBatchImport = context.sourceCode.ast.body.some(
+    (node: TSESTree.ProgramStatement): boolean => {
+      return (
+        node.type === AST_NODE_TYPES.ImportDeclaration &&
+        node.source.value === '@preact/signals-react' &&
+        node.specifiers.some((specifier: TSESTree.ImportClause): boolean => {
+          return (
+            'imported' in specifier &&
+            'name' in specifier.imported &&
+            specifier.imported.name === 'batch'
+          );
+        })
+      );
+    }
+  );
 
-		if (isSignalUpdate(stmt.expression)) {
-			const updateType =
-				stmt.expression.type === "AssignmentExpression"
-					? "assignment"
-					: "method";
+  for (const stmt of statements) {
+    if (stmt.type !== AST_NODE_TYPES.ExpressionStatement) {
+      if (stmt.type === AST_NODE_TYPES.BlockStatement) {
+        allUpdates.push(...processBlock(stmt.body, context, perfKey, scopeDepth + 1, inBatch));
+      }
 
-			recordMetric(key, "signalUpdateFound", {
-				type: updateType,
-				location: "expression",
-			});
+      continue;
+    }
 
-			updatesInBlock.push({
-				node: stmt.expression,
-				isTopLevel: true,
-				signalName:
-					stmt.expression.type === "AssignmentExpression"
-						? "object" in stmt.expression.left &&
-							stmt.expression.left.object.type === "Identifier"
-							? stmt.expression.left.object.name
-							: "signal"
-						: "object" in stmt.expression.callee &&
-								stmt.expression.callee.object.type === "Identifier"
-							? stmt.expression.callee.object.name
-							: "signal",
-				updateType,
-			});
+    if (isBatchCall(stmt.expression, context)) {
+      if (
+        stmt.expression.type === AST_NODE_TYPES.CallExpression &&
+        stmt.expression.arguments.length > 0 &&
+        (stmt.expression.arguments[0]?.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+          stmt.expression.arguments[0]?.type === AST_NODE_TYPES.FunctionExpression) &&
+        stmt.expression.arguments[0].body.type === AST_NODE_TYPES.BlockStatement
+      ) {
+        recordMetric(perfKey, 'skipBatchBody', { scopeDepth });
+      }
 
-			signalUpdateCount++;
-		}
-	}
+      continue;
+    }
 
-	recordMetric(key, "processBlockEnd", {
-		totalUpdates: updatesInBlock.length,
-		uniqueSignals: new Set(updatesInBlock.map((u) => u.signalName)).size,
-		hasBatchImport,
-		minUpdatesRequired: option?.minUpdates,
-	});
+    if (isSignalUpdate(stmt.expression, context)) {
+      const updateType = getUpdateType(stmt.expression);
 
-	// Only suggest batching if we have enough updates ( min 2 )
-	if (
-		typeof option?.minUpdates !== "undefined" &&
-		updatesInBlock.length < (option.minUpdates || 2)
-	) {
-		recordMetric(key, "batchUpdateNotNeeded", {
-			updateCount: updatesInBlock.length,
-		});
+      const signalName = getSignalName(stmt.expression);
 
-		return;
-	}
+      recordMetric(perfKey, 'signalUpdateFound', {
+        type: updateType,
+        location: scopeDepth === 0 ? 'top-level' : `nested-${scopeDepth}`,
+        signalName,
+        hasBatchImport,
+        inBatchScope: inBatch,
+      });
 
-	const firstNode = updatesInBlock[0]?.node;
+      updatesInScope.push({
+        node: stmt.expression,
+        isTopLevel: scopeDepth === 0,
+        signalName,
+        updateType,
+        scopeDepth,
+      });
+    }
+  }
 
-	const signalCount = updatesInBlock.length;
+  recordMetric(perfKey, 'processBlockEnd', {
+    scopeDepth,
+    totalUpdates: updatesInScope.length,
+    uniqueSignals: new Set(
+      updatesInScope.map((u: SignalUpdate): string => {
+        return u.signalName;
+      })
+    ).size,
+    hasBatchImport,
+    minUpdatesRequired: context.options[0]?.minUpdates,
+  });
 
-	recordMetric(key, "batchUpdateSuggested", {
-		updateCount: updatesInBlock.length,
-		uniqueSignals: new Set(updatesInBlock.map((u) => u.signalName)).size,
-	});
+  allUpdates.push(...updatesInScope);
 
-	if (!firstNode) {
-		return;
-	}
+  if (typeof minUpdates === 'number' && updatesInScope.length < minUpdates) {
+    recordMetric(perfKey, 'batchUpdateNotNeeded', {
+      scopeDepth,
+      updateCount: updatesInScope.length,
+      minUpdates,
+    });
 
-	const messageId = "useBatch" as const;
-	const severity = getSeverity(messageId, option);
+    return allUpdates;
+  }
 
-	if (severity !== "off") {
-		context.report({
-			node: firstNode,
-			messageId,
-			data: {
-				count: signalCount,
-				signals: Array.from(
-					new Set(
-						updatesInBlock.map((update: SignalUpdate): string => {
-							return update.signalName;
-						}),
-					),
-				).join(", "),
-			},
-			suggest: [
-				{
-					messageId: "useBatchSuggestion",
-					data: { count: signalCount },
-					*fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
-						const updatesText = updatesInBlock
-							.map(({ node }: SignalUpdate): string => {
-								return context.sourceCode.getText(node);
-							})
-							.join("; ");
+  const firstNode = updatesInScope[0]?.node;
 
-						const firstUpdate = updatesInBlock[0]?.node;
-						const lastUpdate = updatesInBlock[updatesInBlock.length - 1]?.node;
+  recordMetric(perfKey, 'batchUpdateSuggested', {
+    updateCount: updatesInScope.length,
+    uniqueSignals: new Set(
+      updatesInScope.map((u: SignalUpdate): string => {
+        return u.signalName;
+      })
+    ).size,
+  });
 
-						if (!firstUpdate || !lastUpdate) {
-							return null;
-						}
+  if (typeof firstNode === 'undefined') {
+    return allUpdates;
+  }
 
-						// Get the range of the entire block of updates
-						const range: TSESTree.Range = [
-							firstUpdate.range[0],
-							lastUpdate.range[1],
-						];
+  const messageId = 'useBatch';
 
-						// Create the batch wrapper
-						const batchPrefix = `batch(() => {\n  `;
-						const batchSuffix = `\n});`;
+  if (updatesInScope.length >= minUpdates && !isInsideBatchCall(firstNode, context)) {
+    // If there is any non-update code between first and last updates in this scope, warn separately
+    const firstUpdateNode = updatesInScope[0]?.node;
 
-						const b = context.sourceCode.ast.body[0];
+    const lastUpdateNode = updatesInScope[updatesInScope.length - 1]?.node;
 
-						if (!b) {
-							return null;
-						}
+    if (
+      typeof firstUpdateNode !== 'undefined' &&
+      typeof lastUpdateNode !== 'undefined' &&
+      // Control-flow boundaries are always unsafe
+      (hasControlFlowBoundaryBetween(firstUpdateNode, lastUpdateNode, context) ||
+        // Otherwise, if range has non-trivial tokens, allow if trivial or within threshold between
+        (!isSafeAutofixRange(context, firstUpdateNode.range[1], lastUpdateNode.range[0]) &&
+          ((): boolean => {
+            if (onlyTrivialBetween(firstUpdateNode, lastUpdateNode, context)) {
+              return false;
+            }
 
-						// If we need to add the import, do it first
-						if (!hasBatchImport) {
-							yield fixer.insertTextBefore(
-								b,
-								"import { batch } from '@preact/signals-react';\n\n",
-							);
-						}
+            return (
+              countNonTrivialBetween(firstUpdateNode, lastUpdateNode, context) >
+              (context.options[0]?.detection?.allowNonTrivialBetween ?? 0)
+            );
+          })()))
+    ) {
+      if (getSeverity('updatesSeparatedByCode', context.options[0]) !== 'off') {
+        context.report({
+          node: firstNode,
+          messageId: 'updatesSeparatedByCode',
+          data: { count: updatesInScope.length },
+        });
+      }
+    } else if (getSeverity(messageId, context.options[0]) !== 'off') {
+      context.report({
+        node: firstNode,
+        messageId,
+        data: {
+          count: updatesInScope.length,
+          signals: Array.from(
+            new Set(
+              allUpdates.map((update: SignalUpdate): string => {
+                return update.signalName;
+              })
+            )
+          ).join(', '),
+        },
+        suggest: [
+          {
+            messageId: 'useBatchSuggestion',
+            data: { count: updatesInScope.length },
+            *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
+              const firstUpdate = updatesInScope[0]?.node;
 
-						// Replace the updates with the batched version
-						yield fixer.replaceTextRange(
-							range,
-							batchPrefix + updatesText + batchSuffix,
-						);
+              const lastUpdate = updatesInScope[updatesInScope.length - 1]?.node;
 
-						recordMetric(key, "batchFixApplied", {
-							updateCount: updatesInBlock.length,
-						});
-						return null;
-					},
-				},
-				{
-					messageId: "useBatchSuggestion",
-					data: { count: signalCount },
-					*fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
-						const updatesText = updatesInBlock
-							.map(({ node }: SignalUpdate): string => {
-								return context.sourceCode.getText(node);
-							})
-							.join("; ");
+              if (!firstUpdate || !lastUpdate) {
+                return null;
+              }
 
-						if (!hasBatchImport) {
-							const batchImport =
-								"import { batch } from '@preact/signals-react';\n";
+              // Guard: ensure no non-update code or control-flow boundary exists between updates
+              if (
+                hasControlFlowBoundaryBetween(firstUpdate, lastUpdate, context) ||
+                (!isSafeAutofixRange(context, firstUpdate.range[1], lastUpdate.range[0]) &&
+                  ((): boolean => {
+                    if (onlyTrivialBetween(firstUpdate, lastUpdate, context)) {
+                      return false;
+                    }
 
-							const firstImport = context.sourceCode.ast.body.find(
-								(n): n is TSESTree.ImportDeclaration =>
-									n.type === "ImportDeclaration",
-							);
+                    return (
+                      countNonTrivialBetween(firstUpdate, lastUpdate, context) >
+                      (context.options[0]?.detection?.allowNonTrivialBetween ?? 0)
+                    );
+                  })())
+              ) {
+                return null;
+              }
 
-							if (typeof firstImport === "undefined") {
-								const b = context.sourceCode.ast.body[0];
+              const b = context.sourceCode.ast.body[0];
 
-								if (!b) {
-									return null;
-								}
+              if (!b) {
+                return null;
+              }
 
-								yield fixer.insertTextBefore(b, batchImport);
-							} else {
-								yield fixer.insertTextBefore(firstImport, batchImport);
-							}
-						}
+              if (!hasBatchImport) {
+                const fixes = ensureNamedImportFixes(
+                  { sourceCode: context.sourceCode },
+                  fixer,
+                  '@preact/signals-react',
+                  'batch'
+                );
+                for (const f of fixes) {
+                  yield f;
+                }
+              }
 
-						yield fixer.replaceTextRange(
-							[
-								firstNode.range[0],
-								updatesInBlock[updatesInBlock.length - 1]?.node.range[1] ?? 0,
-							],
-							`batch(() => { ${updatesText} })`,
-						);
+              const baseIndentMatch = context.sourceCode.text
+                .slice(
+                  context.sourceCode.text.lastIndexOf('\n', firstUpdate.range[0] - 1) + 1,
+                  firstUpdate.range[0]
+                )
+                .match(/^\s*/);
 
-						recordMetric(key, "batchFixApplied", {
-							updateCount: updatesInBlock.length,
-						});
+              const baseIndent = baseIndentMatch ? baseIndentMatch[0] : '';
 
-						return null;
-					},
-				},
-				{
-					messageId: "addBatchImport",
-					data: {
-						count: signalUpdateCount,
-					},
-					*fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
-						if (hasBatchImport) {
-							return;
-						}
+              const innerIndent = `${baseIndent}  `;
 
-						const batchImport =
-							"import { batch } from '@preact/signals-react';\n";
+              yield fixer.replaceTextRange(
+                [firstUpdate.range[0], lastUpdate.range[1]],
+                `batch(() => {\n${innerIndent}${context.sourceCode.text.slice(firstUpdate.range[0], lastUpdate.range[1]).replace(/\n/g, `\n${innerIndent}`)}\n${baseIndent}});`
+              );
 
-						const firstImport = context.sourceCode.ast.body.find(
-							(
-								n: TSESTree.ProgramStatement,
-							): n is TSESTree.ImportDeclaration => {
-								return n.type === "ImportDeclaration";
-							},
-						);
+              recordMetric(perfKey, 'batchFixApplied', {
+                updateCount: updatesInScope.length,
+              });
 
-						if (typeof firstImport === "undefined") {
-							const b = context.sourceCode.ast.body[0];
+              return null;
+            },
+          },
+          {
+            messageId: 'addBatchImport',
+            data: {
+              count: updatesInScope.length,
+            },
+            *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix> | null {
+              if (hasBatchImport) {
+                return;
+              }
 
-							if (!b) {
-								return;
-							}
+              const fixes = ensureNamedImportFixes(
+                { sourceCode: context.sourceCode },
+                fixer,
+                '@preact/signals-react',
+                'batch'
+              );
 
-							yield fixer.insertTextBefore(b, batchImport);
-						} else {
-							yield fixer.insertTextBefore(firstImport, batchImport);
-						}
-					},
-				},
-			],
-		});
-	}
+              for (const f of fixes) {
+                yield f;
+              }
+            },
+          },
+        ],
+      });
+    }
+  }
+
+  return allUpdates;
+}
+
+const batchScopeStack: Array<boolean> = [false];
+
+function pushBatchScope(inBatch: boolean): void {
+  batchScopeStack.push(inBatch);
+}
+
+function popBatchScope(): boolean {
+  const popped = batchScopeStack.pop();
+
+  if (batchScopeStack.length === 0) {
+    batchScopeStack.push(false);
+  }
+
+  return popped ?? false;
+}
+
+function isInsideBatchCall(
+  node: TSESTree.Node,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): boolean {
+  if (batchScopeStack.length > 0 && batchScopeStack[batchScopeStack.length - 1] === true) {
+    return true;
+  }
+
+  for (const ancestor of context.sourceCode.getAncestors(node)) {
+    if (
+      ancestor.type === AST_NODE_TYPES.CallExpression &&
+      isBatchCall(ancestor, context) &&
+      ancestor.arguments.length > 0 &&
+      typeof ancestor.arguments[0] !== 'undefined' &&
+      'body' in ancestor.arguments[0] &&
+      'range' in ancestor.arguments[0].body
+    ) {
+      return (
+        node.range[0] >= ancestor.arguments[0].body.range[0] &&
+        node.range[1] <= ancestor.arguments[0].body.range[1]
+      );
+    }
+  }
+
+  return false;
+}
+
+function isBatchCall(
+  node: TSESTree.Node,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): boolean {
+  if (node.type !== AST_NODE_TYPES.CallExpression) {
+    return false;
+  }
+
+  if (node.callee.type === AST_NODE_TYPES.Identifier && node.callee.name === 'batch') {
+    return true;
+  }
+
+  if (node.callee.type === AST_NODE_TYPES.Identifier) {
+    const variable = context.sourceCode.getScope(node).variables.find((v: Variable): boolean => {
+      return 'name' in node.callee && v.name === node.callee.name;
+    });
+
+    if (typeof variable !== 'undefined') {
+      return variable.defs.some((def: Definition): boolean => {
+        if (def.type === 'ImportBinding') {
+          return (
+            'imported' in def.node &&
+            'name' in def.node.imported &&
+            def.node.imported.name === 'batch'
+          );
+        }
+
+        return false;
+      });
+    }
+  }
+
+  return false;
+}
+
+function getUpdateType(node: TSESTree.Node): 'assignment' | 'method' | 'update' {
+  if (node.type === AST_NODE_TYPES.AssignmentExpression) {
+    return 'assignment';
+  }
+
+  if (node.type === AST_NODE_TYPES.CallExpression) {
+    return 'method';
+  }
+
+  return 'update';
+}
+
+function getSignalName(node: TSESTree.Node): string {
+  if (node.type === AST_NODE_TYPES.AssignmentExpression) {
+    if (
+      node.left.type === AST_NODE_TYPES.MemberExpression &&
+      !node.left.computed &&
+      node.left.property.type === AST_NODE_TYPES.Identifier &&
+      node.left.property.name === 'value' &&
+      node.left.object.type === AST_NODE_TYPES.Identifier
+    ) {
+      return node.left.object.name;
+    }
+  } else if (
+    node.type === AST_NODE_TYPES.CallExpression &&
+    node.callee.type === AST_NODE_TYPES.MemberExpression &&
+    !node.callee.computed &&
+    node.callee.property.type === AST_NODE_TYPES.Identifier &&
+    (node.callee.property.name === 'set' || node.callee.property.name === 'update') &&
+    node.callee.object.type === AST_NODE_TYPES.Identifier
+  ) {
+    return node.callee.object.name;
+  }
+
+  return 'signal';
 }
 
 function isSignalUpdate(
-	node: TSESTree.Node,
-): node is TSESTree.AssignmentExpression | TSESTree.CallExpression {
-	// Handle direct assignments (signal.value = x)
-	if (
-		node.type === "AssignmentExpression" &&
-		node.left.type === "MemberExpression" &&
-		node.left.property.type === "Identifier" &&
-		node.left.property.name === "value" &&
-		node.left.object.type === "Identifier" &&
-		(node.left.object.name.endsWith("Signal") ||
-			node.left.object.name.endsWith("signal"))
-	) {
-		return true;
-	}
+  node: TSESTree.Node,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): node is
+  | TSESTree.AssignmentExpression
+  | TSESTree.CallExpression
+  | TSESTree.UpdateExpression
+  | TSESTree.UnaryExpression {
+  if (node.type === AST_NODE_TYPES.AssignmentExpression) {
+    if (
+      node.left.type === AST_NODE_TYPES.MemberExpression &&
+      node.left.property.type === AST_NODE_TYPES.Identifier &&
+      node.left.property.name === 'value' &&
+      isSignalReference(node.left.object, context)
+    ) {
+      return true;
+    }
 
-	// Handle method calls (signal.set(x) or signal.update())
-	if (
-		node.type === "CallExpression" &&
-		node.callee.type === "MemberExpression" &&
-		node.callee.property.type === "Identifier" &&
-		["set", "update"].includes(node.callee.property.name) &&
-		node.callee.object.type === "Identifier" &&
-		(node.callee.object.name.endsWith("Signal") ||
-			node.callee.object.name.endsWith("signal"))
-	) {
-		return true;
-	}
+    if (
+      node.operator !== '=' &&
+      node.left.type === AST_NODE_TYPES.MemberExpression &&
+      node.left.property.type === AST_NODE_TYPES.Identifier &&
+      node.left.property.name === 'value' &&
+      isSignalReference(node.left.object, context)
+    ) {
+      return true;
+    }
+  }
 
-	return false;
+  if (
+    node.type === AST_NODE_TYPES.CallExpression &&
+    node.callee.type === AST_NODE_TYPES.MemberExpression &&
+    node.callee.property.type === AST_NODE_TYPES.Identifier &&
+    (node.callee.property.name === 'set' ||
+      (node.callee.property.name === 'update' &&
+        (context.options[0]?.detection?.ignoreUpdateCalls !== true))) &&
+    isSignalReference(node.callee.object, context)
+  ) {
+    return true;
+  }
+
+  if (
+    node.type === AST_NODE_TYPES.UpdateExpression &&
+    node.argument.type === AST_NODE_TYPES.MemberExpression &&
+    node.argument.property.type === AST_NODE_TYPES.Identifier &&
+    node.argument.property.name === 'value' &&
+    isSignalReference(node.argument.object, context)
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
-const signalUpdates: Array<SignalUpdate> = [];
+type SignalOriginKind = 'useSignal' | 'computed';
+type SignalOrigin = { kind: SignalOriginKind; sourceModule: string };
 
-const ruleName = "prefer-batch-updates";
+type Cache = {
+  symbolOrigin: WeakMap<ts.Symbol, SignalOrigin | null>;
+};
 
-export const preferBatchUpdatesRule = ESLintUtils.RuleCreator(
-	(name: string): string => {
-		return getRuleDocUrl(name);
-	},
-)<Options, MessageIds>({
-	name: ruleName,
-	meta: {
-		type: "suggestion",
-		fixable: "code",
-		hasSuggestions: true,
-		docs: {
-			description:
-				"Suggest batching multiple signal updates to optimize performance",
-			url: getRuleDocUrl(ruleName),
-		},
-		messages: {
-			useBatch:
-				"{{count}} signal updates detected in the same scope. Use `batch` to optimize performance by reducing renders.",
-			performanceLimitExceeded: "Performance limit exceeded: {{message}}",
-			suggestUseBatch: "Use `batch` to group {{count}} signal updates",
-			addBatchImport: "Add `batch` import from '@preact/signals-react'",
-			wrapWithBatch: "Wrap with `batch` to optimize signal updates",
-			useBatchSuggestion: "Use `batch` to group {{count}} signal updates",
-		},
-		schema: [
-			{
-				type: "object",
-				properties: {
-					minUpdates: {
-						type: "number",
-						minimum: 2,
-						default: 2,
-						description: "Minimum number of signal updates to trigger the rule",
-					},
-					performance: {
-						type: "object",
-						properties: {
-							maxTime: { type: "number", minimum: 1 },
-							maxMemory: { type: "number", minimum: 1 },
-							maxNodes: { type: "number", minimum: 1 },
-							enableMetrics: { type: "boolean" },
-							logMetrics: { type: "boolean" },
-							maxOperations: {
-								type: "object",
-								properties: Object.fromEntries(
-									Object.entries(PerformanceOperations).map(([key]) => [
-										key,
-										{ type: "number", minimum: 1 },
-									]),
-								),
-							},
-						},
-						additionalProperties: false,
-					},
-				},
-				additionalProperties: false,
-			},
-		],
-	},
-	defaultOptions: [
-		{
-			minUpdates: 2,
-			performance: DEFAULT_PERFORMANCE_BUDGET,
-		},
-	],
-	create(
-		context: Readonly<RuleContext<MessageIds, Options>>,
-		[option],
-	): ESLintUtils.RuleListener {
-		const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
+const cacheByProgram = new WeakMap<ts.Program, Cache>();
 
-		startPhase(perfKey, "ruleInit");
+function getCache(program: ts.Program): Cache {
+  let c = cacheByProgram.get(program);
 
-		const perf = createPerformanceTracker<Options>(
-			perfKey,
-			option?.performance,
-			context,
-		);
+  if (!c) {
+    c = { symbolOrigin: new WeakMap() };
+    cacheByProgram.set(program, c);
+  }
+  return c;
+}
 
-		if (option?.performance?.enableMetrics === true) {
-			startTracking(context, perfKey, option.performance, ruleName);
-		}
+function getProgram(
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): ts.Program | null {
+  const services = context.sourceCode.parserServices;
 
-		console.info(
-			`${ruleName}: Initializing rule for file: ${context.filename}`,
-		);
-		console.info(`${ruleName}: Rule configuration:`, option);
+  if (
+    typeof services === 'undefined' ||
+    typeof services.program === 'undefined' ||
+    services.program === null ||
+    typeof services.esTreeNodeToTSNodeMap === 'undefined'
+  ) {
+    return null;
+  }
 
-		recordMetric(perfKey, "config", {
-			performance: {
-				enableMetrics: option?.performance?.enableMetrics,
-				logMetrics: option?.performance?.logMetrics,
-			},
-		});
+  return services.program;
+}
 
-		trackOperation(perfKey, PerformanceOperations.ruleInit);
+function resolveTsNode(
+  node: TSESTree.Node,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): ts.Node | null {
+  const services = context.sourceCode.parserServices;
 
-		endPhase(perfKey, "ruleInit");
+  if (typeof services === 'undefined' || typeof services.esTreeNodeToTSNodeMap === 'undefined') {
+    return null;
+  }
 
-		let nodeCount = 0;
+  try {
+    return services.esTreeNodeToTSNodeMap.get(node);
+  } catch {
+    return null;
+  }
+}
 
-		function shouldContinue(): boolean {
-			nodeCount++;
+function resolveSymbolAt(
+  id: TSESTree.Identifier,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): ts.Symbol | null {
+  const program = getProgram(context);
+  const tsNode = resolveTsNode(id, context);
+  if (!program || !tsNode) return null;
+  const checker = program.getTypeChecker();
+  try {
+    return checker.getSymbolAtLocation(tsNode) ?? null;
+  } catch {
+    return null;
+  }
+}
 
-			if (nodeCount > (option?.performance?.maxNodes ?? 2000)) {
-				trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+// Configurable module detection for signals
+let SIGNAL_MODULES: Set<string> = new Set(['@preact/signals-react']);
 
-				return false;
-			}
+function isFromSignalsReact(decls: ReadonlyArray<ts.Declaration> | undefined): boolean {
+  if (!decls) {
+    return false;
+  }
 
-			return true;
-		}
+  for (const d of decls) {
+    // Match against any configured module substring
+    for (const mod of SIGNAL_MODULES) {
+      if (d.getSourceFile().fileName.includes(mod)) {
+        return true;
+      }
+    }
 
-		startPhase(perfKey, "ruleExecution");
+    if (d.getSourceFile().fileName.includes('@preact/signals-react')) {
+      return true;
+    }
+  }
 
-		return {
-			"*": (node: TSESTree.Node): void => {
-				if (!shouldContinue()) {
-					endPhase(perfKey, "recordMetrics");
+  return false;
+}
 
-					stopTracking(perfKey);
+function isSignalType(symbol: ts.Symbol, checker: ts.TypeChecker): boolean {
+  const decl = symbol.valueDeclaration ?? symbol.getDeclarations()?.[0];
 
-					return;
-				}
+  if (typeof decl === 'undefined') {
+    return false;
+  }
 
-				perf.trackNode(node);
+  const type = checker.getTypeOfSymbolAtLocation(symbol, decl);
 
-				trackOperation(perfKey, PerformanceOperations.nodeProcessingExpression);
-			},
+  // Some types (e.g., unions/intersections/anonymous types) may not have a symbol.
+  // Guard all symbol dereferences to avoid runtime crashes.
+  if (
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+    type.symbol &&
+    ['Signal', 'ReadableSignal', 'WritableSignal'].includes(String(type.symbol.escapedName)) &&
+    typeof type.symbol.getDeclarations === 'function' &&
+    isFromSignalsReact(type.symbol.getDeclarations())
+  ) {
+    return true;
+  }
 
-			// Track signal updates in the current scope
-			AssignmentExpression(node: TSESTree.AssignmentExpression): void {
-				startPhase(perfKey, "assignmentExpression");
+  // Structural fallback: has a readonly `.value` and methods `set`/`update` on the instance type
+  const valueProp = type.getProperty('value');
 
-				if (isSignalUpdate(node)) {
-					signalUpdates.push({
-						node,
-						isTopLevel: true,
-						signalName:
-							"left" in node && node.left.type === "MemberExpression"
-								? node.left.object.type === "Identifier"
-									? node.left.object.name
-									: "signal"
-								: node.left.type,
-						updateType: "assignment",
-					});
-				}
+  if (typeof valueProp === 'undefined') {
+    return false;
+  }
 
-				endPhase(perfKey, "assignmentExpression");
-			},
+  const vpDecl = valueProp.valueDeclaration ?? valueProp.declarations?.[0];
 
-			CallExpression(node: TSESTree.CallExpression): void {
-				startPhase(perfKey, "callExpression");
+  if (vpDecl && isFromSignalsReact(valueProp.getDeclarations())) {
+    return true;
+  }
 
-				if (isSignalUpdate(node)) {
-					signalUpdates.push({
-						node,
-						isTopLevel: true,
-						signalName:
-							"callee" in node && node.callee.type === "MemberExpression"
-								? node.callee.object.type === "Identifier"
-									? node.callee.object.name
-									: "signal"
-								: node.callee.type,
-						updateType: "method",
-					});
-				}
+  return false;
+}
 
-				endPhase(perfKey, "callExpression");
-			},
+function getImportedNameAndModuleFromCall(
+  call: ts.CallExpression,
+  checker: ts.TypeChecker
+): { name: string; module: string } | null {
+  const expr = call.expression;
+  // handle direct identifier: useSignal()/computed()
+  if (ts.isIdentifier(expr)) {
+    const sym = checker.getSymbolAtLocation(expr);
 
-			// Process blocks of code (function bodies, if blocks, etc.)
-			"BlockStatement:exit"(node: TSESTree.BlockStatement): void {
-				startPhase(perfKey, "blockStatement");
+    if (typeof sym === 'undefined') {
+      return null;
+    }
 
-				processBlock(
-					node.body.filter(
-						(
-							n,
-						): n is
-							| TSESTree.ExpressionStatement
-							| TSESTree.VariableDeclaration => {
-							return (
-								n.type === "ExpressionStatement" ||
-								n.type === "VariableDeclaration"
-							);
-						},
-					),
-					context,
-					option,
-				);
+    const aliased = sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym;
 
-				endPhase(perfKey, "blockStatement");
-			},
+    return {
+      name: aliased.getName(),
+      module: aliased.declarations?.[0]?.getSourceFile().fileName ?? '',
+    };
+  }
 
-			// Process program top level
-			"Program:exit"(node: TSESTree.Program): void {
-				startPhase(perfKey, "programExit");
+  if (ts.isPropertyAccessExpression(expr)) {
+    const leftSym = checker.getSymbolAtLocation(expr.expression);
 
-				processBlock(
-					node.body.filter(
-						(
-							n: TSESTree.ProgramStatement,
-						): n is
-							| TSESTree.ExpressionStatement
-							| TSESTree.VariableDeclaration =>
-							n.type === "ExpressionStatement" ||
-							n.type === "VariableDeclaration",
-					),
-					context,
-					option,
-				);
+    return {
+      name: expr.name.getText(),
+      module:
+        (typeof leftSym !== 'undefined' && leftSym.flags & ts.SymbolFlags.Alias
+          ? checker.getAliasedSymbol(leftSym)
+          : leftSym
+        )?.declarations?.[0]?.getSourceFile().fileName ?? '',
+    };
+  }
 
-				try {
-					startPhase(perfKey, "recordMetrics");
+  return null;
+}
 
-					if (option?.performance?.logMetrics === true) {
-						const finalMetrics = stopTracking(perfKey);
+function traceSignalOrigin(
+  symbol: ts.Symbol,
+  checker: ts.TypeChecker,
+  program: ts.Program
+): SignalOrigin | null {
+  const cache = getCache(program);
 
-						if (typeof finalMetrics !== "undefined") {
-							console.info(
-								`\n[prefer-batch-updates] Performance Metrics (${finalMetrics.exceededBudget === true ? "EXCEEDED" : "OK"}):`,
-							);
-							console.info(`  File: ${context.filename}`);
-							console.info(
-								`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`,
-							);
-							console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+  const cached = cache.symbolOrigin.get(symbol);
 
-							if (finalMetrics.exceededBudget === true) {
-								console.warn("\n⚠️  Performance budget exceeded!");
-							}
-						}
-					}
-				} catch (error: unknown) {
-					console.error("Error recording metrics:", error);
-				} finally {
-					endPhase(perfKey, "recordMetrics");
+  if (cached !== undefined) {
+    return cached;
+  }
 
-					stopTracking(perfKey);
-				}
+  // Direct declarations
+  const decls = symbol.getDeclarations() ?? [];
 
-				perf["Program:exit"]();
+  for (const d of decls) {
+    if (ts.isVariableDeclaration(d)) {
+      const init = d.initializer;
 
-				endPhase(perfKey, "programExit");
-			},
-		};
-	},
+      if (typeof init !== 'undefined' && ts.isCallExpression(init)) {
+        const info = getImportedNameAndModuleFromCall(init, checker);
+
+        if (info !== null && info.module.includes('@preact/signals-react') === true) {
+          if (info.name === 'useSignal') {
+            const res: SignalOrigin = {
+              kind: 'useSignal',
+              sourceModule: info.module,
+            };
+
+            cache.symbolOrigin.set(symbol, res);
+
+            return res;
+          }
+
+          if (info.name === 'computed') {
+            const res: SignalOrigin = {
+              kind: 'computed',
+              sourceModule: info.module,
+            };
+
+            cache.symbolOrigin.set(symbol, res);
+
+            return res;
+          }
+        }
+      }
+      // Aliasing: const a = b; follow b
+      if (init && ts.isIdentifier(init)) {
+        const s = checker.getSymbolAtLocation(init);
+
+        if (typeof s !== 'undefined') {
+          const aliased = s.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(s) : s;
+
+          const traced = traceSignalOrigin(aliased, checker, program);
+
+          if (traced !== null) {
+            cache.symbolOrigin.set(symbol, traced);
+
+            return traced;
+          }
+        }
+      }
+    }
+
+    if (symbol.flags & ts.SymbolFlags.Alias) {
+      const traced = traceSignalOrigin(checker.getAliasedSymbol(symbol), checker, program);
+
+      if (traced !== null) {
+        cache.symbolOrigin.set(symbol, traced);
+
+        return traced;
+      }
+    }
+  }
+
+  cache.symbolOrigin.set(symbol, null);
+
+  return null;
+}
+
+function isSignalIdentifier(
+  id: TSESTree.Identifier,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): boolean {
+  const program = getProgram(context);
+
+  if (program === null || !resolveTsNode(id, context)) {
+    return false;
+  }
+
+  const checker = program.getTypeChecker();
+
+  const symbol = resolveSymbolAt(id, context);
+
+  if (symbol === null) {
+    return false;
+  }
+
+  if (isSignalType(symbol, checker)) {
+    return true;
+  }
+
+  const origin = traceSignalOrigin(symbol, checker, program);
+  return origin !== null;
+}
+
+function isSignalReference(
+  node: TSESTree.Node,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): boolean {
+  if (node.type === AST_NODE_TYPES.Identifier) {
+    return isSignalIdentifier(node, context);
+  }
+
+  if (
+    node.type === AST_NODE_TYPES.MemberExpression &&
+    node.property.type === AST_NODE_TYPES.Identifier &&
+    node.property.name === 'value'
+  ) {
+    return isSignalReference(node.object, context);
+  }
+
+  return false;
+}
+
+function containsSignalRead(
+  node: TSESTree.Node,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): boolean {
+  let cache = readCacheByContext.get(context);
+
+  if (!cache) {
+    cache = new WeakMap();
+
+    readCacheByContext.set(context, cache);
+  }
+
+  const cached = cache.get(node);
+
+  if (typeof cached !== 'undefined') {
+    return cached;
+  }
+
+  // Direct identifier like `countSignal`
+  if (node.type === AST_NODE_TYPES.Identifier) {
+    const res = isSignalReference(node, context);
+
+    cache.set(node, res);
+
+    return res;
+  }
+
+  // Member expression like `countSignal.value` or deeper
+  if (node.type === AST_NODE_TYPES.MemberExpression) {
+    if (isSignalReference(node.object, context)) {
+      cache.set(node, true);
+
+      return true;
+    }
+
+    return (
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+      (node.object && containsSignalRead(node.object, context)) ||
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+      (node.property &&
+        node.property.type !== AST_NODE_TYPES.PrivateIdentifier &&
+        containsSignalRead(node.property, context))
+    );
+  }
+
+  for (const key of Object.keys(node)) {
+    if (key === 'parent') {
+      continue;
+    }
+
+    const value = node[key as keyof typeof node];
+
+    if (typeof value === 'undefined') {
+      continue;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (isESTreeNode(item) && containsSignalRead(item, context)) {
+          cache.set(node, true);
+
+          return true;
+        }
+      }
+    } else if (isESTreeNode(value) && containsSignalRead(value, context)) {
+      cache.set(node, true);
+
+      return true;
+    }
+  }
+
+  cache.set(node, false);
+
+  return false;
+}
+
+let signalUpdates: Array<SignalUpdate> = [];
+let trackedSignalCreators: Set<string> = new Set();
+let trackedSignalNamespaces: Set<string> = new Set();
+
+const ruleName = 'prefer-batch-updates';
+
+export const preferBatchUpdatesRule = ESLintUtils.RuleCreator((name: string): string => {
+  return getRuleDocUrl(name);
+})<Options, MessageIds>({
+  name: ruleName,
+  meta: {
+    type: 'suggestion',
+    fixable: 'code',
+    hasSuggestions: true,
+    docs: {
+      description: 'Suggest batching multiple signal updates to optimize performance',
+      url: getRuleDocUrl(ruleName),
+    },
+    messages: {
+      useBatch:
+        '{{count}} signal updates detected in the same scope. Use `batch` to optimize performance by reducing renders.',
+      suggestUseBatch: 'Use `batch` to group {{count}} signal updates',
+      addBatchImport: "Add `batch` import from '@preact/signals-react'",
+      wrapWithBatch: 'Wrap with `batch` to optimize signal updates',
+      useBatchSuggestion: 'Use `batch` to group {{count}} signal updates',
+      removeUnnecessaryBatch:
+        'Unnecessary batch around a single signal update. Remove the batch wrapper',
+      nonUpdateSignalInBatch:
+        'Signal read inside `batch()` without an update. Batch is intended for grouping updates.',
+      updatesSeparatedByCode:
+        'Multiple signal updates detected but separated by other code; cannot safely batch automatically.',
+    },
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          minUpdates: {
+            type: 'number',
+            minimum: 2,
+            default: DEFAULT_MIN_UPDATES,
+            description: 'Minimum number of signal updates to trigger the rule',
+          },
+          detection: {
+            type: 'object',
+            properties: {
+              allowSingleReads: {
+                type: 'number',
+                minimum: 0,
+                default: 0,
+                description:
+                  'Allow up to N signal reads inside a batch without emitting nonUpdateSignalInBatch',
+              },
+              allowNonTrivialBetween: {
+                type: 'number',
+                minimum: 0,
+                default: 0,
+                description:
+                  'Allow up to N non-trivial statements between updates to still consider them contiguous for batching',
+              },
+              ignoreUpdateCalls: {
+                type: 'boolean',
+                default: false,
+                description:
+                  'When true, treat `.update(...)` method calls as non-updates for batching detection',
+              },
+            },
+            additionalProperties: false,
+            default: { allowSingleReads: 0, allowNonTrivialBetween: 0, ignoreUpdateCalls: false },
+          },
+          performance: {
+            type: 'object',
+            properties: {
+              maxTime: {
+                type: 'number',
+                minimum: 1,
+                description: 'Maximum time in milliseconds to spend analyzing a file',
+              },
+              maxMemory: {
+                type: 'number',
+                minimum: 1,
+                description: 'Maximum memory in MB to use for analysis',
+              },
+              maxNodes: {
+                type: 'number',
+                minimum: 1,
+                description: 'Maximum number of AST nodes to process',
+              },
+              enableMetrics: {
+                type: 'boolean',
+                description: 'Whether to enable performance metrics collection',
+              },
+              logMetrics: {
+                type: 'boolean',
+                description: 'Whether to log performance metrics',
+              },
+              maxUpdates: {
+                type: 'number',
+                minimum: 1,
+                description: 'Maximum number of signal updates to process',
+              },
+              maxDepth: {
+                type: 'number',
+                minimum: 1,
+                description: 'Maximum depth of nested scopes to analyze',
+              },
+              maxOperations: {
+                type: 'object',
+                description: 'Limits for specific operations',
+                properties: Object.fromEntries(
+                  Object.entries(PerformanceOperations).map(([key]) => [
+                    key,
+                    {
+                      type: 'number',
+                      minimum: 1,
+                      description: `Maximum number of ${key} operations`,
+                    },
+                  ])
+                ),
+              },
+            },
+            additionalProperties: false,
+          },
+          severity: {
+            type: 'object',
+            properties: {
+              arrayUpdateInLoop: {
+                type: 'string',
+                enum: ['error', 'warn', 'off'],
+                description: 'Severity for array updates in loops',
+              },
+              suggestBatchArrayUpdate: {
+                type: 'string',
+                description: 'Severity for suggesting batch for array updates',
+              },
+              // Add other severity options from the spec
+              useBatch: { type: 'string', enum: ['error', 'warn', 'off'] },
+              suggestUseBatch: {
+                type: 'string',
+                enum: ['error', 'warn', 'off'],
+              },
+              addBatchImport: {
+                type: 'string',
+                enum: ['error', 'warn', 'off'],
+              },
+              wrapWithBatch: { type: 'string', enum: ['error', 'warn', 'off'] },
+              useBatchSuggestion: {
+                type: 'string',
+                enum: ['error', 'warn', 'off'],
+              },
+              removeUnnecessaryBatch: {
+                type: 'string',
+                enum: ['error', 'warn', 'off'],
+              },
+              nonUpdateSignalInBatch: {
+                type: 'string',
+                enum: ['error', 'warn', 'off'],
+              },
+              updatesSeparatedByCode: {
+                type: 'string',
+                enum: ['error', 'warn', 'off'],
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+        additionalProperties: false,
+      },
+    ],
+  },
+  defaultOptions: [
+    {
+      minUpdates: 2,
+      performance: DEFAULT_PERFORMANCE_BUDGET,
+      extraSignalModules: [],
+      detection: { allowSingleReads: 0, allowNonTrivialBetween: 0, ignoreUpdateCalls: false },
+      severity: {
+        useBatch: 'error',
+        suggestUseBatch: 'error',
+        addBatchImport: 'error',
+        wrapWithBatch: 'error',
+        useBatchSuggestion: 'error',
+        removeUnnecessaryBatch: 'error',
+        nonUpdateSignalInBatch: 'warn',
+        updatesSeparatedByCode: 'warn',
+      },
+    },
+  ],
+  create(
+    context: Readonly<RuleContext<MessageIds, Options>>,
+    [option]: readonly [Option?]
+  ): ESLintUtils.RuleListener {
+    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
+
+    const perf = createPerformanceTracker(perfKey, option?.performance);
+
+    if (option?.performance?.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
+
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      console.info(`${ruleName}: Rule configuration:`, option);
+    }
+
+    let nodeCount = 0;
+
+    function shouldContinue(): boolean {
+      nodeCount++;
+
+      if (
+        typeof option?.performance?.maxNodes === 'number' &&
+        nodeCount > option.performance.maxNodes
+      ) {
+        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+        return false;
+      }
+      return true;
+    }
+
+    // Initialize module detection set per file (options-applied)
+    SIGNAL_MODULES = new Set(['@preact/signals-react', ...(option?.extraSignalModules ?? [])]);
+
+    return {
+      '*': (node: TSESTree.Node): void => {
+        if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
+
+          return;
+        }
+
+        perf.trackNode(node);
+
+        const op =
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing;
+
+        trackOperation(perfKey, op);
+      },
+
+      [AST_NODE_TYPES.Program]: (): void => {
+        // reset tracking for this file
+        trackedSignalVars = new Set();
+        trackedSignalCreators = new Set();
+        trackedSignalNamespaces = new Set();
+      },
+
+      [`${AST_NODE_TYPES.ImportDeclaration}`](node: TSESTree.ImportDeclaration): void {
+        if (node.source.value !== '@preact/signals-react') {
+          return;
+        }
+
+        for (const spec of node.specifiers) {
+          if (spec.type === AST_NODE_TYPES.ImportSpecifier) {
+            // Track known creators
+            if (
+              spec.imported.type === AST_NODE_TYPES.Identifier &&
+              (spec.imported.name === 'signal' || spec.imported.name === 'computed')
+            ) {
+              trackedSignalCreators.add(spec.local.name);
+            }
+          } else if (spec.type === AST_NODE_TYPES.ImportNamespaceSpecifier) {
+            trackedSignalNamespaces.add(spec.local.name);
+          }
+        }
+      },
+
+      [AST_NODE_TYPES.VariableDeclarator](node: TSESTree.VariableDeclarator): void {
+        if (node.id.type !== AST_NODE_TYPES.Identifier || !node.init) {
+          return;
+        }
+
+        // signal creator call: signal(...)
+        if (
+          node.init.type === AST_NODE_TYPES.CallExpression &&
+          node.init.callee.type === AST_NODE_TYPES.Identifier &&
+          trackedSignalCreators.has(node.init.callee.name)
+        ) {
+          trackedSignalVars.add(node.id.name);
+
+          return;
+        }
+
+        // namespaced call: ns.signal(...) or ns.computed(...)
+        if (
+          node.init.type === AST_NODE_TYPES.CallExpression &&
+          node.init.callee.type === AST_NODE_TYPES.MemberExpression &&
+          !node.init.callee.computed &&
+          node.init.callee.object.type === AST_NODE_TYPES.Identifier &&
+          trackedSignalNamespaces.has(node.init.callee.object.name) &&
+          node.init.callee.property.type === AST_NODE_TYPES.Identifier &&
+          (node.init.callee.property.name === 'signal' ||
+            node.init.callee.property.name === 'computed')
+        ) {
+          trackedSignalVars.add(node.id.name);
+        }
+      },
+
+      [AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
+        if (!shouldContinue()) {
+          return;
+        }
+
+        if (isBatchCall(node, context)) {
+          recordMetric(perfKey, 'batchCallDetected', {
+            location: context.sourceCode.getLocFromIndex(node.range[0]),
+            hasCallback:
+              node.arguments.length > 0 &&
+              (node.arguments[0]?.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+                node.arguments[0]?.type === AST_NODE_TYPES.FunctionExpression),
+          });
+
+          if (
+            node.arguments.length > 0 &&
+            (node.arguments[0]?.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+              node.arguments[0]?.type === AST_NODE_TYPES.FunctionExpression)
+          ) {
+            pushBatchScope(true);
+
+            if (
+              node.arguments[0].type === AST_NODE_TYPES.ArrowFunctionExpression &&
+              node.arguments[0].body.type === AST_NODE_TYPES.BlockStatement
+            ) {
+              recordMetric(perfKey, 'skipArrowBatchBody', {
+                location: context.sourceCode.getLocFromIndex(node.arguments[0].body.range[0]),
+              });
+
+              if (Array.isArray(node.arguments[0].body.body)) {
+                const bodyStatements = node.arguments[0].body.body;
+
+                // Report non-update signal reads inside batch body only if there are no updates anywhere in the body
+                if (!containsSignalUpdate(node.arguments[0].body, context)) {
+                  const allow = context.options[0]?.detection?.allowSingleReads ?? 0;
+                  let readCount = 0;
+
+                  for (const stmt of bodyStatements) {
+                    if (
+                      stmt.type === AST_NODE_TYPES.ExpressionStatement &&
+                      !isSignalUpdate(stmt.expression, context) &&
+                      containsSignalRead(stmt.expression, context)
+                    ) {
+                      readCount += 1;
+                    }
+                  }
+
+                  if (
+                    readCount > allow &&
+                    getSeverity('nonUpdateSignalInBatch', context.options[0]) !== 'off'
+                  ) {
+                    // Report once on the body to avoid noisy diagnostics
+                    context.report({
+                      node: node.arguments[0].body,
+                      messageId: 'nonUpdateSignalInBatch',
+                    });
+                  }
+                }
+              }
+            } else if (node.arguments[0].type === AST_NODE_TYPES.ArrowFunctionExpression) {
+              // Concise arrow body case: body is an expression
+              if (node.arguments[0].body.type !== AST_NODE_TYPES.BlockStatement) {
+                const allow = context.options[0]?.detection?.allowSingleReads ?? 0;
+                const hasUpdate = isSignalUpdate(node.arguments[0].body, context);
+                const hasRead = containsSignalRead(node.arguments[0].body, context);
+
+                if (
+                  !hasUpdate &&
+                  hasRead &&
+                  allow < 1 &&
+                  getSeverity('nonUpdateSignalInBatch', context.options[0]) !== 'off'
+                ) {
+                  context.report({
+                    node: node.arguments[0].body,
+                    messageId: 'nonUpdateSignalInBatch',
+                  });
+                }
+              }
+            } else if (
+              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+              node.arguments[0].type === AST_NODE_TYPES.FunctionExpression
+            ) {
+              recordMetric(perfKey, 'skipFunctionBatchBody', {
+                location: context.sourceCode.getLocFromIndex(node.arguments[0].body.range[0]),
+              });
+
+              const bodyStatements = node.arguments[0].body.body;
+
+              // Report non-update signal reads inside batch body only if there are no updates anywhere in the body
+              if (Array.isArray(bodyStatements)) {
+                if (!containsSignalUpdate(node.arguments[0].body, context)) {
+                  const allow = context.options[0]?.detection?.allowSingleReads ?? 0;
+                  let readCount = 0;
+
+                  for (const stmt of bodyStatements) {
+                    if (
+                      stmt.type === AST_NODE_TYPES.ExpressionStatement &&
+                      !isSignalUpdate(stmt.expression, context) &&
+                      containsSignalRead(stmt.expression, context)
+                    ) {
+                      readCount += 1;
+                    }
+                  }
+
+                  if (
+                    readCount > allow &&
+                    getSeverity('nonUpdateSignalInBatch', context.options[0]) !== 'off'
+                  ) {
+                    context.report({
+                      node: node.arguments[0].body,
+                      messageId: 'nonUpdateSignalInBatch',
+                    });
+                  }
+                }
+
+                // Count signal updates within the batch body
+                const updateStmts: Array<TSESTree.ExpressionStatement> = bodyStatements
+                  .filter(
+                    (s): s is TSESTree.ExpressionStatement =>
+                      s.type === AST_NODE_TYPES.ExpressionStatement
+                  )
+                  .filter((s: TSESTree.ExpressionStatement): boolean => {
+                    return isSignalUpdate(s.expression, context);
+                  });
+
+                if (
+                  updateStmts.length === 1 &&
+                  getSeverity('removeUnnecessaryBatch', context.options[0]) !== 'off'
+                ) {
+                  const onlyUpdateStmt = updateStmts[0];
+
+                  if (
+                    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+                    node.parent &&
+                    node.parent.type === AST_NODE_TYPES.ExpressionStatement
+                  ) {
+                    if (bodyStatements.length === 1) {
+                      // Safe case: single update statement inside batch -> replace whole statement
+                      context.report({
+                        node,
+                        messageId: 'removeUnnecessaryBatch',
+                        fix(fixer: TSESLint.RuleFixer) {
+                          if (typeof onlyUpdateStmt === 'undefined') {
+                            return null;
+                          }
+
+                          return fixer.replaceText(
+                            node.parent,
+                            context.sourceCode.getText(onlyUpdateStmt)
+                          );
+                        },
+                      });
+                    } else {
+                      // Unwrap batch while preserving all inner statements
+                      context.report({
+                        node,
+                        messageId: 'removeUnnecessaryBatch',
+                        fix(fixer: TSESLint.RuleFixer) {
+                          const innerText = bodyStatements
+                            .map((s: TSESTree.Statement): string => {
+                              return context.sourceCode.getText(s);
+                            })
+                            .join('\n');
+                          return fixer.replaceText(node.parent, innerText);
+                        },
+                      });
+                    }
+                  } else {
+                    // Fallback: report without fix if parent is unexpected
+                    context.report({
+                      node,
+                      messageId: 'removeUnnecessaryBatch',
+                    });
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+
+      [`${AST_NODE_TYPES.CallExpression}:exit`](node: TSESTree.CallExpression): void {
+        if (!shouldContinue()) {
+          return;
+        }
+
+        if (
+          !(
+            isBatchCall(node, context) &&
+            node.arguments.length > 0 &&
+            (node.arguments[0]?.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+              node.arguments[0]?.type === AST_NODE_TYPES.FunctionExpression)
+          )
+        ) {
+          return;
+        }
+
+        const callbackBodyRange = node.arguments[0].body.range;
+
+        signalUpdates = signalUpdates.filter((update: SignalUpdate): boolean => {
+          return !(
+            update.node.range[0] >= callbackBodyRange[0] &&
+            update.node.range[1] <= callbackBodyRange[1]
+          );
+        });
+
+        const removedCount = signalUpdates.length - signalUpdates.length;
+
+        if (removedCount > 0) {
+          recordMetric(perfKey, 'batchUpdatesRemoved', {
+            removedCount,
+            location: context.sourceCode.getLocFromIndex(node.range[1]),
+          });
+        }
+
+        popBatchScope();
+      },
+
+      [AST_NODE_TYPES.BlockStatement]: (node: TSESTree.BlockStatement): void => {
+        pushBatchScope(batchScopeStack[batchScopeStack.length - 1] === true);
+
+        processBlock(node.body, context, perfKey);
+      },
+
+      [`${AST_NODE_TYPES.ArrowFunctionExpression}[body.type="${AST_NODE_TYPES.BlockStatement}"]`]: (
+        node: TSESTree.ArrowFunctionExpression
+      ): void => {
+        if (!shouldContinue()) {
+          return;
+        }
+
+        startPhase(perfKey, 'callExpression');
+
+        try {
+          if (
+            isBatchCall(node, context) &&
+            'arguments' in node &&
+            Array.isArray(node.arguments) &&
+            node.arguments.length > 0 &&
+            typeof node.arguments[0] === 'object' &&
+            node.arguments[0] !== null &&
+            'type' in node.arguments[0] &&
+            (node.arguments[0].type === AST_NODE_TYPES.ArrowFunctionExpression ||
+              node.arguments[0].type === AST_NODE_TYPES.FunctionExpression)
+          ) {
+            popBatchScope();
+          }
+
+          if (
+            isSignalUpdate(node, context) &&
+            batchScopeStack[batchScopeStack.length - 1] !== true
+          ) {
+            signalUpdates.push({
+              node,
+              isTopLevel: true,
+              signalName: getSignalName(node),
+              updateType: getUpdateType(node),
+              scopeDepth: 0,
+            });
+          }
+        } catch (error: unknown) {
+          recordMetric(perfKey, 'callExpressionError', {
+            error: String(error),
+          });
+        } finally {
+          endPhase(perfKey, 'callExpression');
+        }
+      },
+
+      [`${AST_NODE_TYPES.AssignmentExpression}:exit`](node: TSESTree.AssignmentExpression): void {
+        if (!shouldContinue()) {
+          return;
+        }
+
+        startPhase(perfKey, 'assignmentExpression');
+
+        try {
+          if (
+            isSignalUpdate(node, context) &&
+            batchScopeStack[batchScopeStack.length - 1] !== true
+          ) {
+            signalUpdates.push({
+              node,
+              isTopLevel: false,
+              signalName: getSignalName(node),
+              updateType: 'assignment',
+              scopeDepth: 0,
+            });
+          }
+        } catch (error: unknown) {
+          recordMetric(perfKey, 'assignmentExpressionError', {
+            error: String(error),
+          });
+        } finally {
+          endPhase(perfKey, 'assignmentExpression');
+        }
+      },
+
+      [`${AST_NODE_TYPES.UpdateExpression}:exit`](node: TSESTree.UpdateExpression): void {
+        if (!shouldContinue()) {
+          return;
+        }
+
+        startPhase(perfKey, 'updateExpression');
+
+        try {
+          if (
+            isSignalUpdate(node, context) &&
+            batchScopeStack[batchScopeStack.length - 1] !== true
+          ) {
+            signalUpdates.push({
+              node,
+              isTopLevel: false,
+              signalName: getSignalName(node),
+              updateType: 'update',
+              scopeDepth: 0,
+            });
+          }
+        } catch (error: unknown) {
+          recordMetric(perfKey, 'updateExpressionError', {
+            error: JSON.stringify(error),
+          });
+        } finally {
+          endPhase(perfKey, 'updateExpression');
+        }
+      },
+
+      [`${AST_NODE_TYPES.BlockStatement}:exit`](node: TSESTree.BlockStatement): void {
+        if (isProcessedByHandlers || !shouldContinue()) {
+          return;
+        }
+
+        startPhase(perfKey, 'blockStatement');
+
+        try {
+          isProcessedByHandlers = true;
+
+          processBlock(
+            node.body,
+            context,
+            perfKey,
+            1,
+            batchScopeStack[batchScopeStack.length - 1] === true
+          );
+        } catch (error: unknown) {
+          recordMetric(perfKey, 'processBlockError', { error: String(error) });
+        } finally {
+          isProcessedByHandlers = false;
+
+          popBatchScope();
+
+          endPhase(perfKey, 'blockStatement');
+        }
+      },
+
+      [`${AST_NODE_TYPES.Program}:exit`](node: TSESTree.Program): void {
+        // clear tracking after file processed
+        trackedSignalVars.clear();
+        trackedSignalCreators.clear();
+        trackedSignalNamespaces.clear();
+
+        startPhase(perfKey, 'programExit');
+
+        processBlock(
+          node.body.filter(
+            (
+              n: TSESTree.ProgramStatement
+            ): n is TSESTree.ExpressionStatement | TSESTree.VariableDeclaration =>
+              n.type === AST_NODE_TYPES.ExpressionStatement ||
+              n.type === AST_NODE_TYPES.VariableDeclaration
+          ),
+          context,
+          perfKey
+        );
+
+        perf['Program:exit']();
+
+        endPhase(perfKey, 'programExit');
+      },
+    } satisfies ESLintUtils.RuleListener;
+  },
 });

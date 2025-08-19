@@ -1,4 +1,6 @@
+/* eslint-disable import/order */
 /** biome-ignore-all lint/correctness/noUnusedVariables: not the target of the test */
+/** biome-ignore-all assist/source/organizeImports: off */
 /** biome-ignore-all lint/suspicious/noRedeclare: not relevant */
 import { signal, computed } from '@preact/signals-react';
 import { useSignals } from '@preact/signals-react/runtime';
@@ -212,3 +214,59 @@ export function TestWithUseMemo(): JSX.Element {
 
   return <div>{memoizedValue}</div>;
 }
+
+// ====================================
+// Aliased and Namespace Imports (Should Warn inside components)
+// ====================================
+import { signal as sig, computed as cmp } from '@preact/signals-react';
+import * as S from '@preact/signals-react';
+
+export function ComponentWithAliasedImports(): JSX.Element {
+  useSignals();
+  // Should warn: aliased signal/computed inside component
+  const a = sig(1);
+  const b = cmp(() => a.value + 1);
+  return (
+    <div>
+      {a} {b}
+    </div>
+  );
+}
+
+export function ComponentWithNamespaceImports(): JSX.Element {
+  useSignals();
+  // Should warn: namespaced signal/computed inside component
+  const a = S.signal(1);
+  const b = S.computed(() => a.value + 1);
+  return (
+    <div>
+      {a} {b}
+    </div>
+  );
+}
+
+// ====================================
+// Exported Signals (Should Warn)
+// ====================================
+const exportedVarSignal = signal('exported');
+export { exportedVarSignal }; // Should warn: named export of signal variable
+
+const exportedDefaultSignal = signal('defaultExported');
+export default exportedDefaultSignal; // Should warn: default export of signal identifier
+
+// (Avoid duplicate default exports in this test file)
+
+// ====================================
+// memo/forwardRef wrapped components (Should be treated as components)
+// ====================================
+import { memo, forwardRef } from 'react';
+
+export const MemoWrapped = memo((): JSX.Element => {
+  const m = signal(0); // Should warn
+  return <div>{m}</div>;
+});
+
+export const ForwardRefWrapped = forwardRef(function Fwd(): JSX.Element {
+  const f = signal(0); // Should warn
+  return <div>{f}</div>;
+});

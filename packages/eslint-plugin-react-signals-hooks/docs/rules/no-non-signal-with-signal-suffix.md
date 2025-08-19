@@ -2,6 +2,10 @@
 
 This rule enforces that any variable, parameter, or property with a 'Signal' suffix is actually a signal instance. This helps maintain consistency in naming conventions and prevents confusion about the types of values being used.
 
+## Plugin Scope
+
+- Signal detection and auto-fix imports are scoped to `@preact/signals-react` only.
+
 ## Rule Details
 
 This rule flags identifiers that end with 'Signal' but are not actually signal instances. It helps catch potential bugs where the naming suggests a signal is being used, but the actual value is not a signal.
@@ -10,7 +14,7 @@ This rule flags identifiers that end with 'Signal' but are not actually signal i
 
 For the purposes of this rule, a signal is considered to be:
 
-- A value created by `signal()` from `@preact/signals`
+- A value created by `signal()` from `@preact/signals-react`
 - A value created by `useSignal()`, `useComputed()`, or other signal-related hooks
 - A value that is explicitly typed as a signal type
 - A value that is the result of a signal operation
@@ -62,8 +66,7 @@ For the purposes of this rule, a signal is considered to be:
 1. **Proper signal usage**
 
    ```tsx
-   import { signal, computed } from '@preact/signals';
-   import { useSignal } from '@preact/signals-react';
+   import { signal, computed, useSignal } from '@preact/signals-react';
    
    // ✅ Correct: Signal variables
    const countSignal = signal(0);
@@ -86,7 +89,7 @@ For the purposes of this rule, a signal is considered to be:
 2. **TypeScript type annotations**
 
    ```tsx
-   import { Signal } from '@preact/signals';
+   import { Signal } from '@preact/signals-react';
    
    // ✅ Correct: Explicit signal types
    function processUser(userSignal: Signal<User>) {
@@ -103,7 +106,7 @@ For the purposes of this rule, a signal is considered to be:
 3. **Signal properties in objects/classes**
 
    ```tsx
-   import { signal, type Signal } from '@preact/signals';
+   import { signal, type Signal } from '@preact/signals-react';
    
    // ✅ Correct: Object with signal properties
    const appState = {
@@ -132,8 +135,13 @@ For the purposes of this rule, a signal is considered to be:
    function useCounter(initialValue = 0) {
      const countSignal = useSignal(initialValue);
      
-     const increment = () => countSignal.value++;
-     const decrement = () => countSignal.value--;
+     const increment = useCallback(() => {
+       countSignal.value++;
+     }, [])
+
+     const decrement = useCallback(() => {
+       countSignal.value--;
+     }, [])
      
      return {
        countSignal,
@@ -154,6 +162,15 @@ interface Options {
   
   /** Custom signal function names to recognize (e.g., ['createSignal', 'customSignal']) */
   signalNames?: string[];
+  
+  /** Suffix to detect (configurable); default 'Signal' */
+  suffix?: string;
+  
+  /** Whether to validate object/class properties that end with the suffix; default true */
+  validateProperties?: boolean;
+  
+  /** When true, also validate exported variables (by default exported names are skipped) */
+  validateExported?: boolean;
   
   /** Severity levels for different violation types */
   severity?: {
@@ -182,7 +199,10 @@ interface Options {
 ```json
 {
   "ignorePattern": "",
-  "signalNames": [],
+  "signalNames": ["signal", "useSignal", "createSignal"],
+  "suffix": "Signal",
+  "validateProperties": true,
+  "validateExported": false,
   "severity": {
     "variableWithSignalSuffixNotSignal": "error",
     "parameterWithSignalSuffixNotSignal": "error",
@@ -233,6 +253,7 @@ This rule can report the following types of issues:
 - **Fix Suggestions**:
   - Remove the 'Signal' suffix if the variable shouldn't be a signal
   - Initialize the variable as a signal if it should be one
+    - Note: the "Convert to signal" suggestion is offered only when it is safe (single-declarator `const` with an existing named `signal` import). Otherwise, only a rename suggestion is provided to avoid unsafe fixes.
 
 ### Parameter with Signal Suffix Not a Signal
 
@@ -252,19 +273,19 @@ This rule can report the following types of issues:
 
 ### Performance Limit Exceeded
 
-- **Message**: "Performance limit exceeded for rule no-non-signal-with-signal-suffix {{message}}"
+- **Message**: "Performance limit exceeded for no-non-signal-with-signal-suffix rule {{ message }}"
 - **Description**: The rule analysis took too long or used too many resources.
 - **How to fix**:
   - Increase performance limits in rule options
   - Split large files into smaller ones
   - Use the `ignorePattern` option to exclude certain files
 
-## Auto-fix
+## Auto-fix and Suggestions
 
-This rule provides auto-fix suggestions to either:
+This rule provides suggestions (`hasSuggestions: true`) and autofixes where safe:
 
-1. Remove the 'Signal' suffix from the identifier name
-2. Convert the value to a proper signal (when possible)
+1. Rename to remove the 'Signal' suffix
+2. Convert the value to a proper signal (when possible), e.g. `const nameSignal = signal(originalValue)`
 
 ## When Not To Use It
 

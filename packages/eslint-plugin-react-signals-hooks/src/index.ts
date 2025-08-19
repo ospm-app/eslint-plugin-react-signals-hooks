@@ -27,12 +27,14 @@ declare module 'eslint' {
 
 // Core rules
 import { exhaustiveDepsRule } from './exhaustive-deps.js';
+import { forbidSignalDestructuringRule } from './forbid-signal-destructuring.js';
+import { forbidSignalReAssignmentRule } from './forbid-signal-re-assignment.js';
+import { forbidSignalUpdateInComputedRule } from './forbid-signal-update-in-computed.js';
 import { noMutationInRenderRule } from './no-mutation-in-render.js';
 import { noNonSignalWithSignalSuffixRule } from './no-non-signal-with-signal-suffix.js';
 import { noSignalAssignmentInEffectRule } from './no-signal-assignment-in-effect.js';
 import { noSignalCreationInComponentRule } from './no-signal-creation-in-component.js';
 // Performance optimization rules
-import { preferBatchForMultiMutationsRule } from './prefer-batch-for-multi-mutations.js';
 import { preferBatchUpdatesRule } from './prefer-batch-updates.js';
 import { preferComputedRule } from './prefer-computed.js';
 import { preferForOverMapRule } from './prefer-for-over-map.js';
@@ -42,6 +44,7 @@ import { preferSignalInJsxRule } from './prefer-signal-in-jsx.js';
 import { preferSignalMethodsRule } from './prefer-signal-methods.js';
 import { preferSignalReadsRule } from './prefer-signal-reads.js';
 import { preferUseSignalOverUseStateRule } from './prefer-use-signal-over-use-state.js';
+import { preferUseSignalRefOverUseRefRule } from './prefer-use-signal-ref-over-use-ref.js';
 // Code style rules
 import { requireUseSignalsRule } from './require-use-signals.js';
 import { restrictSignalLocations } from './restrict-signal-locations.js';
@@ -57,10 +60,12 @@ const rules = {
   'no-signal-creation-in-component': noSignalCreationInComponentRule,
   'require-use-signals': requireUseSignalsRule,
   'restrict-signal-locations': restrictSignalLocations,
+  'forbid-signal-destructuring': forbidSignalDestructuringRule,
+  'forbid-signal-re-assignment': forbidSignalReAssignmentRule,
+  'forbid-signal-update-in-computed': forbidSignalUpdateInComputedRule,
 
   // Performance optimization rules
   'prefer-batch-updates': preferBatchUpdatesRule,
-  'prefer-batch-for-multi-mutations': preferBatchForMultiMutationsRule,
   'prefer-computed': preferComputedRule,
   'prefer-for-over-map': preferForOverMapRule,
   'prefer-signal-effect': preferSignalEffectRule,
@@ -68,6 +73,7 @@ const rules = {
   'prefer-signal-methods': preferSignalMethodsRule,
   'prefer-signal-reads': preferSignalReadsRule,
   'prefer-use-signal-over-use-state': preferUseSignalOverUseStateRule,
+  'prefer-use-signal-ref-over-use-ref': preferUseSignalRefOverUseRefRule,
 
   // Code style rules
   'prefer-show-over-ternary': preferShowOverTernaryRule,
@@ -85,10 +91,12 @@ const configRules = {
   'no-signal-creation-in-component': 'error',
   'require-use-signals': 'error',
   'restrict-signal-locations': 'error',
+  'forbid-signal-destructuring': 'error',
+  'forbid-signal-re-assignment': 'error',
+  'forbid-signal-update-in-computed': 'error',
 
   // Performance optimization rules
   'prefer-batch-updates': 'error',
-  'prefer-batch-for-multi-mutations': 'error',
   'prefer-computed': 'error',
   'prefer-for-over-map': 'error',
   'prefer-signal-effect': 'error',
@@ -96,6 +104,7 @@ const configRules = {
   'prefer-signal-methods': 'error',
   'prefer-signal-reads': 'error',
   'prefer-use-signal-over-use-state': 'error',
+  'prefer-use-signal-ref-over-use-ref': 'error',
 
   // Code style rules
   'prefer-show-over-ternary': 'error',

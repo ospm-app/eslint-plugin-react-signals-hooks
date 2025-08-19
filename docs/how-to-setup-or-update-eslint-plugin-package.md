@@ -339,8 +339,8 @@ export default [
   // Global ignores
   {
     ignores: [
-      '**/node_modules/**',
-      '**/dist/**',
+      './node_modules/**',
+      './dist/**',
       '**/coverage/**',
       '**/build/**',
       '**/.next/**',
@@ -474,7 +474,7 @@ Here's a comprehensive `package.json` configuration based on `eslint-plugin-reac
     "access": "public"
   },
   "peerDependencies": {
-    "eslint": "^9.0.0",
+    "eslint": "^9.33.0",
     "typescript": ">=5.0.0"
   },
   "dependencies": {
@@ -487,8 +487,8 @@ Here's a comprehensive `package.json` configuration based on `eslint-plugin-reac
     "@types/node": "^20.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
-    "eslint": "^9.0.0",
-    "typescript": "^5.0.0",
+    "eslint": "^9.33.0",
+    "typescript": "^5.9.2",
     "@typescript-eslint/rule-tester": "^8.0.0",
     "rimraf": "^5.0.0"
   },
@@ -850,20 +850,30 @@ import { type JSX } from 'react';
 
 // This component should trigger ESLint warnings for using .value in JSX
 export function TestSignalValueInJSX(): JSX.Element {
-  useSignals();
-  const messageSignal = signal('Hello World');
-  
-  // This should trigger a warning - using .value in JSX
-  return <div>{messageSignal.value}</div>;
+  const store = useSignals(1);
+
+  try { 
+    const messageSignal = signal('Hello World');
+    
+    // This should trigger a warning - using .value in JSX
+    return <div>{messageSignal.value}</div>;
+  } finally {
+    store.f();
+  }
 }
 
 // This component should NOT trigger warnings - using signals directly in JSX
 export function TestCorrectSignalUsageInJSX(): JSX.Element {
-  useSignals();
-  const messageSignal = signal('Hello World');
+  const store = useSignals(1);
+
+  try { 
+    const messageSignal = signal('Hello World');
   
-  // This is correct usage - signal without .value in JSX
-  return <div>{messageSignal}</div>;
+    // This is correct usage - signal without .value in JSX
+    return <div>{messageSignal}</div>;
+  } finally {
+    store.f();
+  }
 }
 ```
 

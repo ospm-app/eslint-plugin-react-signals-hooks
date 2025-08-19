@@ -15,7 +15,6 @@ This rule can report the following messages:
 - `suggestComputed`: Quick fix suggestion to convert to `computed()`
 - `addComputedImport`: Suggestion to add the `computed` import
 - `suggestAddComputedImport`: Suggestion to add the `computed` import with fix
-- `performanceLimitExceeded`: When analysis hits performance limits
 
 ## Performance Considerations
 

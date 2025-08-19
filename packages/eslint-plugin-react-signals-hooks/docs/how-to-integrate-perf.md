@@ -94,11 +94,11 @@ Use the `perf` object to track operations in your rule's visitor methods. The pe
 
 ```typescript
 return {
-  // Track node processing
-  'Identifier'(node) {
-    // Track that we've processed a node (increments node count)
+  '*'(node: TSESTree.Node) {
     perf.trackNode(node);
-    
+  },
+  // Track node processing
+  'Identifier'(node: TSESTree.Node) {    
     // Your rule logic...
     
     // Track specific operations with optional weight
@@ -109,16 +109,14 @@ return {
   },
   
   // Track program exit for cleanup and reporting
-  'Program:exit'(node) {
+  [`${AST_NODE_TYPES.Program}:exit`]() {
     // The performance tracker handles all cleanup automatically
     // Just call the Program:exit handler
+    startPhase(perfKey, 'programExit');
+
     perf['Program:exit']();
-    
-    // If you need to access metrics for reporting:
-    if (options.performance?.enableMetrics) {
-      const metrics = perf.getMetrics();
-      console.log(`Processed ${metrics.nodeCount} nodes in ${metrics.duration}ms`);
-    }
+
+    endPhase(perfKey, 'programExit');
   },
 };
 ```
@@ -131,31 +129,6 @@ return {
 - `startPhase(phaseName: string)`: Start a new performance phase
 - `endPhase(phaseName: string)`: End a performance phase
 - `getMetrics()`: Get current metrics (only available if metrics are enabled)
-
-## Step 6: Handle Performance Budgets
-
-The performance tracker automatically enforces the configured limits. If a limit is exceeded, it will throw a `PerformanceLimitExceededError` with details about which limit was exceeded.
-
-```typescript
-try {
-  // Your rule implementation
-} catch (error) {
-  if (error instanceof PerformanceLimitExceededError) {
-    // Handle performance limit exceeded
-    context.report({
-      node,
-      messageId: 'performanceLimitExceeded',
-      data: {
-        metric: error.metric,
-        limit: error.limit,
-        actual: error.actual,
-      },
-    });
-    return {}; // Return empty visitor to stop further processing
-  }
-  throw error; // Re-throw other errors
-}
-```
 
 ### Performance Budget Options
 
@@ -414,32 +387,17 @@ export const rule = createRule({
   create(context, [options]) {
     const perf = createPerformanceTracker('my-rule', options.performance, context);
 
-    try {
-      return {
-        'CallExpression'(node) {
-          perf.trackNode(node);
-          perf.trackOperation(PerformanceOperations.signalAccess, 'call-expression', 1);
-          
-          // Your rule logic...
-        },
-        'Program:exit'() {
-          perf['Program:exit']();
-        },
-      };
-    } catch (error) {
-      if (error instanceof PerformanceLimitExceededError) {
-        context.report({
-          messageId: 'performanceLimitExceeded',
-          node: context.sourceCode.ast,
-          message: 'Rule processing stopped: ',
-          data: {
-            message: error.message,
-          },
-        });
-        return {};
-      }
-      throw error;
-    }
+    return {
+      [`${AST_NODE_TYPES.CallExpression}`](node) {
+        perf.trackNode(node);
+        perf.trackOperation(PerformanceOperations.signalAccess, 'call-expression', 1);
+        
+        // Your rule logic...
+      },
+      [`${AST_NODE_TYPES.Program}:exit`]() {
+        perf['Program:exit']();
+      },
+    };
   },
 });
 ```

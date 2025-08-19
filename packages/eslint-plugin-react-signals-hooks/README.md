@@ -6,7 +6,7 @@ A comprehensive ESLint plugin for React applications using `@preact/signals-reac
 
 ### 🎯 **Signal Validation**
 
-- 19 specialized rules for React signals
+- 21 specialized rules for React signals
 - Complete replacement for `eslint-plugin-react-hooks/exhaustive-deps` rule
 - Enhanced `exhaustive-deps` with signal awareness
 
@@ -19,7 +19,7 @@ A comprehensive ESLint plugin for React applications using `@preact/signals-reac
 
 ## Rules Overview
 
-This plugin provides 19 specialized ESLint rules for React signals:
+This plugin provides 22 specialized ESLint rules for React signals:
 
 | Rule | Purpose | Autofix | Severity |
 |------|---------|---------|----------|
@@ -29,7 +29,6 @@ This plugin provides 19 specialized ESLint rules for React signals:
 | `no-signal-creation-in-component` | Prevents signal creation in render | ✅ | Error |
 | `no-signal-assignment-in-effect` | Prevents signal assignments in effects without deps | ✅ | Error |
 | `no-non-signal-with-signal-suffix` | Ensures variables with 'Signal' suffix are signals | ✅ | Warning |
-| `prefer-batch-for-multi-mutations` | Suggests batching multiple signal mutations | ✅ | Warning |
 | `prefer-batch-updates` | Prefers batched updates for multiple signal changes | ✅ | Warning |
 | `prefer-computed` | Suggests `computed()` over `useMemo` | ✅ | Warning |
 | `prefer-for-over-map` | Suggests For component over `.map()` | ✅ | Warning |
@@ -39,9 +38,91 @@ This plugin provides 19 specialized ESLint rules for React signals:
 | `prefer-signal-methods` | Enforces signal methods over properties | ✅ | Warning |
 | `prefer-signal-reads` | Optimizes signal access patterns | ✅ | Warning |
 | `prefer-use-signal-over-use-state` | Suggests `useSignal` over `useState` | ✅ | Warning |
+| `prefer-use-signal-ref-over-use-ref` | Suggests `useSignalRef` over `useRef` when `.current` is read during render | ✅ | Warning |
 | `restrict-signal-locations` | Controls where signals can be created | ✅ | Error |
 | `signal-variable-name` | Enforces signal naming conventions | ✅ | Error |
 | `warn-on-unnecessary-untracked` | Warns about unnecessary `untracked()` usage | ✅ | Warning |
+| `forbid-signal-re-assignment` | Forbids aliasing or re-assigning variables that hold a signal | ❌ | Error |
+| `forbid-signal-destructuring` | Forbids destructuring signals into aliases (e.g., `{ value } = signal`) | ❌ | Error |
+| `forbid-signal-update-in-computed` | Forbids updating signals inside `computed(...)` callbacks to keep them pure/read-only | ❌ | Error |
+
+For detailed examples and options for each rule, see the docs in `docs/rules/`.
+
+- [`prefer-use-signal-ref-over-use-ref` docs](./docs/rules/prefer-use-signal-ref-over-use-ref.md)
+- [`prefer-for-over-map` docs](./docs/rules/prefer-for-over-map.md)
+- [`forbid-signal-re-assignment` docs](./docs/rules/forbid-signal-re-assignment.md)
+- [`forbid-signal-destructuring` docs](./docs/rules/forbid-signal-destructuring.md)
+- [`forbid-signal-update-in-computed` docs](./docs/rules/forbid-signal-update-in-computed.md)
+
+### `forbid-signal-destructuring` options (summary)
+
+- `modules?: string[]`
+  - Additional module specifiers to treat as exporting signal creators.
+  - Works with aliased and namespaced imports.
+
+- `enableSuffixHeuristic?: boolean` (default: `false`)
+  - When `true`, enables suffix-based detection (e.g., variables ending with `Signal`) as a fallback.
+  - Can increase false positives; keep off unless needed.
+
+### `forbid-signal-re-assignment` options (summary)
+
+- `modules?: string[]`
+  - Additional module specifiers to treat as exporting signal creators. Merged with defaults (`@preact/signals-react`, `@preact/signals-core`).
+
+- `allowBareNames?: boolean` (default: `false`)
+  - When `true`, treats bare identifiers `signal`/`computed`/`effect` as creators even without imports. Can increase false positives; keep disabled unless needed.
+
+- `suffix?: string` (default: `"Signal"`)
+  - Variable-name suffix used as a heuristic when identifying signal-like variables.
+
+### Rule spotlight: `prefer-use-signal-ref-over-use-ref`
+
+Encourages `useSignalRef` from `@preact/signals-react/utils` instead of `useRef` when `.current` is read during render/JSX.
+
+❌ Incorrect
+
+```tsx
+import { useRef } from 'react';
+
+function Example() {
+  const divRef = useRef<HTMLDivElement | null>(null);
+  return <div ref={divRef}>{divRef.current}</div>; // render read
+}
+```
+
+✅ Correct
+
+```tsx
+import { useSignalRef } from '@preact/signals-react/utils';
+
+function Example() {
+  const divRef = useSignalRef<HTMLDivElement | null>(null);
+  return <div ref={divRef}>{divRef.current}</div>;
+}
+```
+
+Autofix performs:
+
+- Add import: `useSignalRef` from `@preact/signals-react/utils` (augments existing import when possible)
+- Replace call: `useRef(...)` → `useSignalRef(...)`
+- Rename variable and references: appends or replaces suffix with `SignalRef`
+
+Example rename (autofixed):
+
+```tsx
+// Before
+const inputRef = useRef<HTMLInputElement | null>(null);
+<input ref={inputRef} onFocus={() => inputRef.current?.select()} />
+
+// After (autofixed)
+import { useSignalRef } from '@preact/signals-react/utils';
+const inputSignalRef = useSignalRef<HTMLInputElement | null>(null);
+<input ref={inputSignalRef} onFocus={() => inputSignalRef.current?.select()} />
+```
+
+Option:
+
+- `onlyWhenReadInRender` (default: `true`) — only warn when `.current` is read in render/JSX. Imperative-only usage (effects/handlers) is ignored.
 
 ## Key Features
 
@@ -68,7 +149,7 @@ This plugin provides 19 specialized ESLint rules for React signals:
 
 ## Installation
 
-### Installation
+Install the plugin alongside `@preact/signals-react`:
 
 ```bash
 # npm
@@ -81,7 +162,7 @@ yarn add --dev @ospm/eslint-plugin-react-signals-hooks @preact/signals-react
 pnpm add -D @ospm/eslint-plugin-react-signals-hooks @preact/signals-react
 ```
 
-you have to turn off `react-hooks/exhaustive-deps` rule in your eslint config if you use this plugin.
+You must disable the `react-hooks/exhaustive-deps` rule when using this plugin, since this plugin provides a signal-aware replacement:
 
 ```json
 {
@@ -125,6 +206,7 @@ export default [
       'react-signals-hooks/prefer-for-over-map': 'warn',
       'react-signals-hooks/prefer-signal-effect': 'warn',
       'react-signals-hooks/prefer-computed': 'warn',
+      'react-signals-hooks/prefer-use-signal-ref-over-use-ref': 'warn',
     },
   },
 ];
@@ -191,8 +273,13 @@ function Component() {
 
 // ✅ With useSignals()
 function Component() {
-  useSignals();
-  return <div>{countSignal.value}</div>;
+  const store = useSignals(1);
+
+  try {
+    return <div>{countSignal.value}</div>;
+  } finally {
+    store.f();
+  }
 }
 ```
 
@@ -262,29 +349,7 @@ const dataSignal = { value: 42 }; // Not a real signal
 const dataSignal = signal(42);
 ```
 
-### 7. `prefer-batch-for-multi-mutations` - Batch Updates
-
-Suggests batching multiple signal mutations for better performance.
-
-```tsx
-// ❌ Multiple unbatched updates
-function update() {
-  aSignal.value++;
-  bSignal.value++;
-  cSignal.value++;
-}
-
-// ✅ Batched updates (autofixed)
-function update() {
-  batch(() => {
-    aSignal.value++;
-    bSignal.value++;
-    cSignal.value++;
-  });
-}
-```
-
-### 8. `prefer-batch-updates` - Batch Signal Updates
+### 7. `prefer-batch-updates` - Batch Signal Updates
 
 Encourages batching multiple signal updates.
 
@@ -304,7 +369,7 @@ function handleClick() {
 }
 ```
 
-### 9. `prefer-computed` - Computed Values
+### 8. `prefer-computed` - Computed Values
 
 Prefers `computed()` over `useMemo` for signal-derived values.
 
@@ -316,7 +381,7 @@ const doubled = useMemo(() => countSignal.value * 2, [countSignal.value]);
 const doubled = computed(() => countSignal.value * 2);
 ```
 
-### 10. `prefer-for-over-map` - For Component
+### 9. `prefer-for-over-map` - For Component
 
 Suggests using For component over `.map()` for better performance with signal arrays.
 
@@ -325,12 +390,12 @@ Suggests using For component over `.map()` for better performance with signal ar
 {itemsSignal.value.map(item => <div key={item.id}>{item.name}</div>)}
 
 // ✅ Using For component (autofixed)
-<For each={itemsSignal.value}>
+<For each={itemsSignal}>
   {item => <div>{item.name}</div>}
 </For>
 ```
 
-### 11. `prefer-show-over-ternary` - Show Component
+### 10. `prefer-show-over-ternary` - Show Component
 
 Suggests using Show component for conditional rendering with signals.
 
@@ -346,7 +411,7 @@ Suggests using Show component for conditional rendering with signals.
 </Show>
 ```
 
-### 12. `prefer-signal-effect` - Signal Effects
+### 11. `prefer-signal-effect` - Signal Effects
 
 Prefers `effect()` over `useEffect` when dependencies are only signals.
 
@@ -362,7 +427,7 @@ effect(() => {
 });
 ```
 
-### 13. `prefer-signal-in-jsx` - Direct Signal Usage
+### 12. `prefer-signal-in-jsx` - Direct Signal Usage
 
 Prefers direct signal usage over `.value` in JSX.
 
@@ -374,7 +439,7 @@ Prefers direct signal usage over `.value` in JSX.
 <div>{messageSignal}</div>
 ```
 
-### 14. `prefer-signal-methods` - Signal Methods
+### 13. `prefer-signal-methods` - Signal Methods
 
 Encourages using signal methods over direct property access.
 
@@ -388,7 +453,7 @@ const value = signal(0);
 value.set(1);
 ```
 
-### 15. `prefer-signal-reads` - Optimized Signal Reading
+### 14. `prefer-signal-reads` - Optimized Signal Reading
 
 Optimizes signal access patterns for better performance.
 
@@ -405,7 +470,7 @@ function double() {
 }
 ```
 
-### 16. `prefer-use-signal-over-use-state` - Signal State
+### 15. `prefer-use-signal-over-use-state` - Signal State
 
 Suggests `useSignal` over `useState` for primitive values.
 
@@ -417,7 +482,7 @@ const [count, setCount] = useState(0);
 const countSignal = useSignal(0);
 ```
 
-### 17. `restrict-signal-locations` - Signal Scope Control
+### 16. `restrict-signal-locations` - Signal Scope Control
 
 Controls where signals can be created in the codebase.
 
@@ -434,7 +499,7 @@ function Component() {
 }
 ```
 
-### 18. `signal-variable-name` - Naming Conventions
+### 17. `signal-variable-name` - Naming Conventions
 
 Enforces consistent naming for signal variables.
 
@@ -454,7 +519,7 @@ const counterSignal = signal(0);
 const dataSignal = signal('');
 ```
 
-### 19. `warn-on-unnecessary-untracked` - Optimize Untracked Usage
+### 18. `warn-on-unnecessary-untracked` - Optimize Untracked Usage
 
 Warns about unnecessary `untracked()` usage.
 
@@ -567,106 +632,86 @@ const conditionalUpdate = useCallback(() => {
 
 ## TypeScript Support
 
-Fully compatible with TypeScript and `@typescript-eslint/parser`. Handles:
+Fully compatible with TypeScript and `@typescript-eslint/parser`.
 
-- Type assertions (`as` keyword)
-- Generic type parameters
-- Complex type definitions
-- Interface and type alias references
+- Works with both Flat config (`eslint.config.js`) and legacy `.eslintrc`.
+- Understands TS syntax features (generics, `as const`, enums, type-only imports).
+- Analyzes computed members and property chains with proper type info when available.
 
-## Troubleshooting
+Parser setup example (legacy config):
 
-### Common Issues
-
-1. **"Plugin not found" error**
-   - Ensure the plugin is installed in the correct location
-   - Check your ESLint config file path
-
-2. **Autofix not working**
-   - Enable `enableAutoFixForMemoAndCallback: true` in rule options
-   - Use `--fix` flag when running ESLint
-
-3. **False positives for stable values**
-   - The plugin should automatically detect `useRef`, `useCallback` with empty deps, etc.
-   - If you encounter issues, please file a bug report
-
-## Contributing
-
-This plugin is part of a larger React signals ecosystem. When contributing:
-
-1. Ensure all existing tests pass
-2. Add tests for new functionality
-3. Update documentation for new features
-4. Follow the existing code style
-
-## Validation Library Integration
-
-### Configuration
-
-In your `.eslintrc.js`:
-
-```javascript
+```js
+// .eslintrc.js
 module.exports = {
-  extends: [
-    'plugin:@ospm/react-signals-hooks/recommended',
-    // Add validation plugins you need
-    '@ospm/eslint-plugin-valibot',
-    '@ospm/eslint-plugin-zod',
-    // ... other plugins
-  ],
+  parser: '@typescript-eslint/parser',
+  parserOptions: { project: ['./tsconfig.json'] }, // optional but recommended for best type-aware results
+  plugins: ['react-signals-hooks'],
   rules: {
-    // Your custom rules
+    'react-signals-hooks/exhaustive-deps': 'error',
   },
 };
 ```
 
-### Available Rules
+Flat config example:
 
-#### Valibot
+```js
+// eslint.config.js
+import tseslint from 'typescript-eslint';
+import reactSignalsHooks from '@ospm/eslint-plugin-react-signals-hooks';
 
-- `valibot/require-valibot-import` - Ensures Valibot is imported
-- `valibot/consistent-import-name` - Enforces consistent import names
-
-#### Zod
-
-- `zod/require-zod-import` - Ensures Zod is imported
-- `zod/consistent-import-name` - Enforces consistent import names
-
-#### Joi
-
-- `joi/require-joi-import` - Ensures Joi is imported
-- `joi/consistent-import-name` - Enforces consistent import names
-
-#### Arktype
-
-- `arktype/require-arktype-import` - Ensures Arktype is imported
-- `arktype/consistent-import-name` - Enforces consistent import names
-
-## Migration Between Validation Libraries
-
-To migrate from one validation library to another, you can use the built-in migration rules:
-
-1. Install the target validation library
-2. Add the corresponding ESLint plugin
-3. Run the migration command:
-
-```bash
-npx eslint --fix --ext .ts,.tsx,.js,.jsx src/
+export default [
+  ...tseslint.config({
+    parserOptions: { project: ['./tsconfig.json'] }, // optional
+  }),
+  {
+    plugins: { 'react-signals-hooks': reactSignalsHooks },
+    rules: { 'react-signals-hooks/exhaustive-deps': 'error' },
+  },
+];
 ```
 
-The plugin will automatically convert schemas between different validation libraries where possible.
+Note: a `project` reference is not strictly required, but it can improve precision for complex expressions.
+
+## Compatibility
+
+- React 18+
+- `@preact/signals-react` 2.x+
+- Node.js 18+
+- ESLint 8.56+ (legacy) or 9+ (Flat config)
+
+## IDE Integration
+
+- Works out of the box with VS Code ESLint extension.
+- Autofixes are safe-by-default. For aggressive fixes in effects, enable: `enableDangerousAutofixThisMayCauseInfiniteLoops` in `exhaustive-deps` options.
+- Many rules provide code actions and rename-safe fixes (imports/identifiers updated consistently).
+
+## Performance
+
+- Uses targeted AST visitors and avoids repeated traversal.
+- Skips inner-scope variables for dependency inference to reduce noise.
+- Provides internal performance tracking hooks in rule implementations.
+
+Tips:
+
+- Run ESLint with `--cache` in CI and locally.
+- Prefer Flat config for faster startup in ESLint 9+.
+
+## Limitations
+
+- The plugin does not execute code; dynamic patterns may require manual review.
+- If you heavily customize signal creators or use unusual abstractions, consider enabling `modules` and/or `enableSuffixHeuristic` options in relevant rules.
+- Aggressive autofix for effects can introduce loops if your effect writes to values it also reads; keep `enableDangerousAutofixThisMayCauseInfiniteLoops` off unless you know the codebase patterns.
+
+## FAQ
+
+- Why replace `react-hooks/exhaustive-deps`? — React Hooks rules are not signal-aware. This plugin understands `.value`, computed chains, and signal semantics to provide accurate deps and safer fixes.
+- Can I keep both rules on? — No. Disable `react-hooks/exhaustive-deps` to avoid conflicts and duplicate/contradictory diagnostics.
+- Does it support custom hooks? — Yes. Any `use*` function is analyzed as a hook callback site for dependency inference.
+
+## Contributing
+
+Contributions are welcome! Please open an issue or PR. Follow the repository’s lint/test conventions, and add rule docs under `packages/eslint-plugin-react-signals-hooks/docs/rules/` following the structure described in `rules.md`.
 
 ## License
 
-MIT License - see LICENSE file for details. --
-
-## Changelog
-
-### Latest Version
-
-- ✅ Enhanced autofixable error indicators
-- ✅ Fixed `useRef` stability detection
-- ✅ Improved computed member expression handling
-- ✅ Added redundant dependency detection
-- ✅ Enhanced inner-scope variable detection
-- ✅ Fixed assignment-only detection for complex expressions
+MIT © OSPM

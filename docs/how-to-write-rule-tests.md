@@ -49,9 +49,14 @@ function TestIncorrectUsage(): JSX.Element {
 
 // Good: This should pass the rule
 function TestCorrectUsage(): JSX.Element {
-  useSignals();
-  const counter = signal(0);
-  return <div>{counter}</div>;
+  const store = useSignals(1);
+
+  try {
+    const counter = signal(0);
+    return <div>{counter}</div>;
+  } finally {
+    store.f();
+  }
 }
 ```
 
@@ -136,9 +141,14 @@ When testing correct usage that should not trigger any warnings:
 ```tsx
 // Should NOT trigger any warnings
 export function TestCorrectUsage(): JSX.Element {
-  useSignals();
-  const data = signal({ count: 0 });
-  return <div>{data.value.count}</div>;
+  const store = useSignals(1);
+
+  try {
+    const data = signal({ count: 0 });
+    return <div>{data.value.count}</div>;
+  } finally {
+    store.f();
+  }
 }
 ```
 
@@ -147,12 +157,14 @@ export function TestCorrectUsage(): JSX.Element {
 ```tsx
 // Test component with multiple signals
 export function TestMultipleSignals(): JSX.Element {
-  useSignals();
-  const count = signal(0);
-  const name = signal('test');
-  const active = signal(true);
-  
-  return (
+  const store = useSignals(1);
+
+  try {
+    const count = signal(0);
+    const name = signal('test');
+    const active = signal(true);
+    
+    return (
     <div>
       <span>{name}</span>
       <span>{count}</span>

@@ -1,13 +1,12 @@
 /** biome-ignore-all assist/source/organizeImports: off */
-import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 import type { TSESTree } from '@typescript-eslint/utils';
+import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
+import { type PerformanceOperationKeys, PerformanceOperations } from './performance-constants.js';
 import type { PerformanceBudget, PerformanceMetrics } from './types.js';
 import { validatePerformanceOptions } from './validate-performance-options.js';
-import { type PerformanceOperationKeys, PerformanceOperations } from './performance-constants.js';
 
-export // Default performance budget values
-const DEFAULT_PERFORMANCE_BUDGET = {
+export const DEFAULT_PERFORMANCE_BUDGET = {
   maxTime: 50, // ms
   maxNodes: 2000,
   maxMemory: 50 * 1024 * 1024, // 50MB
@@ -34,7 +33,7 @@ export class PerformanceLimitExceededError extends Error {
   }
 }
 
-const performanceMetrics = new Map<string, PerformanceMetrics>();
+export const performanceMetrics = new Map<string, PerformanceMetrics>();
 
 const phaseStack: Array<{
   key: string;
@@ -42,14 +41,14 @@ const phaseStack: Array<{
   memoryAtStart?: NodeJS.MemoryUsage;
 }> = [];
 
-export function startTracking<Options extends unknown[]>(
+export function startTracking<Options extends Array<unknown>>(
   context: RuleContext<string, Options>,
   perfKey: string,
-  budget: PerformanceBudget,
+  budget: PerformanceBudget | undefined,
   ruleName: string
 ): void {
   // Validate performance budget if provided
-  if (budget) {
+  if (typeof budget !== 'undefined') {
     const validation = validatePerformanceOptions(budget, perfKey);
 
     if (!validation.valid) {
@@ -81,14 +80,14 @@ export function startTracking<Options extends unknown[]>(
   performanceMetrics.set(perfKey, initialMetrics);
 
   // Start with an initial phase if metrics are enabled
-  if (budget?.enableMetrics !== true) {
+  if (typeof budget !== 'undefined' && budget.enableMetrics === true) {
     startPhase(perfKey, 'total');
   }
 
   return;
 }
 
-function incrementNodeCount(key: string, nodeType?: string): void {
+function incrementNodeCount(key: string, nodeType?: string | undefined): void {
   const metrics = performanceMetrics.get(key);
 
   if (!metrics) {
@@ -97,8 +96,11 @@ function incrementNodeCount(key: string, nodeType?: string): void {
 
   metrics.nodeCount++;
 
-  if (nodeType) {
-    metrics.operationCounts[nodeType] = (metrics.operationCounts[nodeType] || 0) + 1;
+  if (typeof nodeType !== 'undefined') {
+    // eslint-disable-next-line security/detect-object-injection
+    metrics.operationCounts[nodeType] =
+      // eslint-disable-next-line security/detect-object-injection
+      (metrics.operationCounts[nodeType] ?? 0) + 1;
   }
 }
 
@@ -113,10 +115,13 @@ export function trackOperation(
     return;
   }
 
-  const newCount = (metrics.operationCounts[operation] || 0) + count;
+  // eslint-disable-next-line security/detect-object-injection
+  const newCount = (metrics.operationCounts[operation] ?? 0) + count;
 
+  // eslint-disable-next-line security/detect-object-injection
   metrics.operationCounts[operation] = newCount;
 
+  // eslint-disable-next-line security/detect-object-injection
   const operationLimit = metrics.perfBudget?.maxOperations?.[operation];
 
   if (typeof operationLimit !== 'undefined' && newCount > operationLimit) {
@@ -143,7 +148,9 @@ export function startPhase(key: string, phaseName: string): void {
     metrics.phaseDurations = {};
   }
 
+  // eslint-disable-next-line security/detect-object-injection
   if (typeof metrics.phaseDurations[phaseName] === 'undefined') {
+    // eslint-disable-next-line security/detect-object-injection
     metrics.phaseDurations[phaseName] = 0;
   }
 }
@@ -170,7 +177,10 @@ export function endPhase(key: string, phaseName: string): void {
 
   const duration = performance.now() - phase.startTime;
 
-  metrics.phaseDurations[phaseName] = (metrics.phaseDurations[phaseName] || 0) + duration;
+  // eslint-disable-next-line security/detect-object-injection
+  metrics.phaseDurations[phaseName] =
+    // eslint-disable-next-line security/detect-object-injection
+    (metrics.phaseDurations[phaseName] ?? 0) + duration;
 }
 
 export function recordMetric<T>(key: string, name: string, value: T): void {
@@ -184,6 +194,7 @@ export function recordMetric<T>(key: string, name: string, value: T): void {
     metrics.customMetrics = {};
   }
 
+  // eslint-disable-next-line security/detect-object-injection
   metrics.customMetrics[name] = value;
 }
 
@@ -208,12 +219,15 @@ export function stopTracking(key: string): PerformanceMetrics | undefined {
 
   metrics.duration = metrics.endTime - metrics.startTime;
 
-  if (metrics.perfBudget?.maxTime && metrics.duration > metrics.perfBudget.maxTime) {
+  if (
+    typeof metrics.perfBudget?.maxTime !== 'undefined' &&
+    metrics.duration > metrics.perfBudget.maxTime
+  ) {
     metrics.exceededBudget = true;
 
     metrics.budgetExceededBy = metrics.duration - metrics.perfBudget.maxTime;
 
-    if (metrics.perfBudget.logMetrics) {
+    if (metrics.perfBudget.logMetrics === true) {
       console.warn(
         `[${metrics.ruleName}] Performance budget exceeded: ` +
           `Time limit of ${metrics.perfBudget.maxTime}ms exceeded by ${metrics.budgetExceededBy.toFixed(2)}ms`
@@ -221,12 +235,15 @@ export function stopTracking(key: string): PerformanceMetrics | undefined {
     }
   }
 
-  if (metrics.perfBudget?.maxNodes && metrics.nodeCount > metrics.perfBudget.maxNodes) {
+  if (
+    typeof metrics.perfBudget?.maxNodes !== 'undefined' &&
+    metrics.nodeCount > metrics.perfBudget.maxNodes
+  ) {
     metrics.exceededBudget = true;
 
     const exceededBy = metrics.nodeCount - metrics.perfBudget.maxNodes;
 
-    if (metrics.perfBudget.logMetrics) {
+    if (metrics.perfBudget.logMetrics === true) {
       console.warn(
         `[${metrics.ruleName}] Performance budget exceeded: ` +
           `Node limit of ${metrics.perfBudget.maxNodes} exceeded by ${exceededBy} nodes`
@@ -236,12 +253,15 @@ export function stopTracking(key: string): PerformanceMetrics | undefined {
 
   const memoryUsage = process.memoryUsage();
 
-  if (metrics.perfBudget?.maxMemory && memoryUsage.heapUsed > metrics.perfBudget.maxMemory) {
+  if (
+    typeof metrics.perfBudget?.maxMemory !== 'undefined' &&
+    memoryUsage.heapUsed > metrics.perfBudget.maxMemory
+  ) {
     metrics.exceededBudget = true;
 
     const exceededBy = memoryUsage.heapUsed - metrics.perfBudget.maxMemory;
 
-    if (metrics.perfBudget.logMetrics) {
+    if (metrics.perfBudget.logMetrics === true) {
       console.warn(
         `[${metrics.ruleName}] Performance budget exceeded: ` +
           `Memory limit of ${formatBytes(metrics.perfBudget.maxMemory)} ` +
@@ -268,7 +288,7 @@ export function stopTracking(key: string): PerformanceMetrics | undefined {
     }
   }
 
-  if (metrics.perfBudget?.logMetrics) {
+  if (metrics.perfBudget?.enableMetrics === true && metrics.perfBudget.logMetrics === true) {
     console.info(`[Performance Metrics] ${metrics.ruleName} (${metrics.filePath})`);
 
     console.info(`  Duration: ${metrics.duration.toFixed(2)}ms`);
@@ -290,29 +310,26 @@ export function stopTracking(key: string): PerformanceMetrics | undefined {
   return metrics;
 }
 
-export function logMetrics<Options extends unknown[]>(
-  metrics: PerformanceMetrics,
-  context: RuleContext<string, Options>
-): void {
+export function logMetrics(metrics: PerformanceMetrics): void {
   if (typeof metrics.endTime === 'undefined') {
     return;
   }
 
-  context.report({
-    messageId: 'perf',
-    loc: { line: 1, column: 0 },
-    data: {
-      message: `[Perf] ${metrics.ruleName}: Processed ${metrics.nodeCount} nodes in ${(metrics.endTime - metrics.startTime).toFixed(2)}ms${
-        metrics.memoryUsage
-          ? `, Memory: ${formatBytes(metrics.memoryUsage.heapUsed)} / ${formatBytes(metrics.memoryUsage.heapTotal)}`
-          : ''
-      }${
-        metrics.exceededBudget
-          ? ` [BUDGET EXCEEDED by ${metrics.budgetExceededBy?.toFixed(2)}ms]`
-          : ''
-      }`,
-    },
-  });
+  if (metrics.perfBudget?.enableMetrics === true && metrics.perfBudget.logMetrics === true) {
+    const duration = (metrics.endTime - metrics.startTime).toFixed(2);
+
+    const mem = metrics.memoryUsage
+      ? `, Memory: ${formatBytes(metrics.memoryUsage.heapUsed)} / ${formatBytes(metrics.memoryUsage.heapTotal)}`
+      : '';
+    const exceeded =
+      metrics.exceededBudget === true
+        ? ` [BUDGET EXCEEDED${typeof metrics.budgetExceededBy !== 'undefined' ? ` by ${metrics.budgetExceededBy.toFixed(2)}ms` : ''}]`
+        : '';
+
+    console.info(
+      `[Perf] ${metrics.ruleName}: Processed ${metrics.nodeCount} nodes in ${duration}ms${mem}${exceeded}`
+    );
+  }
 }
 
 function formatBytes(bytes: number, decimals = 2): string {
@@ -323,13 +340,13 @@ function formatBytes(bytes: number, decimals = 2): string {
   const k = 1024;
   const i = Math.floor(Math.log(bytes) / Math.log(k));
 
+  // eslint-disable-next-line security/detect-object-injection
   return `${Number.parseFloat((bytes / k ** i).toFixed(decimals < 0 ? 0 : decimals))} ${['Bytes', 'KB', 'MB', 'GB'][i]}`;
 }
 
-export function createPerformanceTracker<Options extends unknown[]>(
+export function createPerformanceTracker(
   key: string,
-  budget: PerformanceBudget | undefined,
-  context: RuleContext<string, Options>
+  budget: PerformanceBudget | undefined
 ): { trackNode(node: TSESTree.Node): void; 'Program:exit'(): void } {
   const metrics = performanceMetrics.get(key);
 
@@ -348,37 +365,35 @@ export function createPerformanceTracker<Options extends unknown[]>(
       // Increment node count and track operation
       incrementNodeCount(key, node.type);
 
-      // Track node type distribution
-      const nodeType = node.type;
-
       // Initialize node type tracking if not exists
       if (!currentMetrics.nodeTypes) {
         currentMetrics.nodeTypes = new Map();
       }
 
       // Increment count for this node type
-      const currentCount = currentMetrics.nodeTypes.get(nodeType) ?? 0;
-      currentMetrics.nodeTypes.set(nodeType, currentCount + 1);
+      const currentCount = currentMetrics.nodeTypes.get(node.type) ?? 0;
+      currentMetrics.nodeTypes.set(node.type, currentCount + 1);
 
       // Track node locations for debugging if location is available
-      if (node.loc) {
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if (node.loc !== null) {
         currentMetrics.nodeLocations ??= [];
+
         currentMetrics.nodeLocations.push({
-          type: nodeType,
+          type: node.type,
           start: node.loc.start,
           end: node.loc.end,
         });
       }
 
       // Check node count budget if maxNodes is defined
-      const maxNodes = budget?.maxNodes;
-      if (typeof maxNodes === 'number' && currentMetrics.nodeCount > maxNodes) {
+      if (typeof budget?.maxNodes !== 'undefined' && currentMetrics.nodeCount > budget.maxNodes) {
         currentMetrics.exceededBudget = true;
         currentMetrics.budgetExceededBy = (currentMetrics.budgetExceededBy ?? 0) + 1;
 
         // Initialize and add to budget exceeded node types
         currentMetrics.budgetExceededNodeTypes ??= new Set();
-        currentMetrics.budgetExceededNodeTypes.add(nodeType);
+        currentMetrics.budgetExceededNodeTypes.add(node.type);
       }
     },
 
@@ -409,7 +424,7 @@ export function createPerformanceTracker<Options extends unknown[]>(
           }
         }
 
-        logMetrics(metrics, context);
+        logMetrics(metrics);
       }
     },
   };

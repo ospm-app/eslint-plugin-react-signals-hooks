@@ -44,20 +44,26 @@ interface Options {
   
   /**
    * Pattern to identify custom hooks
-   * @default '^use[A-Z]'
+   * @default '^use[A-Z][a-zA-Z0-9]*$'
    */
   customHookPattern?: string;
   
+  /**
+   * Per-message overrides for severity
+   */
+  severity?: {
+    signalInComponent?: 'error' | 'warn' | 'off';
+    signalInHook?: 'error' | 'warn' | 'off';
+    signalExported?: 'error' | 'warn' | 'off';
+  };
+  
   /** Performance tuning options */
   performance?: {
-    maxNodeCount?: number;
-    maxNodeCountPerRun?: number;
-    maxFixCount?: number;
-    maxFixCountPerRun?: number;
-    maxFixIterations?: number;
-    maxFixTimeMs?: number;
-    maxTotalTimeMs?: number;
+    maxTime?: number;
+    maxMemory?: number;
+    maxNodes?: number;
     enableMetrics?: boolean;
+    logMetrics?: boolean;
   };
 }
 ```
@@ -68,10 +74,16 @@ interface Options {
 {
   "allowedDirs": [],
   "allowComputedInComponents": false,
-  "customHookPattern": "^use[A-Z]",
+  "customHookPattern": "^use[A-Z][a-zA-Z0-9]*$",
+  "severity": {
+    "signalInComponent": "error",
+    "signalInHook": "error",
+    "signalExported": "error"
+  },
   "performance": {
-    "maxTime": 1000,
-    "maxNodes": 2000,
+    "maxTime": 200,
+    "maxMemory": 256,
+    "maxNodes": 100000,
     "enableMetrics": false,
     "logMetrics": false
   }
@@ -82,78 +94,54 @@ interface Options {
 
 ### signalInComponent
 
-- **Message**: "Avoid creating signals in component bodies. Move to module level or a custom hook."
+- **Message**: "Avoid creating signals in component bodies. Move to module level or to external file"
 - **Description**: A signal is being created inside a React component body
-- **Fix Suggestion**: Move the signal creation to the module level or a custom hook
 
 ### computedInComponent
 
 - **Message**: "Avoid creating computed values in component bodies. Consider using useMemo instead."
 - **Description**: A computed value is being created inside a React component body
-- **Fix Suggestion**: Use `useMemo` for computed values inside components or move the computation to a custom hook
 
 ### exportedSignal
 
 - **Message**: "Exporting signals from a file often leads to circular imports and breaks the build with hard to debug. Use @biomejs/biome for circular imports diagnostic."
 - **Description**: A signal is being exported from a module
-- **Fix Suggestion**: Avoid exporting signals directly to prevent circular dependencies
 
 ## Examples
 
 ### ❌ Incorrect
 
 ```tsx
-// signals.ts - Exporting signals (not recommended)
-export const count = signal(0);
+// Bad: creating a signal inside a component
+import { signal, computed } from '@preact/signals-react';
 
 export function Counter() {
-  // Creating signal in component body (not recommended)
-  const [name, setName] = createSignal('');
+  const count = signal(0);
+  const doubleCount = computed(() => count.value * 2);
   
-  // Computed value in component body (not recommended)
-  const fullName = createMemo(() => `User: ${name()}`);
-  
-  return <div>{fullName()}</div>;
+  return <div>Count: {count.value}, Double Count: {doubleCount.value}</div>;
 }
 ```
 
 ### ✅ Correct
 
 ```tsx
-// hooks/useUser.ts - Custom hook for user-related state
-export function useUser() {
-  const name = signal('');
-  const fullName = computed(() => `User: ${name.value}`);
-  
-  return { name, fullName };
-}
+// Good: creating a signal at the module level
+import { signal, computed } from '@preact/signals-react';
 
-// components/Counter.tsx
-import { useUser } from '../hooks/useUser';
+const count = signal(0);
+const doubleCount = computed(() => count.value * 2);
 
 export function Counter() {
-  const { name, fullName } = useUser();
-  
-  return <div>{fullName}</div>;
+  return <div>Count: {count.value}, Double Count: {doubleCount.value}</div>;
 }
 ```
 
 ## Configuration Examples
 
-### Allow signals in specific directories
+### Options
 
-```json
-{
-  "rules": {
-    "react-signals-hooks/restrict-signal-locations": [
-      "error",
-      {
-        "allowedDirs": ["src/store", "src/lib"]
-      }
-    ]
-  }
-}
-```
+This rule supports the following options:
 
 ### Allow computed values in components
 
@@ -198,3 +186,77 @@ You might want to disable this rule when:
 - `no-signal-assignment-in-effect`: Prevents direct signal assignments in effects
 - `no-mutation-in-render`: Prevents signal mutations during render
 - `prefer-signal-effect`: Encourages using signals with effects properly
+
+---
+
+## Additional Guidance and Examples
+
+### ❌ Incorrect: Exported signals
+
+Exporting signals from modules can lead to circular imports and make data flow harder to reason about.
+
+```tsx
+// bad.tsx
+import { signal } from '@preact/signals-react';
+
+// Named export of a signal variable — not recommended
+export const exportedSignal = signal('x');
+
+// Default export of a signal identifier — not recommended
+const defaultSignal = signal('y');
+export default defaultSignal;
+
+// Default export of a call expression creating a signal — not recommended
+export default signal('z');
+```
+
+### ✅ Correct: Avoid exporting signals directly
+
+Prefer exporting factories or plain values derived at call-sites.
+
+```tsx
+// good.tsx
+import { signal } from '@preact/signals-react';
+
+// Export a factory that creates signals locally where needed
+export function createCounter() {
+  const count = signal(0);
+  const inc = () => count.value++;
+  return { count, inc };
+}
+```
+
+### ❌ Incorrect: Creating signals in memo/forwardRef-wrapped components
+
+Components wrapped in `memo` or `forwardRef` are still components. Creating signals inside them is flagged.
+
+```tsx
+import { memo, forwardRef } from 'react';
+import { signal } from '@preact/signals-react';
+
+export const MemoWrapped = memo(() => {
+  const s = signal(0); // ❌ flagged
+  return <div>{s}</div>;
+});
+
+export const ForwardRefWrapped = forwardRef(function Fwd() {
+  const s = signal(0); // ❌ flagged
+  return <div>{s}</div>;
+});
+```
+
+### ℹ️ Aliased and namespaced imports are detected
+
+Aliased `signal`/`computed` and namespace imports (e.g., `S.signal`) are recognized by the rule.
+
+```tsx
+import { signal as sig, computed as cmp } from '@preact/signals-react';
+import * as S from '@preact/signals-react';
+
+export function Component() {
+  // Both calls below are treated as signal/computed creations inside a component
+  const a = sig(1);      // flagged
+  const b = cmp(() => a.value + 1); // flagged (unless allowComputedInComponents: true)
+  return <div>{a} {b}</div>;
+}
+```

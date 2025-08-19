@@ -1,397 +1,591 @@
 /** biome-ignore-all assist/source/organizeImports: off */
 import {
-	ESLintUtils,
-	type TSESLint,
-	type TSESTree,
-} from "@typescript-eslint/utils";
-import type { RuleContext } from "@typescript-eslint/utils/ts-eslint";
+  ESLintUtils,
+  type TSESLint,
+  type TSESTree,
+  AST_NODE_TYPES,
+} from '@typescript-eslint/utils';
+import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
+import type ts from 'typescript';
 
-import { PerformanceOperations } from "./utils/performance-constants.js";
+import { isInJSXContext } from './utils/jsx.js';
+import { PerformanceOperations } from './utils/performance-constants.js';
 import {
-	endPhase,
-	startPhase,
-	recordMetric,
-	stopTracking,
-	startTracking,
-	trackOperation,
-	createPerformanceTracker,
-	DEFAULT_PERFORMANCE_BUDGET,
-} from "./utils/performance.js";
-import type { PerformanceBudget } from "./utils/types.js";
-import { getRuleDocUrl } from "./utils/urls.js";
+  endPhase,
+  startPhase,
+  recordMetric,
+  startTracking,
+  trackOperation,
+  createPerformanceTracker,
+  DEFAULT_PERFORMANCE_BUDGET,
+} from './utils/performance.js';
+import { isInDependencyArray } from './utils/react.js';
+import { buildSuffixRegex, hasSignalSuffix } from './utils/suffix.js';
+import type { PerformanceBudget } from './utils/types.js';
+import { getRuleDocUrl } from './utils/urls.js';
+
+type MessageIds = 'usePeekInEffect' | 'preferPeekInNonReactiveContext';
 
 type Severity = {
-	usePeekInEffect?: "error" | "warn" | "off";
-	useValueInJSX?: "error" | "warn" | "off";
-	preferDirectSignalUsage?: "error" | "warn" | "off";
-	preferPeekInNonReactiveContext?: "error" | "warn" | "off";
+  [key in MessageIds]?: 'error' | 'warn' | 'off';
 };
 
 type Option = {
-	performance?: PerformanceBudget;
-	severity?: Severity;
+  performance?: PerformanceBudget;
+  severity?: Severity;
+  suffix?: string;
+  extraCreatorModules?: Array<string>; // additional modules to scan for signal/computed imports
+  reactiveEffectCallees?: Array<string>; // additional callee names to treat as effect context
+  effectsSuggestionOnly?: boolean; // if true, do not autofix in effects; provide suggestions instead
+  typeAware?: boolean; // if true, use TS type information to confirm signals when available
 };
 
 type Options = [Option?];
 
-type MessageIds =
-	| "usePeekInEffect"
-	| "useValueInJSX"
-	| "preferDirectSignalUsage"
-	| "preferPeekInNonReactiveContext";
-
-function isInDependencyArray(node: TSESTree.Node): boolean {
-	let current = node;
-
-	while (current.parent) {
-		current = current.parent;
-		if (
-			current.type === "ArrayExpression" &&
-			current.parent.type === "CallExpression" &&
-			current.parent.callee.type === "Identifier" &&
-			current.parent.callee.name === "useEffect"
-		) {
-			return true;
-		}
-	}
-
-	return false;
-}
-
-function isInJSXContext(node: TSESTree.Node): boolean {
-	let parent: TSESTree.Node | undefined = node.parent;
-
-	while (parent) {
-		if (parent.type === "JSXElement" || parent.type === "JSXFragment") {
-			return true;
-		}
-
-		parent = parent.parent;
-	}
-
-	return false;
-}
-
 let isInEffect = false;
 let isInJSX = false;
+let effectDepth = 0;
 
-const ruleName = "prefer-signal-methods";
+const ruleName = 'prefer-signal-methods';
 
-function getSeverity(
-	messageId: MessageIds,
-	options: Option | undefined,
-): "error" | "warn" | "off" {
-	if (!options?.severity) {
-		return "error";
-	}
+function hasAncestorOfType(node: TSESTree.Node, type: TSESTree.Node['type']): boolean {
+  let current: TSESTree.Node | undefined = node.parent;
 
-	// eslint-disable-next-line security/detect-object-injection
-	const severity = options.severity[messageId];
+  while (current) {
+    if (current.type === type) {
+      return true;
+    }
 
-	return severity ?? "error";
+    if (
+      current.type === AST_NODE_TYPES.Program ||
+      current.type === AST_NODE_TYPES.JSXElement ||
+      current.type === AST_NODE_TYPES.JSXFragment
+    ) {
+      return false;
+    }
+
+    current = current.parent;
+  }
+
+  return false;
 }
 
-export const preferSignalMethodsRule = ESLintUtils.RuleCreator(
-	(name: string): string => {
-		return getRuleDocUrl(name);
-	},
-)<Options, MessageIds>({
-	name: ruleName,
-	meta: {
-		type: "suggestion",
-		fixable: "code",
-		hasSuggestions: true,
-		docs: {
-			description:
-				"Enforces proper usage of signal methods (`.value`, `.peek()`) in different contexts. This rule helps ensure you're using the right signal access pattern for the context, whether it's in JSX, effects, or regular code. It promotes best practices for signal usage to optimize reactivity and performance.",
-			url: getRuleDocUrl(ruleName),
-		},
-		messages: {
-			usePeekInEffect:
-				"Use signal.peek() to read the current value without subscribing to changes in this effect",
-			useValueInJSX:
-				"Use the signal directly in JSX instead of accessing .value",
-			preferDirectSignalUsage:
-				"Use the signal directly in JSX instead of .peek()",
-			preferPeekInNonReactiveContext:
-				"Prefer .peek() when reading signal value without using its reactive value",
-		},
-		schema: [
-			{
-				type: "object",
-				properties: {
-					performance: {
-						type: "object",
-						properties: {
-							maxTime: { type: "number", minimum: 1 },
-							maxMemory: { type: "number", minimum: 1 },
-							maxNodes: { type: "number", minimum: 1 },
-							enableMetrics: { type: "boolean" },
-							logMetrics: { type: "boolean" },
-							maxOperations: {
-								type: "object",
-								properties: Object.fromEntries(
-									Object.entries(PerformanceOperations).map(([key]) => [
-										key,
-										{ type: "number", minimum: 1 },
-									]),
-								),
-							},
-						},
-						additionalProperties: false,
-					},
-				},
-				additionalProperties: false,
-			},
-		],
-	},
-	defaultOptions: [
-		{
-			performance: DEFAULT_PERFORMANCE_BUDGET,
-		},
-	],
-	create(
-		context: Readonly<RuleContext<MessageIds, Options>>,
-		[option],
-	): ESLintUtils.RuleListener {
-		const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
+function getSeverity(messageId: MessageIds, options: Option | undefined): 'error' | 'warn' | 'off' {
+  if (!options?.severity) {
+    return 'error';
+  }
 
-		startPhase(perfKey, "ruleInit");
+  switch (messageId) {
+    case 'usePeekInEffect': {
+      return options.severity.usePeekInEffect ?? 'error';
+    }
+    case 'preferPeekInNonReactiveContext': {
+      return options.severity.preferPeekInNonReactiveContext ?? 'error';
+    }
 
-		const perf = createPerformanceTracker<Options>(
-			perfKey,
-			option?.performance,
-			context,
-		);
+    default: {
+      return 'error';
+    }
+  }
+}
 
-		if (option?.performance?.enableMetrics === true) {
-			startTracking(context, perfKey, option.performance, ruleName);
-		}
+export const preferSignalMethodsRule = ESLintUtils.RuleCreator((name: string): string => {
+  return getRuleDocUrl(name);
+})<Options, MessageIds>({
+  name: ruleName,
+  meta: {
+    type: 'suggestion',
+    fixable: 'code',
+    hasSuggestions: true,
+    docs: {
+      description:
+        'Enforces proper usage of signal methods (`.value`, `.peek()`) in non-JSX contexts. This rule helps ensure you use the right access pattern for effects and regular code, promoting best practices to optimize reactivity and performance.',
+      url: getRuleDocUrl(ruleName),
+    },
+    messages: {
+      usePeekInEffect:
+        'Use signal.peek() to read the current value without subscribing to changes in this effect',
+      preferPeekInNonReactiveContext:
+        'Prefer .peek() when reading signal value without using its reactive value',
+    },
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          performance: {
+            type: 'object',
+            properties: {
+              maxTime: { type: 'number', minimum: 1 },
+              maxMemory: { type: 'number', minimum: 1 },
+              maxNodes: { type: 'number', minimum: 1 },
+              enableMetrics: { type: 'boolean' },
+              logMetrics: { type: 'boolean' },
+              maxOperations: {
+                type: 'object',
+                properties: Object.fromEntries(
+                  Object.entries(PerformanceOperations).map(([key]) => [
+                    key,
+                    { type: 'number', minimum: 1 },
+                  ])
+                ),
+              },
+            },
+            additionalProperties: false,
+          },
+          suffix: { type: 'string', minLength: 1 },
+          extraCreatorModules: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+          },
+          reactiveEffectCallees: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+          },
+          effectsSuggestionOnly: { type: 'boolean' },
+          typeAware: { type: 'boolean' },
+        },
+        additionalProperties: false,
+      },
+    ],
+  },
+  defaultOptions: [
+    {
+      performance: DEFAULT_PERFORMANCE_BUDGET,
+      extraCreatorModules: [],
+      reactiveEffectCallees: [],
+      effectsSuggestionOnly: false,
+      typeAware: false,
+    },
+  ],
+  create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
+    const perfKey = `${ruleName}:${context.filename}:${Date.now()}`;
 
-		console.info(
-			`${ruleName}: Initializing rule for file: ${context.filename}`,
-		);
-		console.info(`${ruleName}: Rule configuration:`, option);
+    startPhase(perfKey, 'ruleInit');
 
-		recordMetric(perfKey, "config", {
-			performance: {
-				enableMetrics: option?.performance?.enableMetrics,
-				logMetrics: option?.performance?.logMetrics,
-			},
-		});
+    const perf = createPerformanceTracker(perfKey, option?.performance);
 
-		trackOperation(perfKey, PerformanceOperations.ruleInit);
+    if (option?.performance?.enableMetrics === true) {
+      startTracking(context, perfKey, option.performance, ruleName);
+    }
 
-		endPhase(perfKey, "ruleInit");
+    if (option?.performance?.enableMetrics === true && option.performance.logMetrics === true) {
+      console.info(`${ruleName}: Initializing rule for file: ${context.filename}`);
+      // console.info(`${ruleName}: Rule configuration:`, option);
+    }
 
-		let nodeCount = 0;
+    recordMetric(perfKey, 'config', {
+      performance: {
+        enableMetrics: option?.performance?.enableMetrics,
+        logMetrics: option?.performance?.logMetrics,
+      },
+    });
 
-		function shouldContinue(): boolean {
-			nodeCount++;
+    trackOperation(perfKey, PerformanceOperations.ruleInit);
 
-			if (
-				typeof option?.performance?.maxNodes === "number" &&
-				nodeCount > option.performance.maxNodes
-			) {
-				trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
+    endPhase(perfKey, 'ruleInit');
 
-				return false;
-			}
+    let nodeCount = 0;
 
-			return true;
-		}
+    function shouldContinue(): boolean {
+      nodeCount++;
 
-		startPhase(perfKey, "ruleExecution");
+      if (
+        typeof option?.performance?.maxNodes === 'number' &&
+        nodeCount > option.performance.maxNodes
+      ) {
+        trackOperation(perfKey, PerformanceOperations.nodeBudgetExceeded);
 
-		return {
-			"*": (node: TSESTree.Node): void => {
-				if (!shouldContinue()) {
-					endPhase(perfKey, "recordMetrics");
+        return false;
+      }
 
-					stopTracking(perfKey);
+      return true;
+    }
 
-					return;
-				}
+    startPhase(perfKey, 'ruleExecution');
 
-				perf.trackNode(node);
+    // Track local names and namespaces for signal/computed creators
+    const signalCreatorLocals = new Set<string>(['signal']);
+    const computedCreatorLocals = new Set<string>(['computed']);
+    const creatorNamespaces = new Set<string>();
 
-				trackOperation(
-					perfKey,
-					PerformanceOperations[`${node.type}Processing`],
-				);
-			},
+    // Track variables initialized from signal/computed creators
+    const signalVariables = new Set<string>();
 
-			'CallExpression[callee.name="useEffect"]'(): void {
-				isInEffect = true;
-			},
-			'CallExpression[callee.name="useEffect"]:exit'(): void {
-				isInEffect = false;
-			},
+    const checker: ts.TypeChecker | undefined =
+      context.sourceCode.parserServices?.program?.getTypeChecker();
 
-			JSXElement(): void {
-				isInJSX = true;
-			},
-			"JSXElement:exit"(): void {
-				isInJSX = false;
-			},
-			JSXFragment(): void {
-				isInJSX = true;
-			},
-			"JSXFragment:exit"(): void {
-				isInJSX = false;
-			},
+    function isSignalType(node: TSESTree.Identifier): boolean | undefined {
+      if (
+        !checker ||
+        !context.sourceCode.parserServices ||
+        !('esTreeNodeToTSNodeMap' in context.sourceCode.parserServices)
+      ) {
+        return undefined;
+      }
 
-			'Identifier:matches([name$="Signal"], [name$="signal"])'(
-				node: TSESTree.Node,
-			): void {
-				if (
-					!(
-						node.type === "Identifier" &&
-						(node.name.endsWith("Signal") || node.name.endsWith("signal"))
-					)
-				) {
-					return;
-				}
+      const anyServices = context.sourceCode.parserServices;
 
-				// Handle direct signal usage (not a member expression)
-				if (
-					node.parent.type !== "MemberExpression" ||
-					node.parent.object !== node
-				) {
-					if (isInEffect && !isInDependencyArray(node)) {
-						const severity = getSeverity("usePeekInEffect", option);
-						if (severity === "off") return;
+      const tsNode: ts.Node | undefined = anyServices.esTreeNodeToTSNodeMap?.get(node);
 
-						context.report({
-							node,
-							messageId: "usePeekInEffect",
-							fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-								return fixer.insertTextAfter(node, ".peek()");
-							},
-						});
-					} else if (isInJSX || isInJSXContext(node)) {
-						const severity = getSeverity("useValueInJSX", option);
-						if (severity === "off") return;
+      if (!tsNode) {
+        return undefined;
+      }
 
-						context.report({
-							node,
-							messageId: "useValueInJSX",
-							fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-								return fixer.insertTextAfter(node, ".value");
-							},
-						});
-					}
+      const type: ts.Type | undefined = checker.getTypeAtLocation(tsNode);
 
-					return;
-				}
+      // Heuristic: has properties 'value' and 'peek'
+      const hasValue = type.getProperty('value');
+      const hasPeek = type.getProperty('peek');
 
-				if (!("name" in node.parent.property)) {
-					return;
-				}
+      if (hasValue && hasPeek) {
+        return true;
+      }
 
-				// Handle .value usage in JSX
-				if (
-					(isInJSX || isInJSXContext(node)) &&
-					node.parent.property.name === "value"
-				) {
-					const severity = getSeverity("useValueInJSX", option);
+      // Also check apparent type
+      const apparent = checker.getApparentType(type);
 
-					if (severity === "off") return;
+      const aHasValue = apparent.getProperty('value');
 
-					context.report({
-						node: node.parent.property,
-						messageId: "useValueInJSX",
-						fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-							if ("property" in node.parent) {
-								return fixer.remove(node.parent.property);
-							}
+      const aHasPeek = apparent.getProperty('peek');
 
-							return null;
-						},
-					});
+      if (aHasValue && aHasPeek) {
+        return true;
+      }
+      // Try to detect named type 'Signal'
 
-					return;
-				}
+      const sym = type.aliasSymbol ?? type.symbol;
 
-				// Handle .peek() usage in JSX
-				if (
-					(isInJSX || isInJSXContext(node)) &&
-					node.parent.property.name === "peek"
-				) {
-					const severity = getSeverity("preferDirectSignalUsage", option);
+      if (sym.escapedName === 'Signal' || sym.escapedName === 'ReadableSignal') {
+        return true;
+      }
 
-					if (severity === "off") return;
+      return false;
+    }
 
-					context.report({
-						node: node.parent.property,
-						messageId: "preferDirectSignalUsage",
-						fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-							return fixer.remove(node.parent);
-						},
-					});
+    return {
+      '*': (node: TSESTree.Node): void => {
+        if (!shouldContinue()) {
+          endPhase(perfKey, 'recordMetrics');
 
-					return;
-				}
+          return;
+        }
 
-				// Handle .value usage in effects outside of dependency arrays
-				if (
-					isInEffect &&
-					!isInDependencyArray(node) &&
-					node.parent.property.name === "value"
-				) {
-					const severity = getSeverity(
-						"preferPeekInNonReactiveContext",
-						option,
-					);
-					if (severity === "off") return;
+        perf.trackNode(node);
 
-					context.report({
-						node: node.parent.property,
-						messageId: "preferPeekInNonReactiveContext",
-						fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-							if ("property" in node.parent) {
-								return fixer.replaceText(node.parent.property, "peek()");
-							}
+        const dynamicOp =
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing;
 
-							return null;
-						},
-					});
-				}
-			},
+        trackOperation(perfKey, dynamicOp);
+      },
 
-			// Clean up
-			"Program:exit"(): void {
-				startPhase(perfKey, "programExit");
+      [AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
+        // Detect configured effect-like callees
+        const names = new Set<string>([
+          'useEffect',
+          'useLayoutEffect',
+          ...(option?.reactiveEffectCallees ?? []),
+        ]);
 
-				try {
-					startPhase(perfKey, "recordMetrics");
+        const callee = node.callee;
 
-					const finalMetrics = stopTracking(perfKey);
+        let name: string | undefined;
 
-					if (typeof finalMetrics !== "undefined") {
-						console.info(
-							`\n[${ruleName}] Performance Metrics (${finalMetrics.exceededBudget === true ? "EXCEEDED" : "OK"}):`,
-						);
-						console.info(`  File: ${context.filename}`);
-						console.info(`  Duration: ${finalMetrics.duration?.toFixed(2)}ms`);
-						console.info(`  Nodes Processed: ${finalMetrics.nodeCount}`);
+        if (callee.type === AST_NODE_TYPES.Identifier) {
+          name = callee.name;
+        } else if (
+          callee.type === AST_NODE_TYPES.MemberExpression &&
+          callee.property.type === AST_NODE_TYPES.Identifier
+        ) {
+          name = callee.property.name;
+        }
 
-						if (finalMetrics.exceededBudget === true) {
-							console.warn("\n⚠️  Performance budget exceeded!");
-						}
-					}
-				} catch (error: unknown) {
-					console.error("Error recording metrics:", error);
-				} finally {
-					endPhase(perfKey, "recordMetrics");
+        if (typeof name !== 'undefined' && names.has(name)) {
+          effectDepth++;
+          isInEffect = effectDepth > 0;
+        }
+      },
+      [`${AST_NODE_TYPES.CallExpression}:exit`](node: TSESTree.CallExpression): void {
+        const names = new Set<string>([
+          'useEffect',
+          'useLayoutEffect',
+          ...(option?.reactiveEffectCallees ?? []),
+        ]);
 
-					stopTracking(perfKey);
-				}
+        let name: string | undefined;
 
-				perf["Program:exit"]();
+        if (node.callee.type === AST_NODE_TYPES.Identifier) {
+          name = node.callee.name;
+        } else if (
+          node.callee.type === AST_NODE_TYPES.MemberExpression &&
+          node.callee.property.type === AST_NODE_TYPES.Identifier
+        ) {
+          name = node.callee.property.name;
+        }
 
-				endPhase(perfKey, "programExit");
-			},
-		};
-	},
+        if (typeof name !== 'undefined' && names.has(name)) {
+          effectDepth = Math.max(0, effectDepth - 1);
+          isInEffect = effectDepth > 0;
+        }
+        isInJSX = false;
+      },
+      [`${AST_NODE_TYPES.JSXFragment}`](): void {
+        isInJSX = true;
+      },
+      [`${AST_NODE_TYPES.JSXFragment}:exit`](): void {
+        isInJSX = false;
+      },
+
+      [AST_NODE_TYPES.Identifier](node: TSESTree.Node): void {
+        if (node.type !== AST_NODE_TYPES.Identifier) {
+          return;
+        }
+
+        let isSignalIdent =
+          hasSignalSuffix(
+            node.name,
+            buildSuffixRegex(
+              typeof option?.suffix === 'string' && option.suffix.length > 0
+                ? option.suffix
+                : 'Signal'
+            )
+          ) || signalVariables.has(node.name);
+
+        if (option?.typeAware === true) {
+          const byType = isSignalType(node);
+          if (byType === true) {
+            isSignalIdent = true;
+          } else if (byType === false) {
+            // If we have a definitive non-signal type, rely on variable tracking only to avoid suffix false-positives
+            isSignalIdent = signalVariables.has(node.name);
+          }
+        }
+
+        if (!isSignalIdent) {
+          return;
+        }
+
+        if (node.parent.type !== AST_NODE_TYPES.MemberExpression || node.parent.object !== node) {
+          if (isInEffect && !isInDependencyArray(node)) {
+            if (getSeverity('usePeekInEffect', option) === 'off') {
+              return;
+            }
+
+            if (option?.effectsSuggestionOnly === true) {
+              context.report({
+                node,
+                messageId: 'usePeekInEffect',
+                suggest: [
+                  {
+                    messageId: 'usePeekInEffect',
+                    fix(fixer): TSESLint.RuleFix {
+                      return fixer.insertTextAfter(node, '.peek()');
+                    },
+                  },
+                ],
+              });
+            } else {
+              context.report({
+                node,
+                messageId: 'usePeekInEffect',
+                fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+                  return fixer.insertTextAfter(node, '.peek()');
+                },
+              });
+            }
+          } else if (isInJSX || isInJSXContext(node)) {
+            return;
+          }
+
+          return;
+        }
+
+        // Optional chaining handling:
+        // - Generally bail on ChainExpression to stay conservative
+        // - But allow direct optional on the member when property is 'value' in effect context,
+        //   so we can safely convert `signal?.value` -> `signal?.peek()`.
+        if (hasAncestorOfType(node, AST_NODE_TYPES.ChainExpression)) {
+          const allowDirectOptionalOnValueInEffect =
+            node.parent.optional === true &&
+            'name' in node.parent.property &&
+            node.parent.property.name === 'value' &&
+            isInEffect &&
+            !isInDependencyArray(node);
+
+          if (!allowDirectOptionalOnValueInEffect) {
+            return;
+          }
+        }
+
+        if (!('name' in node.parent.property)) {
+          return;
+        }
+
+        // Delegate JSX `.value` handling to prefer-signal-in-jsx to avoid duplicates
+        if ((isInJSX || isInJSXContext(node)) && node.parent.property.name === 'value') {
+          return;
+        }
+
+        // Delegate JSX `.peek()` handling to prefer-signal-in-jsx to avoid duplicates
+        if ((isInJSX || isInJSXContext(node)) && node.parent.property.name === 'peek') {
+          return;
+        }
+
+        // Do not flag writes: if this MemberExpression (or its chained parent MemberExpressions)
+        // is used as the left-hand side of an assignment or as the argument of an update, skip.
+        {
+          const memberExpr = node.parent;
+
+          // Bubble up through chained MemberExpressions: signal.value[...].foo...
+          let topMember: TSESTree.MemberExpression = memberExpr;
+
+          let p = topMember.parent;
+
+          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+          while (p && p.type === AST_NODE_TYPES.MemberExpression && p.object === topMember) {
+            topMember = p;
+            p = topMember.parent;
+          }
+
+          if (
+            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+            p &&
+            ((p.type === AST_NODE_TYPES.AssignmentExpression && p.left === topMember) ||
+              (p.type === AST_NODE_TYPES.UpdateExpression && p.argument === topMember))
+          ) {
+            return;
+          }
+        }
+
+        if (!(isInEffect && !isInDependencyArray(node) && node.parent.property.name === 'value')) {
+          return;
+        }
+
+        if (getSeverity('preferPeekInNonReactiveContext', option) === 'off') {
+          return;
+        }
+
+        const applyFix = (fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null => {
+          // If this member uses direct optional chaining like `signal?.value`,
+          // replace the entire member with `object?.peek()` to preserve short-circuiting.
+          if (
+            'optional' in node.parent &&
+            'object' in node.parent &&
+            node.parent.optional === true
+          ) {
+            return fixer.replaceText(
+              node.parent,
+              `${context.sourceCode.getText(node.parent.object)}?.peek()`
+            );
+          }
+
+          // Fallback: replace only the property name `value` -> `peek()`
+          if ('property' in node.parent) {
+            return fixer.replaceText(node.parent.property, 'peek()');
+          }
+
+          return null;
+        };
+
+        if (option?.effectsSuggestionOnly === true) {
+          context.report({
+            node: node.parent.property,
+            messageId: 'preferPeekInNonReactiveContext',
+            suggest: [
+              {
+                messageId: 'preferPeekInNonReactiveContext',
+                fix: applyFix,
+              },
+            ],
+          });
+        } else {
+          context.report({
+            node: node.parent.property,
+            messageId: 'preferPeekInNonReactiveContext',
+            fix: applyFix,
+          });
+        }
+      },
+
+      [AST_NODE_TYPES.VariableDeclarator](node: TSESTree.VariableDeclarator): void {
+        if (node.id.type !== AST_NODE_TYPES.Identifier) {
+          return;
+        }
+
+        if (!node.init || node.init.type !== AST_NODE_TYPES.CallExpression) {
+          return;
+        }
+
+        let isCreator = false;
+
+        if (node.init.callee.type === AST_NODE_TYPES.Identifier) {
+          if (
+            signalCreatorLocals.has(node.init.callee.name) ||
+            computedCreatorLocals.has(node.init.callee.name)
+          ) {
+            isCreator = true;
+          }
+        } else if (
+          node.init.callee.type === AST_NODE_TYPES.MemberExpression &&
+          node.init.callee.object.type === AST_NODE_TYPES.Identifier &&
+          creatorNamespaces.has(node.init.callee.object.name) &&
+          node.init.callee.property.type === AST_NODE_TYPES.Identifier &&
+          (node.init.callee.property.name === 'signal' ||
+            node.init.callee.property.name === 'computed')
+        ) {
+          isCreator = true;
+        }
+
+        if (isCreator) {
+          signalVariables.add(node.id.name);
+        }
+      },
+
+      [AST_NODE_TYPES.Program](node: TSESTree.Program): void {
+        for (const stmt of node.body) {
+          if (stmt.type !== AST_NODE_TYPES.ImportDeclaration) {
+            continue;
+          }
+          if (typeof stmt.source.value !== 'string') {
+            continue;
+          }
+
+          const allowedModules = new Set<string>([
+            '@preact/signals-react',
+            ...(option?.extraCreatorModules ?? []).filter((s: string): boolean => {
+              return typeof s === 'string';
+            }),
+          ]);
+
+          if (allowedModules.has(stmt.source.value)) {
+            for (const spec of stmt.specifiers) {
+              if (spec.type === AST_NODE_TYPES.ImportSpecifier) {
+                if (
+                  spec.imported.type === AST_NODE_TYPES.Identifier &&
+                  spec.imported.name === 'signal'
+                ) {
+                  signalCreatorLocals.add(spec.local.name);
+                } else if (
+                  spec.imported.type === AST_NODE_TYPES.Identifier &&
+                  spec.imported.name === 'computed'
+                ) {
+                  computedCreatorLocals.add(spec.local.name);
+                }
+              } else if (spec.type === AST_NODE_TYPES.ImportNamespaceSpecifier) {
+                creatorNamespaces.add(spec.local.name);
+              }
+            }
+          }
+        }
+      },
+
+      [`${AST_NODE_TYPES.Program}:exit`](): void {
+        startPhase(perfKey, 'programExit');
+
+        perf['Program:exit']();
+
+        endPhase(perfKey, 'programExit');
+      },
+    };
+  },
 });

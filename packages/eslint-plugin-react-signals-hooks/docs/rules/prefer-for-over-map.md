@@ -1,6 +1,11 @@
 # Prefer For Over Map Rule
 
-This rule encourages using the `<For>` component from `@preact/signals-react` instead of the `.map()` method for rendering arrays of data in React components. This provides better performance and reactivity when working with signal arrays.
+This rule encourages using the `<For>` component from `@preact/signals-react/utils` instead of the `.map()` method for rendering arrays of data in React components. This provides better performance and reactivity when working with signal arrays.
+
+## Plugin Scope
+
+- Only signals imported from `@preact/signals-react` are considered.
+- Autofix will add or augment `For` imports from `@preact/signals-react/utils`.
 
 ## Rule Details
 
@@ -104,7 +109,7 @@ This rule identifies instances where `.map()` is used with signal arrays and sug
 1. **Basic For component usage**
 
    ```tsx
-   import { For } from '@preact/signals-react/flexibles';
+   import { For } from '@preact/signals-react/utils';
    
    function TodoList({ todos }) {
      const todoItems = useSignal([
@@ -299,8 +304,11 @@ This rule identifies instances where `.map()` is used with signal arrays and sug
 This rule provides auto-fix suggestions to:
 
 1. Replace `.map()` calls with `<For>` components
-2. Add the `For` import if it's not already imported
-3. Handle different callback patterns (arrow functions, regular functions, etc.)
+2. Add the `For` import from `@preact/signals-react/utils` if it's not already imported
+3. Pass the signal itself to `each` (not `.value`)
+4. Preserve TypeScript parameter type annotations, including when the map callback uses object destructuring (converted into a single typed `item` parameter and references rewritten to `item.prop`)
+5. Replace the enclosing `JSXExpressionContainer` when applicable to avoid wrapping the generated `<For>` with extra `{}`
+6. Handle different callback patterns (arrow functions, regular functions, etc.)
 
 ## When Not To Use It
 
@@ -544,7 +552,7 @@ function TodoList({ todos }: { todos: Todo[] }): JSX.Element {
 }
 
 // After
-import { For } from '@preact/signals-react/flexibles';
+import { For } from '@preact/signals-react';
 
 function TodoList({ todos }: { todos: Todo[] }): JSX.Element {
   return (

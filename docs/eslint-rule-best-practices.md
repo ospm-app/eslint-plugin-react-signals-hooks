@@ -35,7 +35,7 @@ export const rule = createRule({
   },
   defaultOptions: [{ allowList: [] }],
   create(context, [options]) {
-    const sourceCode = context.getSourceCode();
+    const sourceCode = context.sourceCode;
     const parserServices = ESLintUtils.getParserServices(context);
     
     return {

@@ -65,3 +65,26 @@ createMjsCopies(esmDir);
 console.info('Renaming .js files to .mjs in ESM output...');
 
 console.info('Done renaming files.');
+
+// Ensure tools treat dist/esm/*.js as ESM (sourceType: module)
+try {
+  const pkgPath = join(esmDir, 'package.json');
+  const desired = `${JSON.stringify({ type: 'module' }, null, 2)}\n`;
+  let needsWrite = true;
+
+  if (existsSync(pkgPath)) {
+    try {
+      const current = readFileSync(pkgPath, 'utf8');
+      needsWrite = current !== desired;
+    } catch {}
+  }
+
+  if (needsWrite) {
+    writeFileSync(pkgPath, desired, 'utf8');
+    console.info(`Wrote: ${relative(__dirname, pkgPath)} with { type: 'module' }`);
+  } else {
+    console.info(`Exists and up-to-date: ${relative(__dirname, pkgPath)}`);
+  }
+} catch (err) {
+  console.warn('Warning: failed to ensure dist/esm/package.json type module:', err);
+}

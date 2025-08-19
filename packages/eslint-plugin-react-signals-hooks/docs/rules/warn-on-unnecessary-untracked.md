@@ -71,25 +71,32 @@ effect(() => {
 
 ## Auto-fix
 
-This rule provides auto-fix suggestions that can:
+This rule provides suggestions (no unconditional automatic fixes). When applied by the user, suggestions will:
 
-1. Remove unnecessary `untracked()` wrappers, keeping the inner function body
-2. Replace unnecessary `.peek()` calls with direct `.value` access
-3. Preserve any comments and formatting
+1. Remove unnecessary `untracked(() => body)` wrappers by replacing the entire call with `body`.
+2. Replace the entire `X.value.peek()` call with exactly `X.value` (no extra `.value` is appended).
+3. Preserve comments and formatting where possible.
 
 ## Options
 
 This rule accepts an options object with the following properties:
 
-```typescript
+```json
 {
   "rules": {
     "react-signals-hooks/warn-on-unnecessary-untracked": [
       "warn",
       {
+        "suffix": "Signal",
         "allowInEffects": true,        // Allow in useSignalEffect callbacks
         "allowInEventHandlers": true,  // Allow in DOM event handlers
         "allowForSignalWrites": true,  // Allow when used to prevent circular deps
+        "severity": {
+          "unnecessaryUntracked": "warn",
+          "unnecessaryPeek": "warn",
+          "suggestRemoveUntracked": "warn",
+          "suggestRemovePeek": "warn"
+        },
         "performance": {               // Performance tuning options
           "maxTime": 100,              // Max time in ms to spend analyzing a file
           "maxMemory": 100,            // Max memory in MB to use
@@ -125,6 +132,43 @@ This rule accepts an options object with the following properties:
 - `allowInEffects` (default: `true`): Allow `untracked()` and `.peek()` in `useSignalEffect` callbacks where they might be used to prevent unnecessary re-runs.
 - `allowInEventHandlers` (default: `true`): Allow `untracked()` and `.peek()` in DOM event handlers where they might be used for performance.
 - `allowForSignalWrites` (default: `true`): Allow `.peek()` when it's used to prevent circular dependencies when writing to signals in effects.
+
+## Reactive Context Definition
+
+This rule treats a location as "reactive" when signal reads would normally be tracked by the runtime. Concretely, the rule considers the following as reactive contexts (configurable via options):
+
+- Components and hooks: functions with names that are Capitalized (components) or start with `use` (custom hooks)
+- `useSignalEffect` callbacks (allowed by default; can be tuned with `allowInEffects`)
+- JSX event handlers (e.g., `onClick`, `onChange`) may be treated specially via `allowInEventHandlers`
+
+Notes:
+
+- Outside reactive contexts (e.g., module scope utilities, plain functions), `untracked()`/`.peek()` are generally unnecessary and may be flagged.
+- Within reactive contexts, the rule still checks intent. For instance, `.peek()` is flagged when reading `X.value.peek()` where direct `X.value` is sufficient, unless prevented by `allowForSignalWrites` when doing signal writes inside effects.
+
+Examples:
+
+```tsx
+// In a component (reactive)
+function Profile() {
+  // ❌ Unnecessary: direct value access is sufficient
+  const name = untracked(() => userSignal.value.name);
+  return <div>{userSignal.value}</div>;
+}
+
+// In a plain utility (non-reactive)
+export function format(user: User) {
+  // ❌ Unnecessary: no tracking occurs here
+  return untracked(() => `${user.first} ${user.last}`);
+}
+
+// In an effect (reactive, but configurable)
+useSignalEffect(() => {
+  // `.peek()` may be allowed to avoid circular dependencies
+  const current = countSignal.value;
+  if (current > 0) countSignal.value = current - 1;
+});
+```
 
 ## When Not To Use It
 
@@ -223,19 +267,12 @@ const value2 = someSignal.value.peek();
 
 Note that `.peek()` is a type-safe operation that returns the same type as `.value`.
 
-## Migration Guide
+## Detection notes
 
-### From v1.x to v2.x
-
-- The `performance` option is now optional with sensible defaults
-- All boolean options now default to `true` for better developer experience
-- The rule now provides more specific error messages and suggestions
-
-### From v0.x to v1.x
-
-- The rule was renamed from `no-unnecessary-untracked` to `warn-on-unnecessary-untracked`
-- Added support for `.peek()` detection
-- Added TypeScript type checking support
+- Reactive context is detected heuristically: functions/components whose names are Capitalized or start with `use` (custom hooks). `useSignalEffect` callbacks and JSX event handlers can be allowed via options.
+- Only creators/imports from `@preact/signals-react` are considered for tracking in this plugin.
+- Support for `.peek()` detection
+- TypeScript type checking support
 - Improved auto-fix capabilities
 
 ## Common False Positives

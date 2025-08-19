@@ -20,6 +20,11 @@ This rule helps you use the right signal access method in different contexts:
 | Event handlers | `signal.value` | `signal.peek()` | Need reactivity for updates |
 | Dependency arrays | `signal` | `signal.value` | Track the signal itself, not its value |
 
+## Plugin Scope
+
+- Signal creator detection is scoped to `@preact/signals-react` only.
+- Signals created in-file via `signal()` / `computed()` (direct, aliased, or namespace imports) from `@preact/signals-react` are recognized.
+
 ## Examples
 
 ### ❌ Incorrect
@@ -75,11 +80,41 @@ function EffectExample(): JSX.Element {
 
 ## Auto-fix
 
-This rule provides auto-fix suggestions to:
+This rule provides autofixes to:
 
 1. Remove unnecessary `.value` access in JSX
 2. Convert `.value` to `.peek()` in effects when not in dependency array
 3. Add `.peek()` when reading signal values in non-reactive contexts
+
+## Autofix and Suggestions
+
+- Autofix: Yes (fixable: `code`).
+- Suggestions: Yes (`hasSuggestions: true`). In particular, when `effectsSuggestionOnly: true`, effect fixes are offered as suggestions instead of applied automatically.
+
+## Options
+
+```ts
+interface Options {
+  performance?: PerformanceBudget;
+  severity?: {
+    usePeekInEffect?: 'error' | 'warn' | 'off';
+    preferPeekInNonReactiveContext?: 'error' | 'warn' | 'off';
+  };
+  suffix?: string;
+  extraCreatorModules?: string[];
+  reactiveEffectCallees?: string[];
+  effectsSuggestionOnly?: boolean;
+  typeAware?: boolean;
+}
+```
+
+- `performance`: Enables performance tracking/budgeting.
+- `severity`: Per-message severity controls. Defaults to `error`.
+- `suffix`: Custom suffix for detecting signal variable names.
+- `extraCreatorModules: string[]`: Additional modules to scan for `signal`/`computed` creators. Defaults to recognizing `@preact/signals-react`.
+- `reactiveEffectCallees: string[]`: Additional callee names to treat as effect-like contexts (besides `useEffect`, `useLayoutEffect`).
+- `effectsSuggestionOnly: boolean`: When true, do not autofix inside effects; provide suggestions instead.
+- `typeAware: boolean`: When true and TS types are available, confirm signals via the type checker to reduce reliance on naming heuristics.
 
 ## When Not To Use It
 

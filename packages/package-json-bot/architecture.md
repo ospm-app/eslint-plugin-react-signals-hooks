@@ -335,20 +335,20 @@ module.exports = {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "^4.20230518.0",
-    "alchemy-sdk": "^3.0.0",
-    "hono": "^3.0.0",
-    "zod": "^3.21.0"
+    "@cloudflare/workers-types": "^4.20250812.0",
+    "alchemy-sdk": "^3.6.2",
+    "hono": "^4.9.1",
+    "zod": "^4.0.17"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20230518.0",
+    "@cloudflare/workers-types": "^4.20250812.0",
     "@types/node": "^20.0.0",
-    "@typescript-eslint/eslint-plugin": "^8.38.0",
-    "@typescript-eslint/parser": "^8.38.0",
-    "eslint": "^9.31.0",
-    "typescript": "^5.8.3",
+    "@typescript-eslint/eslint-plugin": "^8.39.1",
+    "@typescript-eslint/parser": "^8.39.1",
+    "eslint": "^9.33.0",
+    "typescript": "^5.9.2",
     "vite": "^5.0.0",
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.29.0"
   },
   "engines": {
     "node": ">=18.0.0"

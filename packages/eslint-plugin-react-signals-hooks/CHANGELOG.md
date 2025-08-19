@@ -5,6 +5,128 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.3] - 2025-08-19
+
+### Fixed
+
+- `prefer-show-over-ternary` fixes for edge cases
+
+## [1.5.0] - 2025-08-18
+
+### Added new rules
+
+- `forbid-signal-update-in-computed`
+  - Forbids updating signals inside `computed(...)` callbacks to keep them pure and read-only
+  - Detects direct `.value` writes, `.set()`/`.update()` calls, batched writes via `batch()`, and writes via call-derived signals
+
+### Improvements
+
+- Various development experience improvements
+
+## [1.4.0] - 2025-08-12
+
+### Added new rules
+
+- `forbid-signal-re-assignment`
+- `forbid-signal-destructuring`
+
+### Fixed
+
+A ton of improvements to existing rules, autofixes.
+
+## [1.3.0] - 2025-08-10
+
+### Added
+
+- New rule: `prefer-use-signal-ref-over-use-ref`
+  - Encourages using `useSignalRef` instead of `useRef` when `.current` is read during render/JSX.
+  - Autofix: adds `useSignalRef` import, replaces `useRef(...)` with `useSignalRef(...)`, preserves type params and initializer.
+  - Config: `onlyWhenReadInRender` (default true), `performance` budget, `severity` mapping.
+- Documentation: `docs/rules/prefer-use-signal-ref-over-use-ref.md` with incorrect/correct examples and options.
+- Tests: added `tests/prefer-use-signal-ref-over-use-ref/` with ESLint configs and fixtures.
+
+### Changed
+
+- Exported the new rule from `src/index.ts` and enabled default severity in the recommended map.
+- NPM scripts: added test/fix commands for the new rule and included them in aggregate runners.
+
+## [1.2.8 - 1.2.23] - 2025-08-10
+
+### Added
+
+- A lot of improvements and edge cases handling for existing rules, autofixes.
+
+### Changed
+
+- Minor test configuration adjustments to align with existing rule test patterns.
+
+## [1.2.7] - 2025-08-10
+
+### fixed autofix for prefer-signal-reads
+
+## [1.2.6] - 2025-08-10
+
+### Added
+
+- prefer-batch-updates: new diagnostic `nonUpdateSignalInBatch` to warn on signal reads inside `batch` callbacks without updates.
+- Tests: comprehensive fixtures locking `prefer-batch-updates` behaviors (unnecessary batch unwrapping, nonUpdateSignalInBatch), plugin scope, and import augmentation across rules.
+
+### Changed
+
+- prefer-batch-updates: autofix for `removeUnnecessaryBatch` now replaces the enclosing `ExpressionStatement` and unwraps multi-statement batch bodies, preserving all inner statements.
+- prefer-batch-updates: import-aware signal detection is the only supported mechanism; deprecated `suffix` option fully removed from rule types and schema.
+- Docs/Specs: updated to reflect React-only scope (`@preact/signals-react`) and new/updated diagnostics and autofixes.
+
+### Fixed
+
+- prefer-batch-updates: resolved inflated "useBatch" counts by resetting analysis accumulators per top-level pass.
+- Minor type cleanliness in signal read detection helpers.
+
+## [1.2.5] - 2025-08-08
+
+### Fixed
+
+- exhaustive-deps: fix for sentinel-guarded base case
+- exhaustive-deps: fix for ref-like variables
+
+## [1.2.4] - 2025-08-08
+
+### Fixed
+
+- exhaustive-deps: refs should not be dependencies
+
+## [1.2.3] - 2025-08-08
+
+### Added
+
+- prefer-signal-in-jsx: fixes for edge cases
+
+### Fixed
+
+- Fixes to exhaustive-deps rule, more edge cases handled and tested
+
+## [1.2.2] - 2025-08-08
+
+### Fixed
+
+- exhaustive-deps: Do not require array/object method names as dependencies when used as callees
+  (e.g., `.reduce`, `.map`, `.filter`). The rule now tracks only the object path, not the method name
+  (e.g., `matrixSignal.value[rowIndex]`, without `.reduce`).
+- exhaustive-deps: Allow listing only the base variable when it is directly read in sentinel guards
+  (e.g., `x === null || x === 'loading'`). Avoid forcing deep property chains like `base.deep.prop`
+  when `base` is declared and directly used in guards.
+
+### Added
+
+- Minimal regression test for sentinel-guarded base case: `tests/exhaustive-deps/sentinel-guarded-base.test.tsx`.
+- Additional edge-case adjustments in `tests/exhaustive-deps/edge-cases.test.tsx`.
+
+## [1.2.0] - 2025-07-30
+
+- Fixed warning for signals assignments already inside batch call
+- removed `prefer-batch-for-multi-mutations` rule, merged functionality with `prefer-batch-updates` rule
+- fixed signal-variable-name rule autofix
+
 ## [1.1.1] - 2025-07-30
 
 ### Changed

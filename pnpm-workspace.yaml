@@ -1,5 +1,7 @@
 packages:
-  - "packages/*"
+  - packages/*
+  - test-packages/*
 
 onlyBuiltDependencies:
   - oxc-resolver
+  - workerd

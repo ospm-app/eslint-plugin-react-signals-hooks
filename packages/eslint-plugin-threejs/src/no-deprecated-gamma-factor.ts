@@ -48,30 +48,28 @@ function reportDeprecatedGamma({
 
   const messageId = isTypeReference ? 'deprecatedGammaType' : 'deprecatedGammaProperty';
 
-  const messageData = isTypeReference
-    ? {
-        property: propertyName,
-        suggested: propertyInfo.typeSuggestion,
-      }
-    : {
-        property: propertyName,
-        suggested: propertyInfo.suggestion,
-      };
-
   context.report({
     node,
     messageId,
-    data: messageData,
+    data: isTypeReference
+      ? {
+          property: propertyName,
+          suggested: propertyInfo.typeSuggestion,
+        }
+      : {
+          property: propertyName,
+          suggested: propertyInfo.suggestion,
+        },
     fix: isTypeReference
-      ? undefined
-      : (fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null => {
+      ? null
+      : (fixer: TSESLint.RuleFixer): TSESLint.RuleFix | Array<TSESLint.RuleFix> | null => {
           if (propertyName === 'gammaFactor' || propertyName === 'gamma') {
-            const fixes = [];
+            const fixes: Array<TSESLint.RuleFix> = [];
 
             if (propertyInfo.needsColorManagement) {
               fixes.push(
                 fixer.insertTextBefore(
-                  context.getSourceCode().ast,
+                  context.sourceCode.ast,
                   'THREE.ColorManagement.enabled = true;\n\n'
                 )
               );
@@ -79,13 +77,17 @@ function reportDeprecatedGamma({
 
             if (node.parent?.type === 'Property' && node.parent.value === node) {
               // Handle object property case
-              return fixer.remove(node.parent);
+              fixes.push(fixer.remove(node.parent));
             }
 
-            return fixer.replaceText(
-              node,
-              `// ${propertyName} is no longer needed with proper color management`
+            fixes.push(
+              fixer.replaceText(
+                node,
+                `// ${propertyName} is no longer needed with proper color management`
+              )
             );
+
+            return fixes;
           } else if (propertyName === 'gammaInput' || propertyName === 'gammaOutput') {
             // For renderer.gammaInput/Output, set outputColorSpace
             return fixer.replaceText(
