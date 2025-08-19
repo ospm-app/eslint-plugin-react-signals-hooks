@@ -311,6 +311,7 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
           if (node.type !== AST_NODE_TYPES.ImportDeclaration) {
             return false;
           }
+
           return (
             typeof node.source.value === 'string' &&
             showModules.has(node.source.value) &&
@@ -391,9 +392,11 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
 
       const lastNamed = [...anyShowImport.specifiers]
         .reverse()
-        .find((s): s is TSESTree.ImportSpecifier => s.type === AST_NODE_TYPES.ImportSpecifier);
+        .find((s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
+          return s.type === AST_NODE_TYPES.ImportSpecifier;
+        });
 
-      if (lastNamed) {
+      if (typeof lastNamed !== 'undefined') {
         fixes.push(fixer.insertTextAfter(lastNamed, ', Show'));
 
         return;
@@ -405,13 +408,14 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
         }
       );
 
-      if (defaultSpec) {
+      if (typeof defaultSpec !== 'undefined') {
         fixes.push(
           fixer.replaceText(
             anyShowImport,
             `import ${defaultSpec.local.name}, { Show } from '${String(anyShowImport.source.value)}';`
           )
         );
+
         return;
       }
 
@@ -553,18 +557,30 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
                 ].join('\n');
               }
 
+              // If this logical expression is inside a JSXExpressionContainer, replace the container
+              // so we remove the surrounding braces `{}`.
+              const targetForReplace =
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+                node.parent?.type === AST_NODE_TYPES.JSXExpressionContainer ? node.parent : node;
+
               yield fixer.replaceText(
-                node,
+                targetForReplace,
                 context.sourceCode.getText(node).includes('\n')
                   ? buildMultiLine()
                   : buildSingleLine(node)
               );
 
-              if (hasShowImport || hasShowImportFromAny(context)) return;
+              if (hasShowImport || hasShowImportFromAny(context)) {
+                return;
+              }
 
               const fixes: Array<TSESLint.RuleFix> = [];
+
               ensureShowImportAny(fixer, fixes, context);
-              for (const f of fixes) yield f;
+
+              for (const f of fixes) {
+                yield f;
+              }
             },
           });
         }
@@ -590,11 +606,9 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
       [AST_NODE_TYPES.ReturnStatement](node: TSESTree.ReturnStatement): void {
         perf.trackNode(node);
 
-        if (node.argument === null || node.argument.type !== AST_NODE_TYPES.ConditionalExpression) {
-          return;
-        }
-
         if (
+          node.argument === null ||
+          node.argument.type !== AST_NODE_TYPES.ConditionalExpression ||
           !(
             branchIsJsx(node.argument.consequent) ||
             branchIsJsx(node.argument.alternate) ||
@@ -706,7 +720,10 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
               }
 
               yield fixer.replaceText(
-                node.argument,
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+                node.argument.parent?.type === AST_NODE_TYPES.JSXExpressionContainer
+                  ? node.argument.parent
+                  : node.argument,
                 context.sourceCode.getText(node.argument).includes('\n')
                   ? buildMultiLine(node.argument.alternate)
                   : buildSingleLine(node.argument.alternate)
@@ -771,15 +788,6 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
       [AST_NODE_TYPES.ConditionalExpression](node: TSESTree.ConditionalExpression): void {
         perf.trackNode(node);
 
-        const inJsxContext =
-          (node.parent !== null && // eslint-disable-line @typescript-eslint/no-unnecessary-condition
-            typeof node.parent !== 'undefined' &&
-            isJSXNode(node.parent)) ||
-          node.parent.type === AST_NODE_TYPES.JSXExpressionContainer;
-
-        const isDirectSignalIdentifier =
-          node.test.type === AST_NODE_TYPES.Identifier && signalVariables.has(node.test.name);
-
         // Do not report if this ternary is nested inside another ternary whose test is NOT a direct signal.
         // Example to skip: condExpr ? null : directSignal ? A : B
         // We only want the top-most conditional to be considered in such composite expressions.
@@ -797,7 +805,16 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
           }
         }
 
-        if (!(inJsxContext && isDirectSignalIdentifier)) {
+        if (
+          !(
+            ((node.parent !== null && // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+              typeof node.parent !== 'undefined' &&
+              isJSXNode(node.parent)) ||
+              node.parent.type === AST_NODE_TYPES.JSXExpressionContainer) &&
+            node.test.type === AST_NODE_TYPES.Identifier &&
+            signalVariables.has(node.test.name)
+          )
+        ) {
           return;
         }
 
@@ -842,27 +859,25 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
               const alternateText = context.sourceCode.getText(node.alternate);
 
               function isEffectivelyEmptyAlternate(): boolean {
-                const alt = node.alternate;
-
-                if (alt.type === AST_NODE_TYPES.Literal) {
+                if (node.alternate.type === AST_NODE_TYPES.Literal) {
                   // null, false, empty string
                   return (
-                    alt.value === null ||
-                    alt.value === false ||
-                    alt.value === '' ||
-                    alt.raw === 'null' ||
-                    alt.raw === 'false' ||
-                    alt.raw === "''" ||
-                    alt.raw === '""'
+                    node.alternate.value === null ||
+                    node.alternate.value === false ||
+                    node.alternate.value === '' ||
+                    node.alternate.raw === 'null' ||
+                    node.alternate.raw === 'false' ||
+                    node.alternate.raw === "''" ||
+                    node.alternate.raw === '""'
                   );
                 }
 
-                if (alt.type === AST_NODE_TYPES.Identifier) {
-                  return alt.name === 'undefined';
+                if (node.alternate.type === AST_NODE_TYPES.Identifier) {
+                  return node.alternate.name === 'undefined';
                 }
 
-                if (alt.type === AST_NODE_TYPES.JSXFragment) {
-                  return context.sourceCode.getText(alt).replace(/\s+/g, '') === '<></>';
+                if (node.alternate.type === AST_NODE_TYPES.JSXFragment) {
+                  return context.sourceCode.getText(node.alternate).replace(/\s+/g, '') === '<></>';
                 }
 
                 return false;
@@ -966,7 +981,8 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
               }
 
               yield fixer.replaceText(
-                node,
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+                node.parent?.type === AST_NODE_TYPES.JSXExpressionContainer ? node.parent : node,
                 context.sourceCode.getText(node).includes('\n')
                   ? buildMultiLine()
                   : buildSingleLine()

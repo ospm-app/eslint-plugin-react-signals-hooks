@@ -1,6 +1,6 @@
 {
   "name": "@ospm/eslint-plugin-react-signals-hooks",
-  "version": "1.5.4",
+  "version": "1.5.5",
   "type": "module",
   "description": "ESLint plugin for React Signals hooks - enforces best practices, performance optimizations, and integration patterns for @preact/signals-react usage in React projects",
   "main": "dist/cjs/index.js",
