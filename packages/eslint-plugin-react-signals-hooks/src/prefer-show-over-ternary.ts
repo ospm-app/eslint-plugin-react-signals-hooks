@@ -8,7 +8,6 @@ import {
 } from '@typescript-eslint/utils';
 import type { RuleContext, SuggestionReportDescriptor } from '@typescript-eslint/utils/ts-eslint';
 
-import { ensureNamedImportFixes } from './utils/imports.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import {
   endPhase,
@@ -19,7 +18,6 @@ import {
   createPerformanceTracker,
   DEFAULT_PERFORMANCE_BUDGET,
 } from './utils/performance.js';
-import { buildSuffixRegex, hasSignalSuffix } from './utils/suffix.js';
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
 
@@ -38,8 +36,6 @@ type Option = {
   suffix?: string;
   performance?: PerformanceBudget;
   severity?: Severity;
-  /** Additional modules that export Show/signal utilities (e.g., alternative packages) */
-  extraCreatorModules?: Array<string>;
 };
 
 type Options = [Option?];
@@ -109,6 +105,40 @@ function getComplexity(
   return complexity;
 }
 
+// Require at least one JSX branch (or effectively empty) to avoid firing for non-JSX ternaries (e.g., numbers)
+function branchIsJsx(n: TSESTree.Node): boolean {
+  return n.type === AST_NODE_TYPES.JSXElement || n.type === AST_NODE_TYPES.JSXFragment;
+}
+
+function isEffectivelyEmpty(
+  n: TSESTree.Node,
+  context: Readonly<TSESLint.RuleContext<MessageIds, Options>>
+): boolean {
+  if (n.type === AST_NODE_TYPES.Literal) {
+    return (
+      n.value === null ||
+      n.value === false ||
+      n.value === '' ||
+      n.raw === 'null' ||
+      n.raw === 'false' ||
+      n.raw === "''" ||
+      n.raw === '""'
+    );
+  }
+
+  if (n.type === AST_NODE_TYPES.Identifier) {
+    return n.name === 'undefined';
+  }
+
+  if (n.type === AST_NODE_TYPES.JSXFragment) {
+    const text = context.sourceCode.getText(n).replace(/\s+/g, '');
+
+    return text === '<></>';
+  }
+
+  return false;
+}
+
 let hasShowImport = false;
 
 const signalVariables = new Set<string>();
@@ -155,7 +185,7 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
       preferShowOverTernary:
         'Prefer using the `<Show>` component instead of ternary for better performance with signal conditions.',
       suggestShowComponent: 'Replace ternary with `<Show>` component',
-      addShowImport: 'Add `Show` import from @preact/signals-react',
+      addShowImport: 'Add `Show` import from @preact/signals-react/utils',
     },
     schema: [
       {
@@ -215,11 +245,6 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
             type: 'string',
             default: 'Signal',
           },
-          extraCreatorModules: {
-            type: 'array',
-            items: { type: 'string', minLength: 1 },
-            default: [],
-          },
         },
         additionalProperties: false,
       },
@@ -277,18 +302,18 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
 
     endPhase(perfKey, 'ruleInit');
 
-    const creatorModules = new Set<string>([
-      '@preact/signals-react',
-      ...(Array.isArray(option?.extraCreatorModules) ? option.extraCreatorModules : []),
-    ]);
+    // Where the Show component is exported from
+    const showModules = new Set<string>(['@preact/signals-react/utils']);
 
     function hasShowImportFromAny(context: Readonly<RuleContext<MessageIds, Options>>): boolean {
       return context.sourceCode.ast.body.some(
         (node: TSESTree.ProgramStatement): node is TSESTree.ImportDeclaration => {
-          if (node.type !== AST_NODE_TYPES.ImportDeclaration) return false;
+          if (node.type !== AST_NODE_TYPES.ImportDeclaration) {
+            return false;
+          }
           return (
             typeof node.source.value === 'string' &&
-            creatorModules.has(node.source.value) &&
+            showModules.has(node.source.value) &&
             node.specifiers.some((s: TSESTree.ImportClause): boolean => {
               return (
                 s.type === AST_NODE_TYPES.ImportSpecifier &&
@@ -316,13 +341,14 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
         }
       );
 
-      const anyCreatorImport = importDecls.find((d: TSESTree.ImportDeclaration): boolean => {
-        return typeof d.source.value === 'string' && creatorModules.has(d.source.value);
+      // Prefer to merge into an existing Show module import, otherwise add a new import from utils
+      const anyShowImport = importDecls.find((d: TSESTree.ImportDeclaration): boolean => {
+        return typeof d.source.value === 'string' && showModules.has(d.source.value);
       });
 
-      const importText = "import { Show } from '@preact/signals-react';\n";
+      const importText = "import { Show } from '@preact/signals-react/utils';\n";
 
-      if (!anyCreatorImport) {
+      if (!anyShowImport) {
         const lastImport = importDecls[importDecls.length - 1];
 
         const firstStmt = context.sourceCode.ast.body[0];
@@ -340,32 +366,30 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
         return;
       }
 
-      const hasNamespace = anyCreatorImport.specifiers.some(
+      const hasNamespace = anyShowImport.specifiers.some(
         (s: TSESTree.ImportClause): s is TSESTree.ImportNamespaceSpecifier => {
           return s.type === AST_NODE_TYPES.ImportNamespaceSpecifier;
         }
       );
 
-      if (anyCreatorImport.importKind === 'type' || hasNamespace) {
-        fixes.push(fixer.insertTextAfter(anyCreatorImport, `\n${importText}`));
+      if (anyShowImport.importKind === 'type' || hasNamespace) {
+        fixes.push(fixer.insertTextAfter(anyShowImport, `\n${importText}`));
         return;
       }
 
       if (
-        anyCreatorImport.specifiers.some(
-          (s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
-            return (
-              s.type === AST_NODE_TYPES.ImportSpecifier &&
-              'name' in s.imported &&
-              s.imported.name === 'Show'
-            );
-          }
-        )
+        anyShowImport.specifiers.some((s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
+          return (
+            s.type === AST_NODE_TYPES.ImportSpecifier &&
+            'name' in s.imported &&
+            s.imported.name === 'Show'
+          );
+        })
       ) {
         return;
       }
 
-      const lastNamed = [...anyCreatorImport.specifiers]
+      const lastNamed = [...anyShowImport.specifiers]
         .reverse()
         .find((s): s is TSESTree.ImportSpecifier => s.type === AST_NODE_TYPES.ImportSpecifier);
 
@@ -375,7 +399,7 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
         return;
       }
 
-      const defaultSpec = anyCreatorImport.specifiers.find(
+      const defaultSpec = anyShowImport.specifiers.find(
         (s: TSESTree.ImportClause): s is TSESTree.ImportDefaultSpecifier => {
           return s.type === AST_NODE_TYPES.ImportDefaultSpecifier;
         }
@@ -384,14 +408,14 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
       if (defaultSpec) {
         fixes.push(
           fixer.replaceText(
-            anyCreatorImport,
-            `import ${defaultSpec.local.name}, { Show } from '${String(anyCreatorImport.source.value)}';`
+            anyShowImport,
+            `import ${defaultSpec.local.name}, { Show } from '${String(anyShowImport.source.value)}';`
           )
         );
         return;
       }
 
-      fixes.push(fixer.insertTextAfter(anyCreatorImport, `\n${importText}`));
+      fixes.push(fixer.insertTextAfter(anyShowImport, `\n${importText}`));
     }
 
     hasShowImport = hasShowImportFromAny(context);
@@ -414,18 +438,20 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
           PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing
         );
 
-        // Handle function declarations and variables
+        // Handle function scopes and top-level program scope to collect signal variables
         if (
           node.type === AST_NODE_TYPES.FunctionDeclaration ||
           node.type === AST_NODE_TYPES.FunctionExpression ||
-          node.type === AST_NODE_TYPES.ArrowFunctionExpression
+          node.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+          node.type === AST_NODE_TYPES.Program
         ) {
           const scope = context.sourceCode.getScope(node);
 
           for (const variable of scope.variables) {
             if (
-              variable.defs.some((def: Definition) => {
+              variable.defs.some((def: Definition): boolean => {
                 trackOperation(perfKey, PerformanceOperations.signalCheck);
+
                 return (
                   'init' in def.node &&
                   def.node.init?.type === AST_NODE_TYPES.CallExpression &&
@@ -442,6 +468,125 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
         }
       },
 
+      [AST_NODE_TYPES.VariableDeclarator](node: TSESTree.VariableDeclarator): void {
+        perf.trackNode(node);
+
+        if (
+          node.id.type === AST_NODE_TYPES.Identifier &&
+          node.init &&
+          node.init.type === AST_NODE_TYPES.CallExpression &&
+          node.init.callee.type === AST_NODE_TYPES.Identifier &&
+          new Set(option?.signalNames ?? ['signal', 'useSignal', 'createSignal']).has(
+            node.init.callee.name
+          )
+        ) {
+          signalVariables.add(node.id.name);
+        }
+      },
+
+      [AST_NODE_TYPES.LogicalExpression](node: TSESTree.LogicalExpression): void {
+        perf.trackNode(node);
+
+        if (
+          !(
+            (node.parent !== null && // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+              typeof node.parent !== 'undefined' &&
+              isJSXNode(node.parent)) ||
+            node.parent.type === AST_NODE_TYPES.JSXExpressionContainer
+          ) ||
+          !(node.left.type === AST_NODE_TYPES.Identifier && signalVariables.has(node.left.name)) ||
+          !(
+            node.right.type === AST_NODE_TYPES.JSXElement ||
+            node.right.type === AST_NODE_TYPES.JSXFragment
+          )
+        ) {
+          return;
+        }
+
+        if (getSeverity('preferShowOverTernary', option) === 'off') {
+          return;
+        }
+
+        const suggestions: Array<SuggestionReportDescriptor<MessageIds>> = [];
+
+        if (getSeverity('suggestShowComponent', option) !== 'off') {
+          suggestions.push({
+            messageId: 'suggestShowComponent',
+            *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix, void, unknown> {
+              const leftText = context.sourceCode.getText(node.left);
+              const rightText = context.sourceCode.getText(node.right);
+
+              // Determine mapping based on operator
+              function buildSingleLine(node: TSESTree.LogicalExpression): string {
+                if (node.operator === '&&') {
+                  return `<Show when={${leftText}}>${rightText}</Show>`;
+                }
+
+                // operator '||' -> render right when left is falsy
+                return `<Show when={!(${leftText})}>${rightText}</Show>`;
+              }
+
+              const baseIndent = ' '.repeat(
+                context.sourceCode.getLocFromIndex(node.range[0]).column
+              );
+
+              const indent1 = `${baseIndent} `;
+
+              const indent2 = `${baseIndent}    `;
+
+              function buildMultiLine(): string {
+                if (node.operator === '&&') {
+                  return [
+                    `<Show`,
+                    `${indent1}when={${leftText}}`,
+                    `>`,
+                    `${indent2}${rightText}`,
+                    `</Show>`,
+                  ].join('\n');
+                }
+                return [
+                  `<Show`,
+                  `${indent1}when={!(${leftText})}`,
+                  `>`,
+                  `${indent2}${rightText}`,
+                  `</Show>`,
+                ].join('\n');
+              }
+
+              yield fixer.replaceText(
+                node,
+                context.sourceCode.getText(node).includes('\n')
+                  ? buildMultiLine()
+                  : buildSingleLine(node)
+              );
+
+              if (hasShowImport || hasShowImportFromAny(context)) return;
+
+              const fixes: Array<TSESLint.RuleFix> = [];
+              ensureShowImportAny(fixer, fixes, context);
+              for (const f of fixes) yield f;
+            },
+          });
+        }
+
+        if (!hasShowImportFromAny(context) && getSeverity('addShowImport', option) !== 'off') {
+          suggestions.push({
+            messageId: 'addShowImport',
+            fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+              const fixes: Array<TSESLint.RuleFix> = [];
+              ensureShowImportAny(fixer, fixes, context);
+              return fixes.length > 0 ? fixes : null;
+            },
+          });
+        }
+
+        context.report({
+          node,
+          messageId: 'preferShowOverTernary',
+          suggest: suggestions,
+        });
+      },
+
       [AST_NODE_TYPES.ReturnStatement](node: TSESTree.ReturnStatement): void {
         perf.trackNode(node);
 
@@ -449,140 +594,28 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
           return;
         }
 
-        const branchIsJsx = (n: TSESTree.Node): boolean =>
-          n.type === AST_NODE_TYPES.JSXElement || n.type === AST_NODE_TYPES.JSXFragment;
-
-        function isEffectivelyEmpty(n: TSESTree.Node): boolean {
-          if (n.type === AST_NODE_TYPES.Literal) {
-            return (
-              n.value === null ||
-              n.value === false ||
-              n.value === '' ||
-              n.raw === 'null' ||
-              n.raw === 'false' ||
-              n.raw === "''" ||
-              n.raw === '""'
-            );
-          }
-
-          if (n.type === AST_NODE_TYPES.Identifier) {
-            return n.name === 'undefined';
-          }
-
-          if (n.type === AST_NODE_TYPES.JSXFragment) {
-            const text = context.sourceCode.getText(n).replace(/\s+/g, '');
-
-            return text === '<></>';
-          }
-
-          return false;
-        }
-
         if (
           !(
             branchIsJsx(node.argument.consequent) ||
             branchIsJsx(node.argument.alternate) ||
-            isEffectivelyEmpty(node.argument.consequent) ||
-            isEffectivelyEmpty(node.argument.alternate)
+            isEffectivelyEmpty(node.argument.consequent, context) ||
+            isEffectivelyEmpty(node.argument.alternate, context)
           )
         ) {
-          return;
-        }
-
-        // Reuse the same logic as ConditionalExpression visitor by operating on arg
-        const testText = context.sourceCode.getText(node.argument.test);
-
-        const containsSignalFromVars = [...signalVariables].some((signal: string): boolean => {
-          // eslint-disable-next-line security/detect-non-literal-regexp
-          return new RegExp(`\\b${signal}\\b`).test(testText);
-        });
-
-        const suffixRegex = buildSuffixRegex(option?.suffix);
-
-        function hasSuffixSignalInExpr(expr: TSESTree.Node): boolean {
-          if (expr.type === AST_NODE_TYPES.Identifier) {
-            return hasSignalSuffix(expr.name, suffixRegex);
-          }
-          if (expr.type === AST_NODE_TYPES.MemberExpression) {
-            let obj: TSESTree.Expression | TSESTree.PrivateIdentifier = expr.object;
-            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-            while (obj && obj.type === AST_NODE_TYPES.MemberExpression) {
-              obj = obj.object as TSESTree.Expression;
-            }
-            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-            if (obj && obj.type === AST_NODE_TYPES.Identifier) {
-              return hasSignalSuffix(obj.name, suffixRegex);
-            }
-            return false;
-          }
-          if (
-            expr.type === AST_NODE_TYPES.ArrowFunctionExpression ||
-            expr.type === AST_NODE_TYPES.FunctionExpression
-          ) {
-            return false;
-          }
-          for (const key of [
-            'left',
-            'right',
-            'argument',
-            'callee',
-            'object',
-            'property',
-            'test',
-            'consequent',
-            'alternate',
-            'expression',
-          ] as const) {
-            const v = expr[key as keyof typeof expr];
-
-            if (
-              typeof v !== 'undefined' &&
-              typeof v === 'object' &&
-              'type' in v &&
-              hasSuffixSignalInExpr(v)
-            ) {
-              return true;
-            }
-          }
-
-          if ('elements' in expr && Array.isArray(expr.elements)) {
-            for (const e of expr.elements) {
-              if (e && typeof e === 'object' && 'type' in e && hasSuffixSignalInExpr(e)) {
-                return true;
-              }
-            }
-          }
-
-          if ('arguments' in expr && Array.isArray(expr.arguments)) {
-            for (const a of expr.arguments) {
-              if (
-                typeof a !== 'undefined' &&
-                typeof a === 'object' &&
-                'type' in a &&
-                hasSuffixSignalInExpr(a)
-              ) {
-                return true;
-              }
-            }
-          }
-
-          return false;
-        }
-
-        if (!(containsSignalFromVars || hasSuffixSignalInExpr(node.argument.test))) {
           return;
         }
 
         if (
           !(
+            node.argument.test.type === AST_NODE_TYPES.Identifier &&
+            signalVariables.has(node.argument.test.name)
+          ) ||
+          !(
             typeof option?.minComplexity === 'number' &&
             getComplexity(node.argument) >= option.minComplexity
-          )
+          ) ||
+          getSeverity('preferShowOverTernary', option) === 'off'
         ) {
-          return;
-        }
-
-        if (getSeverity('preferShowOverTernary', option) === 'off') {
           return;
         }
 
@@ -606,8 +639,8 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
 
               const alternateText = context.sourceCode.getText(node.argument.alternate);
 
-              const consEmpty = isEffectivelyEmpty(node.argument.consequent);
-              const altEmpty = isEffectivelyEmpty(node.argument.alternate);
+              const consEmpty = isEffectivelyEmpty(node.argument.consequent, context);
+              const altEmpty = isEffectivelyEmpty(node.argument.alternate, context);
 
               if (consEmpty && altEmpty) {
                 return;
@@ -621,6 +654,11 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
               const indent2 = `${baseIndent}    `;
 
               function buildSingleLine(alternate: TSESTree.Expression): string {
+                if (node.argument === null || !('test' in node.argument)) {
+                  return '';
+                }
+
+                const testText = context.sourceCode.getText(node.argument.test);
                 if (consEmpty && !altEmpty) {
                   return `<Show when={!(${testText})}>${branchIsJsx(alternate) ? alternateText : `{${alternateText}}`}</Show>`;
                 } else if (!consEmpty && altEmpty) {
@@ -631,6 +669,12 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
               }
 
               function buildMultiLine(alternate: TSESTree.Expression): string {
+                if (node.argument === null || !('test' in node.argument)) {
+                  return '';
+                }
+
+                const testText = context.sourceCode.getText(node.argument.test);
+
                 if (consEmpty && !altEmpty) {
                   return [
                     `<Show`,
@@ -727,109 +771,27 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
       [AST_NODE_TYPES.ConditionalExpression](node: TSESTree.ConditionalExpression): void {
         perf.trackNode(node);
 
-        // Allow ternaries inside JSX, including when wrapped by JSXExpressionContainer
-        const parent = node.parent;
-
         const inJsxContext =
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          (parent !== null && typeof parent !== 'undefined' && isJSXNode(parent)) ||
-          parent.type === AST_NODE_TYPES.JSXExpressionContainer;
+          (node.parent !== null && // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+            typeof node.parent !== 'undefined' &&
+            isJSXNode(node.parent)) ||
+          node.parent.type === AST_NODE_TYPES.JSXExpressionContainer;
 
-        if (!inJsxContext) {
+        const isDirectSignalIdentifier =
+          node.test.type === AST_NODE_TYPES.Identifier && signalVariables.has(node.test.name);
+
+        if (!(inJsxContext && isDirectSignalIdentifier)) {
           return;
         }
 
-        // Check if the condition contains signal reads by either:
-        // 1) previously recorded local signal variables (init via known creators)
-        // 2) identifiers or member chains whose base has the configured suffix
-        const testText = context.sourceCode.getText(node.test);
-
-        const containsSignalFromVars = [...signalVariables].some((signal: string): boolean => {
-          // eslint-disable-next-line security/detect-non-literal-regexp
-          return new RegExp(`\\b${signal}\\b`).test(testText);
-        });
-
-        const suffixRegex = buildSuffixRegex(option?.suffix);
-
-        function hasSuffixSignalInExpr(expr: TSESTree.Node): boolean {
-          if (expr.type === AST_NODE_TYPES.Identifier) {
-            return hasSignalSuffix(expr.name, suffixRegex);
-          }
-
-          if (expr.type === AST_NODE_TYPES.MemberExpression) {
-            let obj: TSESTree.Expression | TSESTree.PrivateIdentifier = expr.object;
-
-            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-            while (obj && obj.type === AST_NODE_TYPES.MemberExpression) {
-              obj = obj.object as TSESTree.Expression;
-            }
-
-            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-            if (obj && obj.type === AST_NODE_TYPES.Identifier) {
-              return hasSignalSuffix(obj.name, suffixRegex);
-            }
-
-            return false;
-          }
-
-          if (
-            expr.type === AST_NODE_TYPES.ArrowFunctionExpression ||
-            expr.type === AST_NODE_TYPES.FunctionExpression
-          ) {
-            return false;
-          }
-
-          for (const key of [
-            'left',
-            'right',
-            'argument',
-            'callee',
-            'object',
-            'property',
-            'test',
-            'consequent',
-            'alternate',
-            'expression',
-          ] as const) {
-            const v = expr[key as keyof typeof expr];
-            if (
-              typeof v !== 'undefined' &&
-              typeof v === 'object' &&
-              'type' in v &&
-              hasSuffixSignalInExpr(v)
-            ) {
-              return true;
-            }
-          }
-
-          // Arrays and call args
-          if ('elements' in expr && Array.isArray(expr.elements)) {
-            for (const e of expr.elements) {
-              if (e && typeof e === 'object' && 'type' in e && hasSuffixSignalInExpr(e)) {
-                return true;
-              }
-            }
-          }
-          if ('arguments' in expr && Array.isArray(expr.arguments)) {
-            for (const a of expr.arguments) {
-              if (
-                typeof a !== 'undefined' &&
-                typeof a === 'object' &&
-                'type' in a &&
-                hasSuffixSignalInExpr(a)
-              ) {
-                return true;
-              }
-            }
-          }
-
-          return false;
-        }
-
-        const containsSignal = containsSignalFromVars || hasSuffixSignalInExpr(node.test);
-
-        // Skip if no signal variables are found in the condition
-        if (!containsSignal) {
+        if (
+          !(
+            branchIsJsx(node.consequent) ||
+            branchIsJsx(node.alternate) ||
+            isEffectivelyEmpty(node.consequent, context) ||
+            isEffectivelyEmpty(node.alternate, context)
+          )
+        ) {
           return;
         }
 
@@ -840,202 +802,333 @@ export const preferShowOverTernaryRule = ESLintUtils.RuleCreator((name: string):
 
         trackOperation(perfKey, PerformanceOperations.complexityAnalysis);
 
-        if (typeof option?.minComplexity === 'number' && complexity >= option.minComplexity) {
-          if (getSeverity('preferShowOverTernary', option) === 'off') {
-            return;
-          }
+        if (
+          !(typeof option?.minComplexity === 'number' && complexity >= option.minComplexity) ||
+          getSeverity('preferShowOverTernary', option) === 'off'
+        ) {
+          return;
+        }
 
-          const suggestions: Array<SuggestionReportDescriptor<MessageIds>> = [];
+        const suggestions: Array<SuggestionReportDescriptor<MessageIds>> = [];
 
-          if (getSeverity('suggestShowComponent', option) !== 'off') {
-            suggestions.push({
-              messageId: 'suggestShowComponent',
-              *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix, void, unknown> {
-                const consequentIsJsx =
-                  node.consequent.type === AST_NODE_TYPES.JSXElement ||
-                  node.consequent.type === AST_NODE_TYPES.JSXFragment;
+        if (getSeverity('suggestShowComponent', option) !== 'off') {
+          suggestions.push({
+            messageId: 'suggestShowComponent',
+            *fix(fixer: TSESLint.RuleFixer): Generator<TSESLint.RuleFix, void, unknown> {
+              const consequentText = context.sourceCode.getText(node.consequent);
+              const childrenText =
+                node.consequent.type === AST_NODE_TYPES.JSXElement ||
+                node.consequent.type === AST_NODE_TYPES.JSXFragment
+                  ? `${consequentText}`
+                  : `{${consequentText}}`;
 
-                const consequentText = context.sourceCode.getText(node.consequent);
-                const childrenText = consequentIsJsx ? `${consequentText}` : `{${consequentText}}`;
+              const alternateText = context.sourceCode.getText(node.alternate);
 
-                const alternateText = context.sourceCode.getText(node.alternate);
+              function isEffectivelyEmptyAlternate(): boolean {
+                const alt = node.alternate;
 
-                const isEffectivelyEmptyAlternate = (): boolean => {
-                  const alt = node.alternate;
-
-                  if (alt.type === AST_NODE_TYPES.Literal) {
-                    // null, false, empty string
-                    return (
-                      alt.value === null ||
-                      alt.value === false ||
-                      alt.value === '' ||
-                      alt.raw === 'null' ||
-                      alt.raw === 'false' ||
-                      alt.raw === "''" ||
-                      alt.raw === '""'
-                    );
-                  }
-
-                  if (alt.type === AST_NODE_TYPES.Identifier) {
-                    return alt.name === 'undefined';
-                  }
-
-                  if (alt.type === AST_NODE_TYPES.JSXFragment) {
-                    // Heuristic: empty fragment text
-                    const text = context.sourceCode.getText(alt).replace(/\s+/g, '');
-                    return text === '<></>';
-                  }
-
-                  return false;
-                };
-
-                const isEffectivelyEmptyConsequent = (): boolean => {
-                  const cons = node.consequent;
-
-                  if (cons.type === AST_NODE_TYPES.Literal) {
-                    // null, false, empty string
-                    return (
-                      cons.value === null ||
-                      cons.value === false ||
-                      cons.value === '' ||
-                      cons.raw === 'null' ||
-                      cons.raw === 'false' ||
-                      cons.raw === "''" ||
-                      cons.raw === '""'
-                    );
-                  }
-
-                  if (cons.type === AST_NODE_TYPES.Identifier) {
-                    return cons.name === 'undefined';
-                  }
-
-                  if (cons.type === AST_NODE_TYPES.JSXFragment) {
-                    const text = context.sourceCode.getText(cons).replace(/\s+/g, '');
-                    return text === '<></>';
-                  }
-
-                  return false;
-                };
-
-                const testText = context.sourceCode.getText(node.test);
-
-                const consEmpty = isEffectivelyEmptyConsequent();
-                const altEmpty = isEffectivelyEmptyAlternate();
-
-                // If both branches are effectively empty, skip providing a fix
-                if (consEmpty && altEmpty) {
-                  return;
+                if (alt.type === AST_NODE_TYPES.Literal) {
+                  // null, false, empty string
+                  return (
+                    alt.value === null ||
+                    alt.value === false ||
+                    alt.value === '' ||
+                    alt.raw === 'null' ||
+                    alt.raw === 'false' ||
+                    alt.raw === "''" ||
+                    alt.raw === '""'
+                  );
                 }
 
-                // Decide single-line vs multi-line formatting based on original ternary text
-                const originalText = context.sourceCode.getText(node);
+                if (alt.type === AST_NODE_TYPES.Identifier) {
+                  return alt.name === 'undefined';
+                }
 
-                const isMultiline = originalText.includes('\n');
+                if (alt.type === AST_NODE_TYPES.JSXFragment) {
+                  return context.sourceCode.getText(alt).replace(/\s+/g, '') === '<></>';
+                }
 
-                // Compute indentation for pretty multi-line output
-                const startLoc = context.sourceCode.getLocFromIndex(node.range[0]);
+                return false;
+              }
 
-                const baseIndent = ' '.repeat(startLoc.column);
+              function isEffectivelyEmptyConsequent(): boolean {
+                if (node.consequent.type === AST_NODE_TYPES.Literal) {
+                  // null, false, empty string
+                  return (
+                    node.consequent.value === null ||
+                    node.consequent.value === false ||
+                    node.consequent.value === '' ||
+                    node.consequent.raw === 'null' ||
+                    node.consequent.raw === 'false' ||
+                    node.consequent.raw === "''" ||
+                    node.consequent.raw === '""'
+                  );
+                }
 
-                const indent1 = `${baseIndent} `;
+                if (node.consequent.type === AST_NODE_TYPES.Identifier) {
+                  return node.consequent.name === 'undefined';
+                }
 
-                const indent2 = `${baseIndent}    `;
+                if (node.consequent.type === AST_NODE_TYPES.JSXFragment) {
+                  return (
+                    context.sourceCode.getText(node.consequent).replace(/\s+/g, '') === '<></>'
+                  );
+                }
 
-                const buildSingleLine = (): string => {
-                  if (consEmpty && !altEmpty) {
-                    return `<Show when={!(${testText})}>${
+                return false;
+              }
+
+              const testText = context.sourceCode.getText(node.test);
+
+              const consEmpty = isEffectivelyEmptyConsequent();
+              const altEmpty = isEffectivelyEmptyAlternate();
+
+              // If both branches are effectively empty, skip providing a fix
+              if (consEmpty && altEmpty) {
+                return;
+              }
+
+              const baseIndent = ' '.repeat(
+                context.sourceCode.getLocFromIndex(node.range[0]).column
+              );
+
+              const indent1 = `${baseIndent} `;
+
+              const indent2 = `${baseIndent}    `;
+
+              function buildSingleLine(): string {
+                if (consEmpty && !altEmpty) {
+                  return `<Show when={!(${testText})}>${
+                    node.alternate.type === AST_NODE_TYPES.JSXElement ||
+                    node.alternate.type === AST_NODE_TYPES.JSXFragment
+                      ? alternateText
+                      : `{${alternateText}}`
+                  }</Show>`;
+                } else if (!consEmpty && altEmpty) {
+                  return `<Show when={${testText}}>${childrenText}</Show>`;
+                }
+
+                return `<Show when={${testText}} fallback={${alternateText}}>${childrenText}</Show>`;
+              }
+
+              function buildMultiLine(): string {
+                if (consEmpty && !altEmpty) {
+                  return [
+                    `<Show`,
+                    `${indent1}when={!(${testText})}`,
+                    `>`,
+                    `${indent2}${
                       node.alternate.type === AST_NODE_TYPES.JSXElement ||
                       node.alternate.type === AST_NODE_TYPES.JSXFragment
                         ? alternateText
                         : `{${alternateText}}`
-                    }</Show>`;
-                  } else if (!consEmpty && altEmpty) {
-                    return `<Show when={${testText}}>${childrenText}</Show>`;
-                  }
+                    }`,
+                    `</Show>`,
+                  ].join('\n');
+                }
 
-                  return `<Show when={${testText}} fallback={${alternateText}}>${childrenText}</Show>`;
-                };
-
-                const buildMultiLine = (): string => {
-                  if (consEmpty && !altEmpty) {
-                    const altIsJsx =
-                      node.alternate.type === AST_NODE_TYPES.JSXElement ||
-                      node.alternate.type === AST_NODE_TYPES.JSXFragment;
-                    const altChildren = altIsJsx ? alternateText : `{${alternateText}}`;
-                    return [
-                      `<Show`,
-                      `${indent1}when={!(${testText})}`,
-                      `>`,
-                      `${indent2}${altChildren}`,
-                      `</Show>`,
-                    ].join('\n');
-                  }
-
-                  if (!consEmpty && altEmpty) {
-                    return [
-                      `<Show`,
-                      `${indent1}when={${testText}}`,
-                      `>`,
-                      `${indent2}${childrenText}`,
-                      `</Show>`,
-                    ].join('\n');
-                  }
-
-                  // Both have content: include fallback on its own line
+                if (!consEmpty && altEmpty) {
                   return [
                     `<Show`,
                     `${indent1}when={${testText}}`,
-                    `${indent1}fallback={${alternateText}}`,
                     `>`,
                     `${indent2}${childrenText}`,
                     `</Show>`,
                   ].join('\n');
-                };
-
-                const fixText = isMultiline ? buildMultiLine() : buildSingleLine();
-
-                yield fixer.replaceText(node, fixText);
-
-                if (hasShowImport) {
-                  return;
                 }
 
-                // Also add the Show import within the same suggestion for a single-apply experience
-                const importFixes = ensureNamedImportFixes(
-                  { sourceCode: context.sourceCode },
-                  fixer,
-                  '@preact/signals-react',
-                  'Show'
-                );
+                // Both have content: include fallback on its own line
+                return [
+                  `<Show`,
+                  `${indent1}when={${testText}}`,
+                  `${indent1}fallback={${alternateText}}`,
+                  `>`,
+                  `${indent2}${childrenText}`,
+                  `</Show>`,
+                ].join('\n');
+              }
 
-                for (const f of importFixes) {
-                  yield f;
-                }
-              },
-            });
-          }
+              yield fixer.replaceText(
+                node,
+                context.sourceCode.getText(node).includes('\n')
+                  ? buildMultiLine()
+                  : buildSingleLine()
+              );
 
-          if (!hasShowImport && getSeverity('addShowImport', option) !== 'off') {
-            suggestions.push({
-              messageId: 'addShowImport',
-              fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
-                const fixes = ensureNamedImportFixes(
-                  { sourceCode: context.sourceCode },
-                  fixer,
-                  '@preact/signals-react',
-                  'Show'
-                );
-                return fixes.length > 0 ? fixes : null;
-              },
-            });
-          }
+              if (hasShowImport || hasShowImportFromAny(context)) {
+                return;
+              }
 
-          context.report({
-            node,
-            messageId: 'preferShowOverTernary',
-            suggest: suggestions,
+              const fixes: Array<TSESLint.RuleFix> = [];
+
+              ensureShowImportAny(fixer, fixes, context);
+
+              for (const f of fixes) {
+                yield f;
+              }
+            },
           });
         }
+
+        if (!hasShowImport && getSeverity('addShowImport', option) !== 'off') {
+          suggestions.push({
+            messageId: 'addShowImport',
+            fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+              const fixes: Array<TSESLint.RuleFix> = [];
+
+              ensureShowImportAny(fixer, fixes, context);
+
+              return fixes.length > 0 ? fixes : null;
+            },
+          });
+        }
+
+        context.report({
+          node,
+          messageId: 'preferShowOverTernary',
+          suggest: suggestions,
+          fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+            const consequentText = context.sourceCode.getText(node.consequent);
+            const childrenText =
+              node.consequent.type === AST_NODE_TYPES.JSXElement ||
+              node.consequent.type === AST_NODE_TYPES.JSXFragment
+                ? `${consequentText}`
+                : `{${consequentText}}`;
+
+            const alternateText = context.sourceCode.getText(node.alternate);
+
+            function isEffectivelyEmptyAlternate(): boolean {
+              const alt = node.alternate;
+              if (alt.type === AST_NODE_TYPES.Literal) {
+                return (
+                  alt.value === null ||
+                  alt.value === false ||
+                  alt.value === '' ||
+                  alt.raw === 'null' ||
+                  alt.raw === 'false' ||
+                  alt.raw === "''" ||
+                  alt.raw === '""'
+                );
+              }
+
+              if (alt.type === AST_NODE_TYPES.Identifier) {
+                return alt.name === 'undefined';
+              }
+
+              if (alt.type === AST_NODE_TYPES.JSXFragment) {
+                return context.sourceCode.getText(alt).replace(/\s+/g, '') === '<></>';
+              }
+
+              return false;
+            }
+
+            function isEffectivelyEmptyConsequent(): boolean {
+              if (node.consequent.type === AST_NODE_TYPES.Literal) {
+                return (
+                  node.consequent.value === null ||
+                  node.consequent.value === false ||
+                  node.consequent.value === '' ||
+                  node.consequent.raw === 'null' ||
+                  node.consequent.raw === 'false' ||
+                  node.consequent.raw === "''" ||
+                  node.consequent.raw === '""'
+                );
+              }
+
+              if (node.consequent.type === AST_NODE_TYPES.Identifier) {
+                return node.consequent.name === 'undefined';
+              }
+
+              if (node.consequent.type === AST_NODE_TYPES.JSXFragment) {
+                return context.sourceCode.getText(node.consequent).replace(/\s+/g, '') === '<></>';
+              }
+
+              return false;
+            }
+
+            const testText = context.sourceCode.getText(node.test);
+
+            const consEmpty = isEffectivelyEmptyConsequent();
+            const altEmpty = isEffectivelyEmptyAlternate();
+
+            if (consEmpty && altEmpty) {
+              return null;
+            }
+
+            const baseIndent = ' '.repeat(context.sourceCode.getLocFromIndex(node.range[0]).column);
+
+            const indent1 = `${baseIndent} `;
+            const indent2 = `${baseIndent}    `;
+
+            function buildSingleLine(): string {
+              if (consEmpty && !altEmpty) {
+                return `<Show when={!(${testText})}>${
+                  node.alternate.type === AST_NODE_TYPES.JSXElement ||
+                  node.alternate.type === AST_NODE_TYPES.JSXFragment
+                    ? alternateText
+                    : `{${alternateText}}`
+                }</Show>`;
+              } else if (!consEmpty && altEmpty) {
+                return `<Show when={${testText}}>${childrenText}</Show>`;
+              }
+
+              return `<Show when={${testText}} fallback={${alternateText}}>${childrenText}</Show>`;
+            }
+
+            function buildMultiLine(): string {
+              if (consEmpty && !altEmpty) {
+                return [
+                  `<Show`,
+                  `${indent1}when={!(${testText})}`,
+                  `>`,
+                  `${indent2}${
+                    node.alternate.type === AST_NODE_TYPES.JSXElement ||
+                    node.alternate.type === AST_NODE_TYPES.JSXFragment
+                      ? alternateText
+                      : `{${alternateText}}`
+                  }`,
+                  `</Show>`,
+                ].join('\n');
+              }
+
+              if (!consEmpty && altEmpty) {
+                return [
+                  `<Show`,
+                  `${indent1}when={${testText}}`,
+                  `>`,
+                  `${indent2}${childrenText}`,
+                  `</Show>`,
+                ].join('\n');
+              }
+
+              return [
+                `<Show`,
+                `${indent1}when={${testText}}`,
+                `${indent1}fallback={${alternateText}}`,
+                `>`,
+                `${indent2}${childrenText}`,
+                `</Show>`,
+              ].join('\n');
+            }
+
+            const fixes: Array<TSESLint.RuleFix> = [];
+
+            fixes.push(
+              fixer.replaceText(
+                node,
+                context.sourceCode.getText(node).includes('\n')
+                  ? buildMultiLine()
+                  : buildSingleLine()
+              )
+            );
+
+            if (!hasShowImport && !hasShowImportFromAny(context)) {
+              ensureShowImportAny(fixer, fixes, context);
+            }
+
+            return fixes;
+          },
+        });
       },
 
       [`${AST_NODE_TYPES.Program}:exit`](node: TSESTree.Node): void {
