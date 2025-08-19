@@ -6,6 +6,7 @@ import {
   AST_NODE_TYPES,
 } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
+import type ts from 'typescript';
 
 import { isInJSXContext, isInJSXAttribute } from './utils/jsx.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
@@ -33,6 +34,8 @@ type Option = {
   severity?: Severity;
   suffix?: string;
   consumers?: Array<string>;
+  typeAware?: boolean; // when true, use TS types (if available) to confirm signals
+  extraCreatorModules?: Array<string>; // additional modules that export signal/computed creators
 };
 
 type Options = [Option?];
@@ -52,6 +55,109 @@ function getSeverity(messageId: MessageIds, options: Option | undefined): 'error
       return 'error';
     }
   }
+}
+
+function hasOptionalChainAncestor(node: TSESTree.Node): boolean {
+  let current: TSESTree.Node | undefined = node.parent;
+
+  while (current) {
+    if (current.type === AST_NODE_TYPES.ChainExpression) {
+      return true;
+    }
+    if (
+      (current.type === AST_NODE_TYPES.MemberExpression ||
+        current.type === AST_NODE_TYPES.CallExpression) &&
+      current.optional === true
+    ) {
+      return true;
+    }
+
+    if (
+      current.type === AST_NODE_TYPES.Program ||
+      current.type === AST_NODE_TYPES.JSXElement ||
+      current.type === AST_NODE_TYPES.JSXFragment
+    ) {
+      return false;
+    }
+
+    current = current.parent;
+  }
+
+  return false;
+}
+
+// Detect if an identifier is inside a React hook dependency array argument
+function isInHookDependencyArray(node: TSESTree.Identifier): boolean {
+  // Walk up until we see an ArrayExpression that's directly an argument of a CallExpression
+  let current: TSESTree.Node | undefined = node.parent;
+
+  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+  while (current) {
+    if (current.type === AST_NODE_TYPES.ArrayExpression) {
+      const parent = current.parent;
+
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+      if (parent && parent.type === AST_NODE_TYPES.CallExpression) {
+        // Find the position of this array within the call arguments
+        const argIndex = parent.arguments.indexOf(current);
+
+        if (argIndex === -1) {
+          return false;
+        }
+
+        // Identify hook name: Identifier or MemberExpression (.property)
+        let hookName: string | null = null;
+
+        if (parent.callee.type === AST_NODE_TYPES.Identifier) {
+          hookName = parent.callee.name;
+        } else if (
+          parent.callee.type === AST_NODE_TYPES.MemberExpression &&
+          parent.callee.property.type === AST_NODE_TYPES.Identifier
+        ) {
+          hookName = parent.callee.property.name;
+        }
+
+        if (hookName === null) {
+          return false;
+        }
+
+        // Hooks where deps array is at index 1
+        const depsIndexOne = new Set([
+          'useEffect',
+          'useLayoutEffect',
+          'useInsertionEffect',
+          'useMemo',
+          'useCallback',
+        ]);
+
+        // Hooks where deps array is at index 2 (e.g. useImperativeHandle)
+        const depsIndexTwo = new Set(['useImperativeHandle']);
+
+        if (
+          (depsIndexOne.has(hookName) && argIndex === 1) ||
+          (depsIndexTwo.has(hookName) && argIndex === 2)
+        ) {
+          return true;
+        }
+
+        return false;
+      }
+    }
+
+    // Stop early at boundaries where deps arrays won't be found above
+    if (
+      current.type === AST_NODE_TYPES.FunctionDeclaration ||
+      current.type === AST_NODE_TYPES.FunctionExpression ||
+      current.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+      current.type === AST_NODE_TYPES.Program
+    ) {
+      return false;
+    }
+
+    current = current.parent;
+  }
+
+  return false;
 }
 
 function isBindingOrWritePosition(node: TSESTree.Identifier): boolean {
@@ -177,6 +283,12 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
             items: { type: 'string', minLength: 1 },
             default: [],
           },
+          extraCreatorModules: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+            default: [],
+          },
+          typeAware: { type: 'boolean' },
           severity: {
             type: 'object',
             properties: {
@@ -197,6 +309,7 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
   defaultOptions: [
     {
       performance: DEFAULT_PERFORMANCE_BUDGET,
+      typeAware: false,
     } satisfies Option,
   ],
   create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
@@ -243,9 +356,9 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
       return true;
     }
 
-    const suffix =
-      typeof option?.suffix === 'string' && option.suffix.length > 0 ? option.suffix : 'Signal';
-    const suffixRegex = buildSuffixRegex(suffix);
+    const suffixRegex = buildSuffixRegex(
+      typeof option?.suffix === 'string' && option.suffix.length > 0 ? option.suffix : 'Signal'
+    );
 
     // Build a set of configured consumer names that accept Signal<T> directly.
     const consumerAllowlist = new Set<string>([
@@ -255,13 +368,107 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
     ]);
 
     startPhase(perfKey, 'ruleExecution');
+
+    // Avoid touching identifiers within TypeScript type positions
+    function isInTypePosition(node: TSESTree.Node): boolean {
+      const ancestors = context.sourceCode.getAncestors(node);
+      // If any TS* node is in the chain, conservatively treat as type position
+      if (
+        ancestors.some((a: TSESTree.Node): boolean => {
+          return (
+            a.type.startsWith('TS') ||
+            a.type === AST_NODE_TYPES.TSTypeAnnotation ||
+            a.type === AST_NODE_TYPES.TSTypeAliasDeclaration ||
+            a.type === AST_NODE_TYPES.TSInterfaceDeclaration ||
+            a.type === AST_NODE_TYPES.TSEnumDeclaration ||
+            a.type === AST_NODE_TYPES.TSModuleDeclaration
+          );
+        })
+      ) {
+        return true;
+      }
+
+      if (!node.parent) {
+        return false;
+      }
+
+      // Direct parent in TS type constructs
+      switch (node.parent.type) {
+        case AST_NODE_TYPES.TSTypeReference:
+        case AST_NODE_TYPES.TSQualifiedName:
+        case AST_NODE_TYPES.TSTypeQuery:
+        case AST_NODE_TYPES.TSTypeOperator:
+        case AST_NODE_TYPES.TSTypePredicate:
+        case AST_NODE_TYPES.TSImportType:
+        case AST_NODE_TYPES.TSTypeAnnotation:
+        case AST_NODE_TYPES.TSTypeParameter:
+        case AST_NODE_TYPES.TSTypeLiteral:
+        case AST_NODE_TYPES.TSPropertySignature:
+        case AST_NODE_TYPES.TSMethodSignature:
+        case AST_NODE_TYPES.TSIndexSignature:
+        case AST_NODE_TYPES.TSInterfaceDeclaration:
+        case AST_NODE_TYPES.TSTypeAliasDeclaration:
+        case AST_NODE_TYPES.TSEnumDeclaration:
+        case AST_NODE_TYPES.TSModuleDeclaration: {
+          return true;
+        }
+        default: {
+          return false;
+        }
+      }
+    }
     // Track local names and namespaces for signal/computed creators
     const signalCreatorLocals = new Set<string>(['signal']);
     const computedCreatorLocals = new Set<string>(['computed']);
     const creatorNamespaces = new Set<string>();
+    const creatorModules = new Set<string>([
+      '@preact/signals-react',
+      ...(Array.isArray(option?.extraCreatorModules) ? option.extraCreatorModules : []),
+    ]);
 
     // Track variables initialized from signal/computed creators
     const signalVariables = new Set<string>();
+
+    const checker: ts.TypeChecker | undefined =
+      context.sourceCode.parserServices?.program?.getTypeChecker();
+
+    function isSignalType(node: TSESTree.Identifier): boolean | undefined {
+      if (
+        !checker ||
+        !context.sourceCode.parserServices ||
+        !('esTreeNodeToTSNodeMap' in context.sourceCode.parserServices)
+      ) {
+        return undefined;
+      }
+
+      const type = checker.getTypeAtLocation(
+        context.sourceCode.parserServices.esTreeNodeToTSNodeMap.get(node)
+      );
+
+      if (
+        typeof type.getProperty('value') !== 'undefined' &&
+        typeof type.getProperty('peek') !== 'undefined'
+      ) {
+        return true;
+      }
+
+      const apparent = checker.getApparentType(type);
+
+      if (
+        typeof apparent.getProperty('value') !== 'undefined' &&
+        typeof apparent.getProperty('peek') !== 'undefined'
+      ) {
+        return true;
+      }
+
+      const sym = type.aliasSymbol ?? type.symbol;
+
+      if (sym.escapedName === 'Signal' || sym.escapedName === 'ReadableSignal') {
+        return true;
+      }
+
+      return false;
+    }
 
     return {
       '*': (node: TSESTree.Node): void => {
@@ -285,12 +492,42 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
           return;
         }
 
-        if (!(hasSignalSuffix(node.name, suffixRegex) || signalVariables.has(node.name))) {
+        // Never modify identifiers inside TS type positions
+        if (isInTypePosition(node)) {
+          return;
+        }
+
+        const byHeuristicSuffix = hasSignalSuffix(node.name, suffixRegex);
+        const byVariableTracking = signalVariables.has(node.name);
+
+        let isSignalIdent = byHeuristicSuffix || byVariableTracking;
+
+        if (option?.typeAware === true) {
+          const byType = isSignalType(node);
+
+          if (byType === true) {
+            isSignalIdent = true;
+          } else if (byType === false) {
+            isSignalIdent = byVariableTracking; // avoid suffix-only false positives if type says no
+          }
+        }
+
+        if (!isSignalIdent) {
           return;
         }
 
         // Skip inside JSX elements/attributes
         if (isInJSXContext(node) || isInJSXAttribute(node)) {
+          return;
+        }
+
+        // Be conservative: bail when inside optional chaining
+        if (hasOptionalChainAncestor(node)) {
+          return;
+        }
+
+        // Skip identifiers used inside React hook dependency arrays
+        if (isInHookDependencyArray(node)) {
           return;
         }
 
@@ -309,48 +546,60 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
           return;
         }
 
-        const p = node.parent;
-
         // Allow member calls like signal.subscribe(...)
         if (
-          p.type === AST_NODE_TYPES.MemberExpression &&
-          p.object === node &&
-          p.property.type === AST_NODE_TYPES.Identifier &&
+          node.parent.type === AST_NODE_TYPES.MemberExpression &&
+          node.parent.object === node &&
+          node.parent.property.type === AST_NODE_TYPES.Identifier &&
           // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-          p.parent &&
-          p.parent.type === AST_NODE_TYPES.CallExpression &&
-          p.parent.callee === p &&
-          consumerAllowlist.has(p.property.name)
+          node.parent.parent &&
+          node.parent.parent.type === AST_NODE_TYPES.CallExpression &&
+          node.parent.parent.callee === node.parent &&
+          consumerAllowlist.has(node.parent.property.name)
         ) {
           return;
         }
 
         if (
-          (p.type === AST_NODE_TYPES.CallExpression && p.callee === node) ||
-          (p.type === AST_NODE_TYPES.NewExpression && p.callee === node) ||
-          (p.type === AST_NODE_TYPES.Property && p.key === node) ||
-          (p.type === AST_NODE_TYPES.MemberExpression && p.property === node && !p.computed) ||
-          p.type === AST_NODE_TYPES.ImportSpecifier ||
-          p.type === AST_NODE_TYPES.ExportSpecifier ||
-          p.type === AST_NODE_TYPES.LabeledStatement ||
-          p.type === AST_NODE_TYPES.TSTypeReference ||
-          p.type === AST_NODE_TYPES.TSQualifiedName ||
-          p.type === AST_NODE_TYPES.TSTypeQuery ||
-          p.type === AST_NODE_TYPES.TSTypeOperator
+          (node.parent.type === AST_NODE_TYPES.CallExpression && node.parent.callee === node) ||
+          (node.parent.type === AST_NODE_TYPES.NewExpression && node.parent.callee === node) ||
+          // Object literal property key
+          (node.parent.type === AST_NODE_TYPES.Property && node.parent.key === node) ||
+          // Class method/field names (declaration keys)
+          (node.parent.type === AST_NODE_TYPES.MethodDefinition &&
+            node.parent.key === node &&
+            !node.parent.computed) ||
+          (node.parent.type === AST_NODE_TYPES.PropertyDefinition &&
+            node.parent.key === node &&
+            !node.parent.computed) ||
+          // Member property name (non-computed)
+          (node.parent.type === AST_NODE_TYPES.MemberExpression &&
+            node.parent.property === node &&
+            !node.parent.computed) ||
+          node.parent.type === AST_NODE_TYPES.ImportSpecifier ||
+          node.parent.type === AST_NODE_TYPES.ExportSpecifier ||
+          node.parent.type === AST_NODE_TYPES.LabeledStatement ||
+          node.parent.type === AST_NODE_TYPES.TSTypeReference ||
+          node.parent.type === AST_NODE_TYPES.TSQualifiedName ||
+          node.parent.type === AST_NODE_TYPES.TSTypeQuery ||
+          node.parent.type === AST_NODE_TYPES.TSTypeOperator
         ) {
           return;
         }
 
-        if (p.type === AST_NODE_TYPES.CallExpression && p.arguments.includes(node)) {
+        if (
+          node.parent.type === AST_NODE_TYPES.CallExpression &&
+          node.parent.arguments.includes(node)
+        ) {
           let calleeName: string | null = null;
 
-          if (p.callee.type === AST_NODE_TYPES.Identifier) {
-            calleeName = p.callee.name;
+          if (node.parent.callee.type === AST_NODE_TYPES.Identifier) {
+            calleeName = node.parent.callee.name;
           } else if (
-            p.callee.type === AST_NODE_TYPES.MemberExpression &&
-            p.callee.property.type === AST_NODE_TYPES.Identifier
+            node.parent.callee.type === AST_NODE_TYPES.MemberExpression &&
+            node.parent.callee.property.type === AST_NODE_TYPES.Identifier
           ) {
-            calleeName = p.callee.property.name;
+            calleeName = node.parent.callee.property.name;
           }
 
           // Configured APIs that accept a Signal instance directly
@@ -381,18 +630,22 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
           return;
         }
 
-        const callee = node.init.callee;
         let isCreator = false;
-        if (callee.type === AST_NODE_TYPES.Identifier) {
-          if (signalCreatorLocals.has(callee.name) || computedCreatorLocals.has(callee.name)) {
+
+        if (node.init.callee.type === AST_NODE_TYPES.Identifier) {
+          if (
+            signalCreatorLocals.has(node.init.callee.name) ||
+            computedCreatorLocals.has(node.init.callee.name)
+          ) {
             isCreator = true;
           }
         } else if (
-          callee.type === AST_NODE_TYPES.MemberExpression &&
-          callee.object.type === AST_NODE_TYPES.Identifier &&
-          creatorNamespaces.has(callee.object.name) &&
-          callee.property.type === AST_NODE_TYPES.Identifier &&
-          (callee.property.name === 'signal' || callee.property.name === 'computed')
+          node.init.callee.type === AST_NODE_TYPES.MemberExpression &&
+          node.init.callee.object.type === AST_NODE_TYPES.Identifier &&
+          creatorNamespaces.has(node.init.callee.object.name) &&
+          node.init.callee.property.type === AST_NODE_TYPES.Identifier &&
+          (node.init.callee.property.name === 'signal' ||
+            node.init.callee.property.name === 'computed')
         ) {
           isCreator = true;
         }
@@ -407,10 +660,8 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
           if (stmt.type !== AST_NODE_TYPES.ImportDeclaration) {
             continue;
           }
-          if (
-            typeof stmt.source.value === 'string' &&
-            stmt.source.value === '@preact/signals-react'
-          ) {
+
+          if (typeof stmt.source.value === 'string' && creatorModules.has(stmt.source.value)) {
             for (const spec of stmt.specifiers) {
               if (spec.type === AST_NODE_TYPES.ImportSpecifier) {
                 if (

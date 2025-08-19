@@ -6,6 +6,7 @@
     "target": "ES2024",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "strictNullChecks": true,
     "composite": true,
     "types": ["node"],
     "typeRoots": ["./node_modules/@types"]

@@ -1,3 +1,4 @@
+/* eslint-disable react-signals-hooks/prefer-computed */
 /** biome-ignore-all lint/correctness/useExhaustiveDependencies: off */
 /** biome-ignore-all lint/correctness/useHookAtTopLevel: off */
 /** biome-ignore-all assist/source/organizeImports: off */

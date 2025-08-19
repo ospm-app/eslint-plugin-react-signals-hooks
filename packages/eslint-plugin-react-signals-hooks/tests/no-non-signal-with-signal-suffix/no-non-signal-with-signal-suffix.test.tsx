@@ -1,3 +1,6 @@
+/* eslint-disable react-signals-hooks/prefer-show-over-ternary */
+/* eslint-disable @typescript-eslint/strict-boolean-expressions */
+/* eslint-disable @typescript-eslint/no-unnecessary-condition */
 /** biome-ignore-all lint/correctness/noUnusedVariables: off */
 /** biome-ignore-all lint/correctness/useHookAtTopLevel: off */
 /** biome-ignore-all assist/source/organizeImports: off */
@@ -272,7 +275,11 @@ export function TestContextAndHooks(): JSX.Element {
 }
 
 // Test component with generic type parameters
-export function TestGenerics<T extends { id: number }>({ items }: { items: T[] }): JSX.Element {
+export function TestGenerics<T extends { id: number }>({
+  items,
+}: {
+  items: Array<T>;
+}): JSX.Element {
   const store = useSignals(1);
 
   try {
@@ -366,12 +373,12 @@ export function TestComputedProperties(): JSX.Element {
 export const exportedValueSignal = 42; // Should be reported if validateExported is enabled
 
 // 2) Multi-declarator const — only rename should be suggested, not convert
-const multiSignal = 1,
+export const multiSignal = 1,
   alsoHere = 2; // multiSignal should be reported; convert suggestion should NOT be offered
 
 // 3) let/var declarations — only rename should be suggested, not convert
-let tempSignal = 0; // Should be reported; convert suggestion should NOT be offered
-var legacySignal = 'x'; // Should be reported; convert suggestion should NOT be offered
+export let tempSignal = 0; // Should be reported; convert suggestion should NOT be offered
+export var legacySignal = 'x'; // Should be reported; convert suggestion should NOT be offered
 
 // Test component with variables that have 'Signal' in the middle
 export function TestSignalInMiddle(): JSX.Element {

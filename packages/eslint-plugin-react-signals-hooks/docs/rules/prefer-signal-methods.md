@@ -89,7 +89,7 @@ This rule provides autofixes to:
 ## Autofix and Suggestions
 
 - Autofix: Yes (fixable: `code`).
-- Suggestions: No (`hasSuggestions: false`).
+- Suggestions: Yes (`hasSuggestions: true`). In particular, when `effectsSuggestionOnly: true`, effect fixes are offered as suggestions instead of applied automatically.
 
 ## Options
 
@@ -98,17 +98,23 @@ interface Options {
   performance?: PerformanceBudget;
   severity?: {
     usePeekInEffect?: 'error' | 'warn' | 'off';
-    useValueInJSX?: 'error' | 'warn' | 'off';
-    preferDirectSignalUsage?: 'error' | 'warn' | 'off';
     preferPeekInNonReactiveContext?: 'error' | 'warn' | 'off';
   };
   suffix?: string;
+  extraCreatorModules?: string[];
+  reactiveEffectCallees?: string[];
+  effectsSuggestionOnly?: boolean;
+  typeAware?: boolean;
 }
 ```
 
 - `performance`: Enables performance tracking/budgeting.
 - `severity`: Per-message severity controls. Defaults to `error`.
 - `suffix`: Custom suffix for detecting signal variable names.
+- `extraCreatorModules: string[]`: Additional modules to scan for `signal`/`computed` creators. Defaults to recognizing `@preact/signals-react`.
+- `reactiveEffectCallees: string[]`: Additional callee names to treat as effect-like contexts (besides `useEffect`, `useLayoutEffect`).
+- `effectsSuggestionOnly: boolean`: When true, do not autofix inside effects; provide suggestions instead.
+- `typeAware: boolean`: When true and TS types are available, confirm signals via the type checker to reduce reliance on naming heuristics.
 
 ## When Not To Use It
 

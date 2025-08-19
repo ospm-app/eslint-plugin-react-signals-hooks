@@ -1,31 +1,44 @@
+/* eslint-disable react-signals-hooks/prefer-use-signal-over-use-state */
+/** biome-ignore-all lint/correctness/useHookAtTopLevel: off */
+/** biome-ignore-all lint/correctness/useExhaustiveDependencies: off */
 /** biome-ignore-all assist/source/organizeImports: off */
-import { useCallback, useMemo, useEffect, useState } from "react";
-import { Pressable } from "react-native";
+import { useSignals } from '@preact/signals-react/runtime';
+import { useCallback, useMemo, useEffect, useState } from 'react';
+import type { JSX } from 'react';
+import { Pressable } from 'react-native';
+
+type Props = {
+  id: string;
+};
 
 // Test file to demonstrate autofixable error indicators
-export function TestAutofixableComponent() {
-	const [count, setCount] = useState(0);
-	const name = "test";
+export function TestAutofixableComponent({ id }: Props): JSX.Element {
+  const store = useSignals(1);
 
-	// This should trigger a missing dependency error with suggestions
-	// biome-ignore lint/correctness/useExhaustiveDependencies: false positive
-	const memoizedValue = useMemo(() => {
-		return count * 2 + name.length;
-	}, []); // Missing dependencies: count, name
+  try {
+    const [count, setCount] = useState(0);
+    const name = 'test';
+    const rand = Math.random();
 
-	// This should trigger a missing dependency error with suggestions
-	// biome-ignore lint/correctness/useExhaustiveDependencies: false positive
-	const callback = useCallback(() => {
-		console.info(count, name);
+    // This should trigger a missing dependency error with suggestions
+    const memoizedValue = useMemo(() => {
+      return count * 2 + name.length;
+    }, []); // Missing dependencies: count
 
-		setCount(count + 1);
-	}, []); // Missing dependencies: count, name
+    // This should trigger a missing dependency error with suggestions
+    const callback = useCallback(() => {
+      console.info(count, rand);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: false positive
-	useEffect(() => {
-		console.info(count, name);
-		// This should trigger a missing dependency error with suggestions
-	}, []); // Missing dependencies: count, name
+      setCount(count + 1);
+    }, []); // Missing dependencies: count
 
-	return <Pressable onPress={callback}>{memoizedValue}</Pressable>;
+    useEffect(() => {
+      console.info(count, id);
+      // This should trigger a missing dependency error with suggestions
+    }, []); // Missing dependencies: count, id
+
+    return <Pressable onPress={callback}>{memoizedValue}</Pressable>;
+  } finally {
+    store.f();
+  }
 }

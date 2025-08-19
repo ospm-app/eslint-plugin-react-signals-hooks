@@ -8,8 +8,9 @@ The `prefer-signal-reads` rule ensures that signal values are explicitly accesse
 
 ## Plugin Scope
 
-- Signal creator detection is scoped to `@preact/signals-react` only.
-- The rule recognizes `signal()` and `computed()` created in-file via direct, aliased, or namespace imports from `@preact/signals-react`.
+- Signal detection is based on variables created via `signal()` and `computed()` imported from `@preact/signals-react` (direct, aliased, or namespace).
+- Optionally, variables matching a configurable suffix (default: `Signal`) are also treated as signals for convenience.
+- Additional creator modules can be configured via `extraCreatorModules` (both named and namespace imports recognized).
 
 ## Handled Cases
 
@@ -29,9 +30,11 @@ The `prefer-signal-reads` rule ensures that signal values are explicitly accesse
 
 The rule intelligently skips enforcing `.value` in these contexts:
 
-1. **JSX Elements**: Direct signal usage is preferred
+1. **JSX Elements**: Direct signal usage is preferred (enforced by `prefer-signal-in-jsx`)
 
-2. **Already Correct Usage**: When `.value` is already present
+2. **Already Correct Usage**: When `.value` (or `.peek`) is already present
+
+3. **Optional Chaining**: Expressions under optional chaining are skipped to avoid unsafe fixes
 
 ## Error Messages
 
@@ -44,6 +47,7 @@ The rule intelligently skips enforcing `.value` in these contexts:
 - Automatically adds `.value` to signal references in non-JSX contexts.
 - Preserves the rest of the expression.
 - Skips already-correct usages.
+- Skips when under optional chaining or in non-read contexts.
 
 ## Options
 
@@ -53,6 +57,9 @@ type Options = [
     performance?: PerformanceBudget;
     severity?: { useValueInNonJSX?: 'error' | 'warn' | 'off' };
     suffix?: string;
+    consumers?: string[]; // APIs that accept Signal instances directly (default: ['subscribe'])
+    typeAware?: boolean; // use TS types (when available) to confirm signal identifiers
+    extraCreatorModules?: string[]; // modules exporting `signal`/`computed` creators
   }?
 ];
 ```
@@ -60,6 +67,9 @@ type Options = [
 - `performance`: Enables performance tracking/budgeting.
 - `severity`: Per-message severity control. Defaults to `error`.
 - `suffix`: Custom suffix for detecting signal variable names.
+- `consumers`: Additional function names that accept a Signal instance directly and should not be forced to `.value` (e.g., `subscribe`).
+- `typeAware`: When true and type information is available, confirm signals via TS types (checks presence of `value`/`peek` members or `Signal`-like names) to reduce reliance on suffix heuristics.
+- `extraCreatorModules`: Extra module specifiers that export `signal`/`computed` creators to be recognized in import analysis (in addition to the default `@preact/signals-react`).
 
 ## Benefits
 
@@ -76,6 +86,32 @@ This rule can be disabled for:
 2. Specific files where direct signal usage is preferred
 3. When using JSX-like templates in non-JSX contexts
 
-## Type Safety
+## Safety
 
-The rule is type-aware and will only suggest fixes when the signal usage is safe, preventing potential runtime errors from incorrect `.value` access.
+The rule uses conservative heuristics (creator/import tracking, suffix matching, optional chaining bailouts) to avoid unsafe fixes. Optionally, when `typeAware: true`, it leverages the TypeScript checker (if available) to confirm signals.
+
+## Configuration Example
+
+```js
+// eslint.config.js
+export default [
+  {
+    rules: {
+      'react-signals-hooks/prefer-signal-reads': [
+        'error',
+        {
+          consumers: ['subscribe', 'bind'],
+          extraCreatorModules: [],
+          typeAware: true,
+        },
+      ],
+    },
+  },
+];
+```
+
+```ts
+// With typeAware: true, identifiers typed as Signal-like are recognized
+declare const count: import('@preact/signals-react').Signal<number>;
+const n = count; // ❌ Incorrect: will be auto-fixed to count.value
+```

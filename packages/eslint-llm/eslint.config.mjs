@@ -5,16 +5,13 @@ import tsParser from '@typescript-eslint/parser';
 import pluginESx from 'eslint-plugin-es-x';
 import importPlugin from 'eslint-plugin-import';
 import json from 'eslint-plugin-json';
+import jsxA11y from 'eslint-plugin-jsx-a11y';
 import nodePlugin from 'eslint-plugin-n';
 import optimizeRegexPlugin from 'eslint-plugin-optimize-regex';
 import oxlintPlugin from 'eslint-plugin-oxlint';
 import promisePlugin from 'eslint-plugin-promise';
-import globals from 'globals';
-import eslintPlugin from 'eslint-plugin-eslint-plugin';
-import jsxA11y from 'eslint-plugin-jsx-a11y';
 import securityPlugin from 'eslint-plugin-security';
-
-import reactSignalsHooksPlugin from './dist/esm/index.mjs';
+import globals from 'globals';
 
 const commonRules = {
   // Disabled rules
@@ -129,7 +126,6 @@ const tsConfig = {
     'es-x': pluginESx,
     '@typescript-eslint': typescript,
     import: importPlugin,
-    'react-signals-hooks': reactSignalsHooksPlugin,
   },
   languageOptions: {
     ecmaVersion: 2024,
@@ -146,23 +142,6 @@ const tsConfig = {
   rules: {
     ...commonRules,
     ...typescript.configs['recommended'].rules,
-
-    'react-signals-hooks/exhaustive-deps': [
-      'error',
-      {
-        enableAutoFixForMemoAndCallback: true,
-      },
-    ],
-    'react-signals-hooks/require-use-signals': 'error',
-
-    'react-signals-hooks/no-mutation-in-render': 'error',
-    'react-signals-hooks/prefer-signal-in-jsx': 'warn',
-    'react-signals-hooks/prefer-show-over-ternary': 'warn',
-    'react-signals-hooks/warn-on-unnecessary-untracked': 'warn',
-    'react-signals-hooks/no-signal-creation-in-component': 'warn',
-    'react-signals-hooks/prefer-for-over-map': 'warn',
-    'react-signals-hooks/prefer-signal-effect': 'warn',
-    'react-signals-hooks/prefer-computed': 'warn',
 
     // TypeScript specific
     '@typescript-eslint/await-thenable': 'error',
@@ -242,7 +221,6 @@ export default [
   securityPlugin.configs.recommended,
   {
     files: ['lib/rules/*.{js,ts}'],
-    ...eslintPlugin.configs['flat/recommended'],
     rules: {
       'n/no-missing-import': 'off',
     },
@@ -266,13 +244,13 @@ export default [
   {
     ignores: [
       './node_modules',
+      './dist/**',
       '**/ios/**',
       '**/android/**',
       '**/node_modules/**',
       '**/.cache/**',
       '**/bundled/**',
       '**/build/**',
-      '**/dist/**',
       '**/.wrangler/**',
       '**/test/**',
     ],

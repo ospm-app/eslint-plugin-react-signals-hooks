@@ -1,3 +1,5 @@
+/* eslint import/no-unused-modules: off */
+/* eslint import/no-cycle: off */
 import babelParser from '@babel/eslint-parser';
 import babelPresetEnv from '@babel/preset-env';
 import typescript from '@typescript-eslint/eslint-plugin';
@@ -160,6 +162,7 @@ const tsConfig = {
     'react-signals-hooks/prefer-show-over-ternary': 'warn',
     'react-signals-hooks/warn-on-unnecessary-untracked': 'warn',
     'react-signals-hooks/no-signal-creation-in-component': 'warn',
+    'react-signals-hooks/forbid-signal-update-in-computed': 'warn',
     'react-signals-hooks/prefer-for-over-map': 'warn',
     'react-signals-hooks/prefer-signal-effect': 'warn',
     'react-signals-hooks/prefer-computed': 'warn',
@@ -237,8 +240,17 @@ const jsonConfig = {
 // };
 
 /** @type {import('eslint').Linter.Config[]} */
-// eslint-disable-next-line import/no-unused-modules
 export default [
+  {
+    ignores: ['**/node_modules/**', '**/dist/**'],
+  },
+  // Global settings to keep eslint-plugin-import from parsing external modules like react-native
+  {
+    settings: {
+      // Use regex here; eslint-plugin-import matches against the raw import string
+      'import/ignore': [/react-native/, /node_modules/, /\bdist\//],
+    },
+  },
   jsxA11y.flatConfigs.recommended,
   securityPlugin.configs.recommended,
   {
@@ -249,7 +261,7 @@ export default [
     },
   },
   {
-    files: ['**/eslint.config.js'],
+    files: ['**/eslint.config.{js,cjs,mjs}'],
     languageOptions: {
       ecmaVersion: 2024,
       parser: babelParser,
@@ -263,20 +275,11 @@ export default [
         },
       },
     },
-  },
-  {
-    ignores: [
-      './node_modules',
-      '**/ios/**',
-      '**/android/**',
-      '**/node_modules/**',
-      '**/.cache/**',
-      '**/bundled/**',
-      '**/build/**',
-      '**/dist/**',
-      '**/.wrangler/**',
-      '**/test/**',
-    ],
+    rules: {
+      // Avoid eslint-plugin-import inspecting external deps from within config files
+      'import/no-cycle': 'off',
+      'import/no-unused-modules': 'off',
+    },
   },
   {
     files: ['**/*.{js,jsx,ts,tsx,mjs,mts}'],

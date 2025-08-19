@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0-rc.1] - 2025-08-18
+
+### Added new rules
+
+- `forbid-signal-update-in-computed`
+  - Forbids updating signals inside `computed(...)` callbacks to keep them pure and read-only
+  - Detects direct `.value` writes, `.set()`/`.update()` calls, batched writes via `batch()`, and writes via call-derived signals
+
 ## [1.4.0] - 2025-08-12
 
 ### Added new rules

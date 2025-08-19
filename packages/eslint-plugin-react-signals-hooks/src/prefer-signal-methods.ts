@@ -6,6 +6,7 @@ import {
   AST_NODE_TYPES,
 } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
+import type ts from 'typescript';
 
 import { isInJSXContext } from './utils/jsx.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
@@ -23,11 +24,7 @@ import { buildSuffixRegex, hasSignalSuffix } from './utils/suffix.js';
 import type { PerformanceBudget } from './utils/types.js';
 import { getRuleDocUrl } from './utils/urls.js';
 
-type MessageIds =
-  | 'usePeekInEffect'
-  | 'useValueInJSX'
-  | 'preferDirectSignalUsage'
-  | 'preferPeekInNonReactiveContext';
+type MessageIds = 'usePeekInEffect' | 'preferPeekInNonReactiveContext';
 
 type Severity = {
   [key in MessageIds]?: 'error' | 'warn' | 'off';
@@ -37,14 +34,41 @@ type Option = {
   performance?: PerformanceBudget;
   severity?: Severity;
   suffix?: string;
+  extraCreatorModules?: Array<string>; // additional modules to scan for signal/computed imports
+  reactiveEffectCallees?: Array<string>; // additional callee names to treat as effect context
+  effectsSuggestionOnly?: boolean; // if true, do not autofix in effects; provide suggestions instead
+  typeAware?: boolean; // if true, use TS type information to confirm signals when available
 };
 
 type Options = [Option?];
 
 let isInEffect = false;
 let isInJSX = false;
+let effectDepth = 0;
 
 const ruleName = 'prefer-signal-methods';
+
+function hasAncestorOfType(node: TSESTree.Node, type: TSESTree.Node['type']): boolean {
+  let current: TSESTree.Node | undefined = node.parent;
+
+  while (current) {
+    if (current.type === type) {
+      return true;
+    }
+
+    if (
+      current.type === AST_NODE_TYPES.Program ||
+      current.type === AST_NODE_TYPES.JSXElement ||
+      current.type === AST_NODE_TYPES.JSXFragment
+    ) {
+      return false;
+    }
+
+    current = current.parent;
+  }
+
+  return false;
+}
 
 function getSeverity(messageId: MessageIds, options: Option | undefined): 'error' | 'warn' | 'off' {
   if (!options?.severity) {
@@ -55,15 +79,6 @@ function getSeverity(messageId: MessageIds, options: Option | undefined): 'error
     case 'usePeekInEffect': {
       return options.severity.usePeekInEffect ?? 'error';
     }
-
-    case 'useValueInJSX': {
-      return options.severity.useValueInJSX ?? 'error';
-    }
-
-    case 'preferDirectSignalUsage': {
-      return options.severity.preferDirectSignalUsage ?? 'error';
-    }
-
     case 'preferPeekInNonReactiveContext': {
       return options.severity.preferPeekInNonReactiveContext ?? 'error';
     }
@@ -81,17 +96,15 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator((name: string): s
   meta: {
     type: 'suggestion',
     fixable: 'code',
-    hasSuggestions: false,
+    hasSuggestions: true,
     docs: {
       description:
-        "Enforces proper usage of signal methods (`.value`, `.peek()`) in different contexts. This rule helps ensure you're using the right signal access pattern for the context, whether it's in JSX, effects, or regular code. It promotes best practices for signal usage to optimize reactivity and performance.",
+        'Enforces proper usage of signal methods (`.value`, `.peek()`) in non-JSX contexts. This rule helps ensure you use the right access pattern for effects and regular code, promoting best practices to optimize reactivity and performance.',
       url: getRuleDocUrl(ruleName),
     },
     messages: {
       usePeekInEffect:
         'Use signal.peek() to read the current value without subscribing to changes in this effect',
-      useValueInJSX: 'Use the signal directly in JSX instead of accessing .value',
-      preferDirectSignalUsage: 'Use the signal directly in JSX instead of .peek()',
       preferPeekInNonReactiveContext:
         'Prefer .peek() when reading signal value without using its reactive value',
     },
@@ -120,6 +133,16 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator((name: string): s
             additionalProperties: false,
           },
           suffix: { type: 'string', minLength: 1 },
+          extraCreatorModules: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+          },
+          reactiveEffectCallees: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+          },
+          effectsSuggestionOnly: { type: 'boolean' },
+          typeAware: { type: 'boolean' },
         },
         additionalProperties: false,
       },
@@ -128,6 +151,10 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator((name: string): s
   defaultOptions: [
     {
       performance: DEFAULT_PERFORMANCE_BUDGET,
+      extraCreatorModules: [],
+      reactiveEffectCallees: [],
+      effectsSuggestionOnly: false,
+      typeAware: false,
     },
   ],
   create(context: Readonly<RuleContext<MessageIds, Options>>, [option]): ESLintUtils.RuleListener {
@@ -184,6 +211,57 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator((name: string): s
     // Track variables initialized from signal/computed creators
     const signalVariables = new Set<string>();
 
+    const checker: ts.TypeChecker | undefined =
+      context.sourceCode.parserServices?.program?.getTypeChecker();
+
+    function isSignalType(node: TSESTree.Identifier): boolean | undefined {
+      if (
+        !checker ||
+        !context.sourceCode.parserServices ||
+        !('esTreeNodeToTSNodeMap' in context.sourceCode.parserServices)
+      ) {
+        return undefined;
+      }
+
+      const anyServices = context.sourceCode.parserServices;
+
+      const tsNode: ts.Node | undefined = anyServices.esTreeNodeToTSNodeMap?.get(node);
+
+      if (!tsNode) {
+        return undefined;
+      }
+
+      const type: ts.Type | undefined = checker.getTypeAtLocation(tsNode);
+
+      // Heuristic: has properties 'value' and 'peek'
+      const hasValue = type.getProperty('value');
+      const hasPeek = type.getProperty('peek');
+
+      if (hasValue && hasPeek) {
+        return true;
+      }
+
+      // Also check apparent type
+      const apparent = checker.getApparentType(type);
+
+      const aHasValue = apparent.getProperty('value');
+
+      const aHasPeek = apparent.getProperty('peek');
+
+      if (aHasValue && aHasPeek) {
+        return true;
+      }
+      // Try to detect named type 'Signal'
+
+      const sym = type.aliasSymbol ?? type.symbol;
+
+      if (sym.escapedName === 'Signal' || sym.escapedName === 'ReadableSignal') {
+        return true;
+      }
+
+      return false;
+    }
+
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
@@ -201,17 +279,54 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator((name: string): s
         trackOperation(perfKey, dynamicOp);
       },
 
-      [`${AST_NODE_TYPES.CallExpression}[callee.name="useEffect"]`](): void {
-        isInEffect = true;
-      },
-      [`${AST_NODE_TYPES.CallExpression}[callee.name="useEffect"]:exit`](): void {
-        isInEffect = false;
-      },
+      [AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
+        // Detect configured effect-like callees
+        const names = new Set<string>([
+          'useEffect',
+          'useLayoutEffect',
+          ...(option?.reactiveEffectCallees ?? []),
+        ]);
 
-      [`${AST_NODE_TYPES.JSXElement}`](): void {
-        isInJSX = true;
+        const callee = node.callee;
+
+        let name: string | undefined;
+
+        if (callee.type === AST_NODE_TYPES.Identifier) {
+          name = callee.name;
+        } else if (
+          callee.type === AST_NODE_TYPES.MemberExpression &&
+          callee.property.type === AST_NODE_TYPES.Identifier
+        ) {
+          name = callee.property.name;
+        }
+
+        if (typeof name !== 'undefined' && names.has(name)) {
+          effectDepth++;
+          isInEffect = effectDepth > 0;
+        }
       },
-      [`${AST_NODE_TYPES.JSXElement}:exit`](): void {
+      [`${AST_NODE_TYPES.CallExpression}:exit`](node: TSESTree.CallExpression): void {
+        const names = new Set<string>([
+          'useEffect',
+          'useLayoutEffect',
+          ...(option?.reactiveEffectCallees ?? []),
+        ]);
+
+        let name: string | undefined;
+
+        if (node.callee.type === AST_NODE_TYPES.Identifier) {
+          name = node.callee.name;
+        } else if (
+          node.callee.type === AST_NODE_TYPES.MemberExpression &&
+          node.callee.property.type === AST_NODE_TYPES.Identifier
+        ) {
+          name = node.callee.property.name;
+        }
+
+        if (typeof name !== 'undefined' && names.has(name)) {
+          effectDepth = Math.max(0, effectDepth - 1);
+          isInEffect = effectDepth > 0;
+        }
         isInJSX = false;
       },
       [`${AST_NODE_TYPES.JSXFragment}`](): void {
@@ -222,17 +337,29 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator((name: string): s
       },
 
       [AST_NODE_TYPES.Identifier](node: TSESTree.Node): void {
-        if (!(node.type === AST_NODE_TYPES.Identifier)) {
+        if (node.type !== AST_NODE_TYPES.Identifier) {
           return;
         }
 
-        // Configurable suffix check
-        const suffix =
-          typeof option?.suffix === 'string' && option.suffix.length > 0 ? option.suffix : 'Signal';
-        const suffixRegex = buildSuffixRegex(suffix);
+        let isSignalIdent =
+          hasSignalSuffix(
+            node.name,
+            buildSuffixRegex(
+              typeof option?.suffix === 'string' && option.suffix.length > 0
+                ? option.suffix
+                : 'Signal'
+            )
+          ) || signalVariables.has(node.name);
 
-        const isSignalIdent =
-          hasSignalSuffix(node.name, suffixRegex) || signalVariables.has(node.name);
+        if (option?.typeAware === true) {
+          const byType = isSignalType(node);
+          if (byType === true) {
+            isSignalIdent = true;
+          } else if (byType === false) {
+            // If we have a definitive non-signal type, rely on variable tracking only to avoid suffix false-positives
+            isSignalIdent = signalVariables.has(node.name);
+          }
+        }
 
         if (!isSignalIdent) {
           return;
@@ -244,18 +371,50 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator((name: string): s
               return;
             }
 
-            context.report({
-              node,
-              messageId: 'usePeekInEffect',
-              fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-                return fixer.insertTextAfter(node, '.peek()');
-              },
-            });
+            if (option?.effectsSuggestionOnly === true) {
+              context.report({
+                node,
+                messageId: 'usePeekInEffect',
+                suggest: [
+                  {
+                    messageId: 'usePeekInEffect',
+                    fix(fixer): TSESLint.RuleFix {
+                      return fixer.insertTextAfter(node, '.peek()');
+                    },
+                  },
+                ],
+              });
+            } else {
+              context.report({
+                node,
+                messageId: 'usePeekInEffect',
+                fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+                  return fixer.insertTextAfter(node, '.peek()');
+                },
+              });
+            }
           } else if (isInJSX || isInJSXContext(node)) {
             return;
           }
 
           return;
+        }
+
+        // Optional chaining handling:
+        // - Generally bail on ChainExpression to stay conservative
+        // - But allow direct optional on the member when property is 'value' in effect context,
+        //   so we can safely convert `signal?.value` -> `signal?.peek()`.
+        if (hasAncestorOfType(node, AST_NODE_TYPES.ChainExpression)) {
+          const allowDirectOptionalOnValueInEffect =
+            node.parent.optional === true &&
+            'name' in node.parent.property &&
+            node.parent.property.name === 'value' &&
+            isInEffect &&
+            !isInDependencyArray(node);
+
+          if (!allowDirectOptionalOnValueInEffect) {
+            return;
+          }
         }
 
         if (!('name' in node.parent.property)) {
@@ -276,9 +435,12 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator((name: string): s
         // is used as the left-hand side of an assignment or as the argument of an update, skip.
         {
           const memberExpr = node.parent;
+
           // Bubble up through chained MemberExpressions: signal.value[...].foo...
           let topMember: TSESTree.MemberExpression = memberExpr;
+
           let p = topMember.parent;
+
           // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
           while (p && p.type === AST_NODE_TYPES.MemberExpression && p.object === topMember) {
             topMember = p;
@@ -295,21 +457,52 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator((name: string): s
           }
         }
 
-        if (isInEffect && !isInDependencyArray(node) && node.parent.property.name === 'value') {
-          if (getSeverity('preferPeekInNonReactiveContext', option) === 'off') {
-            return;
+        if (!(isInEffect && !isInDependencyArray(node) && node.parent.property.name === 'value')) {
+          return;
+        }
+
+        if (getSeverity('preferPeekInNonReactiveContext', option) === 'off') {
+          return;
+        }
+
+        const applyFix = (fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null => {
+          // If this member uses direct optional chaining like `signal?.value`,
+          // replace the entire member with `object?.peek()` to preserve short-circuiting.
+          if (
+            'optional' in node.parent &&
+            'object' in node.parent &&
+            node.parent.optional === true
+          ) {
+            return fixer.replaceText(
+              node.parent,
+              `${context.sourceCode.getText(node.parent.object)}?.peek()`
+            );
           }
 
+          // Fallback: replace only the property name `value` -> `peek()`
+          if ('property' in node.parent) {
+            return fixer.replaceText(node.parent.property, 'peek()');
+          }
+
+          return null;
+        };
+
+        if (option?.effectsSuggestionOnly === true) {
           context.report({
             node: node.parent.property,
             messageId: 'preferPeekInNonReactiveContext',
-            fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-              if ('property' in node.parent) {
-                return fixer.replaceText(node.parent.property, 'peek()');
-              }
-
-              return null;
-            },
+            suggest: [
+              {
+                messageId: 'preferPeekInNonReactiveContext',
+                fix: applyFix,
+              },
+            ],
+          });
+        } else {
+          context.report({
+            node: node.parent.property,
+            messageId: 'preferPeekInNonReactiveContext',
+            fix: applyFix,
           });
         }
       },
@@ -323,18 +516,22 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator((name: string): s
           return;
         }
 
-        const callee = node.init.callee;
         let isCreator = false;
-        if (callee.type === AST_NODE_TYPES.Identifier) {
-          if (signalCreatorLocals.has(callee.name) || computedCreatorLocals.has(callee.name)) {
+
+        if (node.init.callee.type === AST_NODE_TYPES.Identifier) {
+          if (
+            signalCreatorLocals.has(node.init.callee.name) ||
+            computedCreatorLocals.has(node.init.callee.name)
+          ) {
             isCreator = true;
           }
         } else if (
-          callee.type === AST_NODE_TYPES.MemberExpression &&
-          callee.object.type === AST_NODE_TYPES.Identifier &&
-          creatorNamespaces.has(callee.object.name) &&
-          callee.property.type === AST_NODE_TYPES.Identifier &&
-          (callee.property.name === 'signal' || callee.property.name === 'computed')
+          node.init.callee.type === AST_NODE_TYPES.MemberExpression &&
+          node.init.callee.object.type === AST_NODE_TYPES.Identifier &&
+          creatorNamespaces.has(node.init.callee.object.name) &&
+          node.init.callee.property.type === AST_NODE_TYPES.Identifier &&
+          (node.init.callee.property.name === 'signal' ||
+            node.init.callee.property.name === 'computed')
         ) {
           isCreator = true;
         }
@@ -349,10 +546,18 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator((name: string): s
           if (stmt.type !== AST_NODE_TYPES.ImportDeclaration) {
             continue;
           }
-          if (
-            typeof stmt.source.value === 'string' &&
-            stmt.source.value === '@preact/signals-react'
-          ) {
+          if (typeof stmt.source.value !== 'string') {
+            continue;
+          }
+
+          const allowedModules = new Set<string>([
+            '@preact/signals-react',
+            ...(option?.extraCreatorModules ?? []).filter((s: string): boolean => {
+              return typeof s === 'string';
+            }),
+          ]);
+
+          if (allowedModules.has(stmt.source.value)) {
             for (const spec of stmt.specifiers) {
               if (spec.type === AST_NODE_TYPES.ImportSpecifier) {
                 if (

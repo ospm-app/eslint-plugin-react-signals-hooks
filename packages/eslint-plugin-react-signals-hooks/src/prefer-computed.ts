@@ -1,12 +1,15 @@
+/* eslint-disable react-signals-hooks/no-non-signal-with-signal-suffix */
 /** biome-ignore-all assist/source/organizeImports: off */
+import type { Definition, Variable } from '@typescript-eslint/scope-manager';
 import {
   ESLintUtils,
   type TSESLint,
   type TSESTree,
   AST_NODE_TYPES,
 } from '@typescript-eslint/utils';
-import type { RuleContext, SourceCode } from '@typescript-eslint/utils/ts-eslint';
+import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
+import { ensureNamedImportFixes } from './utils/imports.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import {
   endPhase,
@@ -36,6 +39,11 @@ type Option = {
   performance?: PerformanceBudget;
   severity?: Severity;
   suffix?: string;
+  /**
+   * Additional module specifiers that may export `computed`.
+   * The rule will recognize `computed` when imported from these modules too.
+   */
+  extraCreatorModules?: Array<string>;
   /**
    * Controls whether the fixer renames the resulting computed variable and updates references.
    * Default: true
@@ -98,21 +106,6 @@ type SignalDependencyInfo = {
   isDirectAccess: boolean;
   node: TSESTree.Node;
 };
-
-function getOrCreateComputedImport(
-  sourceCode: SourceCode,
-  program: TSESTree.Program | null
-): TSESTree.ImportDeclaration | undefined {
-  if (program === null) {
-    program = sourceCode.ast;
-  }
-
-  return program.body.find((n): n is TSESTree.ImportDeclaration => {
-    return (
-      n.type === AST_NODE_TYPES.ImportDeclaration && n.source.value === '@preact/signals-react'
-    );
-  });
-}
 
 function getSignalDependencyInfo(
   dep: TSESTree.Node | null,
@@ -225,6 +218,10 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
             additionalProperties: false,
           },
           suffix: { type: 'string', minLength: 1 },
+          extraCreatorModules: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+          },
           rename: { type: 'boolean' },
           accessors: {
             type: 'object',
@@ -301,6 +298,11 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
 
     startPhase(perfKey, 'ruleExecution');
 
+    const creatorModules = new Set<string>([
+      '@preact/signals-react',
+      ...(Array.isArray(option?.extraCreatorModules) ? option.extraCreatorModules : []),
+    ]);
+
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
@@ -329,7 +331,8 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
 
             return (
               n.type === AST_NODE_TYPES.ImportDeclaration &&
-              n.source.value === '@preact/signals-react' &&
+              typeof n.source.value === 'string' &&
+              creatorModules.has(n.source.value) &&
               n.specifiers.some((s: TSESTree.ImportClause): boolean => {
                 return (
                   s.type === AST_NODE_TYPES.ImportSpecifier &&
@@ -363,7 +366,32 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
 
         const isUseMemoCall = (() => {
           if (node.callee.type === AST_NODE_TYPES.Identifier) {
-            return node.callee.name === 'useMemo';
+            if (node.callee.name === 'useMemo') {
+              return true;
+            }
+
+            const variable = context.sourceCode
+              .getScope(node)
+              .variables.find((v: Variable): boolean => {
+                return 'name' in node.callee && v.name === node.callee.name;
+              });
+
+            if (typeof variable !== 'undefined') {
+              return variable.defs.some((def: Definition): boolean => {
+                if (def.type !== 'ImportBinding') {
+                  return false;
+                }
+
+                // Guard imported name access
+                if ('imported' in def.node && 'name' in def.node.imported) {
+                  return def.node.imported.name === 'useMemo';
+                }
+
+                return false;
+              });
+            }
+
+            return false;
           }
 
           if (
@@ -642,43 +670,17 @@ export const preferComputedRule = ESLintUtils.RuleCreator((name: string): string
                     return;
                   }
 
-                  if (hasComputedImport) {
-                    return;
-                  }
-
-                  const computedImport = getOrCreateComputedImport(context.sourceCode, program);
-
-                  recordMetric(
-                    perfKey,
-                    'computedImportStatus',
-                    computedImport ? 'present' : 'missing'
-                  );
-
-                  if (computedImport) {
-                    const hasComputed = computedImport.specifiers.some(
-                      (s: TSESTree.ImportClause): boolean => {
-                        return (
-                          s.type === AST_NODE_TYPES.ImportSpecifier &&
-                          'name' in s.imported &&
-                          s.imported.name === 'computed'
-                        );
-                      }
+                  if (!hasComputedImport) {
+                    const fixes = ensureNamedImportFixes(
+                      context,
+                      fixer,
+                      '@preact/signals-react',
+                      'computed'
                     );
 
-                    const last = computedImport.specifiers[computedImport.specifiers.length - 1];
-
-                    if (!hasComputed && last) {
-                      yield fixer.insertTextAfter(last, ', computed');
+                    for (const f of fixes) {
+                      yield f;
                     }
-
-                    return;
-                  }
-
-                  if (typeof program?.body[0] !== 'undefined') {
-                    yield fixer.insertTextBefore(
-                      program.body[0],
-                      "import { computed } from '@preact/signals-react';\n"
-                    );
                   }
                 },
               },

@@ -268,9 +268,7 @@ export function TestBatchInConditional(): JSX.Element {
       });
     } else {
       // Single update doesn't need batching, should warn, and offer autofix
-      batch(() => {
-        countSignal.value = 1;
-      });
+      countSignal.value = 1;
     }
   }, [isAdmin]);
 
@@ -668,9 +666,7 @@ export function TestBatchArrayUpdate(): JSX.Element {
 
   const handleDoubleValues = useCallback(() => {
     // Correct - using batch and array methods
-    batch(() => {
-      itemsSignal.value = itemsSignal.value.map((item) => item * 2);
-    });
+    itemsSignal.value = itemsSignal.value.map((item) => item * 2);
   }, []);
 
   return (

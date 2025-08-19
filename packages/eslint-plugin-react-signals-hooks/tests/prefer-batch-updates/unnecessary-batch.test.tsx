@@ -11,11 +11,8 @@ export function UnnecessaryBatch(): JSX.Element {
   useSignals();
 
   const onClick = useCallback(() => {
-    batch(() => {
-      console.info(countSignal.value);
-
-      countSignal.value = 1;
-    });
+    console.info(countSignal.value);
+countSignal.value = 1;
   }, []);
 
   return (

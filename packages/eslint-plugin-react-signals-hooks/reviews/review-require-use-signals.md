@@ -2,21 +2,21 @@
 
 ## Potential Issues / Edge Cases
 
-- __Argument policy clarity__: Teams may need documentation on what `computeExpectedArg()` expects in different contexts; otherwise `wrongUseSignalsArg` may surprise.
-- __Nested/early returns__: Wrapping the body may affect formatting around early returns; the fix confines to block bodies to mitigate.
-- __Multiple stores__: If multiple `useSignals` stores exist, `findOrCreateStoreDeclaration` prefers reuse but complex cases could need manual review.
-- __Function forms__: Only block-bodied functions are fixed; concise arrow functions are skipped by design.
+- __Argument policy clarity__: Teams may need documentation on what `computeExpectedArg()` expects in different contexts; otherwise `wrongUseSignalsArg` may surprise. — STATUS: TODO
+- __Nested/early returns__: Wrapping the body may affect formatting around early returns; the fix confines to block bodies to mitigate. — STATUS: TODO
+- __Multiple stores__: If multiple `useSignals` stores exist, `findOrCreateStoreDeclaration` prefers reuse but complex cases could need manual review. — STATUS: TODO
+- __Function forms__: Only block-bodied functions are fixed; concise arrow functions are skipped by design. — STATUS: TODO
 
 ## Recommendations
 
-1. __Document expected args__
-   - Clarify in docs when each `useSignals(arg)` form is expected (component vs custom hook, cleanup semantics).
-2. __Concise arrow support__
-   - Optionally transform concise arrow functions to block bodies to enable wrapping, gated by a config flag.
-3. __Advanced detection__
-   - Consider type-aware signal detection to reduce suffix reliance and support custom creator factories.
-4. __Safer wrapping strategy__
-   - Preserve leading comments/annotations when wrapping, and ensure stable formatting via codemod-like utilities.
+1. __Document expected args__ — STATUS: TODO
+   - Clarify in docs when each `useSignals(arg)` form is expected (component vs custom hook, cleanup semantics). — STATUS: TODO
+2. __Concise arrow support__ — STATUS: TODO
+   - Optionally transform concise arrow functions to block bodies to enable wrapping, gated by a config flag. — STATUS: TODO
+3. __Advanced detection__ — STATUS: TODO
+   - Consider type-aware signal detection to reduce suffix reliance and support custom creator factories. — STATUS: TODO
+4. __Safer wrapping strategy__ — STATUS: TODO
+   - Preserve leading comments/annotations when wrapping, and ensure stable formatting via codemod-like utilities. — STATUS: TODO
 
 ## Example
 

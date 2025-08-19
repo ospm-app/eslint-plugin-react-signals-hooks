@@ -55,6 +55,10 @@ The rule accepts an options object with the following properties:
 
 - `suffix` (string, default: `"Signal"`)
   - If a variable name ends with this suffix, it is treated as signal-like for detection heuristics.
+- `creatorNames` (string[], optional)
+  - Additional base creator names to recognize as signal creators (merged with defaults `signal`, `computed`, `effect`). Useful if your project wraps creators with custom names.
+- `enableSuffixHeuristic` (boolean, default: `true`)
+  - Enables suffix-based heuristics (e.g., variables ending with `Signal`). The heuristic is only active when at least one known creator import/namespace is present in the file.
 - `modules` (string[], optional)
   - Additional module specifiers that export signal creators. These are merged with the defaults (`@preact/signals-react`, `@preact/signals-core`).
 - `allowBareNames` (boolean, default: `false`)

@@ -21,6 +21,8 @@ This rule helps optimize React components by reducing the number of renders caus
    countSignal.update(prev => prev + 1);
    ```
 
+   Note: `.update(...)` calls are considered updates by default. You can configure the rule to treat them as non-updates with `detection.ignoreUpdateCalls: true`.
+
 ### When does this rule apply?
 
 The rule activates when it detects multiple signal updates (default: 2 or more) in the same scope that could be batched together.
@@ -47,6 +49,11 @@ This rule accepts an options object with the following properties:
           },
           "enableMetrics": false,   // Enable performance metrics collection
           "logMetrics": false       // Log metrics to console
+        },
+        "detection": {
+          "allowSingleReads": 0,           // Allow up to N reads without updates inside a batch body
+          "allowNonTrivialBetween": 0,     // Allow up to N non-trivial statements between updates to still consider them contiguous
+          "ignoreUpdateCalls": false       // Treat `.update(...)` method calls as non-updates when true
         }
       }
     ]
@@ -70,6 +77,11 @@ This rule accepts an options object with the following properties:
     },
     enableMetrics: false,
     logMetrics: false
+  },
+  detection: {
+    allowSingleReads: 0,
+    allowNonTrivialBetween: 0,
+    ignoreUpdateCalls: false
   }
 }
 ```
@@ -334,7 +346,10 @@ This rule accepts an options object with the following properties:
 This rule accepts an options object with the following properties:
 
 - `minUpdates` (number): Minimum number of signal updates required to trigger the rule (default: 2)
-- `suffix` (string): Suffix to use for signal detection (default: 'Signal')
+- `detection` (object): Heuristics tuning
+  - `allowSingleReads` (number, default 0): Allow up to N signal reads inside a batch body without reporting `nonUpdateSignalInBatch` if there are updates elsewhere in the body
+  - `allowNonTrivialBetween` (number, default 0): Allow up to N non-trivial statements between updates to still consider them contiguous for batching
+  - `ignoreUpdateCalls` (boolean, default false): When true, treat `.update(...)` calls as non-updates
 
 ### Severity (optional)
 
@@ -347,7 +362,6 @@ You can control severity per message id (`'error' | 'warn' | 'off'`), including 
       "error",
       {
         "minUpdates": 2,
-        "suffix": "Signal",
         "severity": {
           "useBatch": "error",
           "suggestUseBatch": "warn",
@@ -370,7 +384,14 @@ You can control severity per message id (`'error' | 'warn' | 'off'`), including 
   "rules": {
     "react-signals-hooks/prefer-batch-updates": [
       "error",
-      { "minUpdates": 3 }
+      {
+        "minUpdates": 3,
+        "detection": {
+          "allowSingleReads": 0,
+          "allowNonTrivialBetween": 1,
+          "ignoreUpdateCalls": true
+        }
+      }
     ]
   }
 }

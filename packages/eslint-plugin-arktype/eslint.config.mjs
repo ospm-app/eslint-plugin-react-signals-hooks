@@ -13,7 +13,6 @@ import globals from 'globals';
 import eslintPlugin from 'eslint-plugin-eslint-plugin';
 import jsxA11y from 'eslint-plugin-jsx-a11y';
 import securityPlugin from 'eslint-plugin-security';
-
 import reactSignalsHooksPlugin from './dist/esm/index.js';
 
 const commonRules = {
@@ -238,6 +237,9 @@ const jsonConfig = {
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
+  {
+    ignores: ['**/node_modules/**', '**/dist/**'],
+  },
   jsxA11y.flatConfigs.recommended,
   securityPlugin.configs.recommended,
   {
@@ -266,13 +268,13 @@ export default [
   {
     ignores: [
       './node_modules',
+      './dist/**',
       '**/ios/**',
       '**/android/**',
       '**/node_modules/**',
       '**/.cache/**',
       '**/bundled/**',
       '**/build/**',
-      '**/dist/**',
       '**/.wrangler/**',
       '**/test/**',
     ],

@@ -1,33 +1,39 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition */
+/* eslint-disable @typescript-eslint/strict-boolean-expressions */
 import { signal } from '@preact/signals-react';
-import type { JSX } from 'react';
 import { useSignals } from '@preact/signals-react/runtime';
+import type { JSX } from 'react';
 
 // This component should trigger ESLint warnings for complex ternary with signals
 export function TestComplexTernaryWithSignal(): JSX.Element {
-  useSignals();
+  const store = useSignals(1);
 
-  const visibleSignal = signal(true);
+  try {
+    const visibleSignal = signal(true);
 
-  // This should trigger a warning - complex ternary with signal condition
-  return (
-    <div>
-      {visibleSignal ? (
-        <div>
-          <h1>Title</h1>
+    // This should trigger a warning - complex ternary with signal condition
+    return (
+      <div>
+        {visibleSignal ? (
+          <div>
+            <h1>Title</h1>
 
-          <p>Complex content that should use Show component</p>
+            <p>Complex content that should use Show component</p>
 
-          <button type='button'>Action</button>
-        </div>
-      ) : (
-        <div>
-          <h1>Alternative</h1>
+            <button type='button'>Action</button>
+          </div>
+        ) : (
+          <div>
+            <h1>Alternative</h1>
 
-          <p>Alternative complex content</p>
-        </div>
-      )}
-    </div>
-  );
+            <p>Alternative complex content</p>
+          </div>
+        )}
+      </div>
+    );
+  } finally {
+    store.f();
+  }
 }
 
 // This component should trigger warning for ternary with signal and complex consequent

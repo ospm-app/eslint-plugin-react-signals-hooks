@@ -1,3 +1,5 @@
+/* eslint-disable react-signals-hooks/prefer-signal-reads */
+/* eslint-disable react-signals-hooks/no-non-signal-with-signal-suffix */
 // FIXED by @ospm/eslint-plugin-react-signals-hooks
 /** biome-ignore-all assist/source/organizeImports: off */
 import {

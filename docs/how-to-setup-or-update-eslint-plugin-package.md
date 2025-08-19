@@ -339,8 +339,8 @@ export default [
   // Global ignores
   {
     ignores: [
-      '**/node_modules/**',
-      '**/dist/**',
+      './node_modules/**',
+      './dist/**',
       '**/coverage/**',
       '**/build/**',
       '**/.next/**',

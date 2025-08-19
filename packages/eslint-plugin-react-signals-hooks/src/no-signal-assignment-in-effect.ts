@@ -1,3 +1,5 @@
+/* eslint-disable react-signals-hooks/prefer-signal-reads */
+/* eslint-disable react-signals-hooks/no-non-signal-with-signal-suffix */
 /** biome-ignore-all assist/source/organizeImports: off */
 import type { Definition } from '@typescript-eslint/scope-manager';
 import {
@@ -8,6 +10,7 @@ import {
 } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
+import { ensureNamedImportFixes } from './utils/imports.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import {
   endPhase,
@@ -77,6 +80,35 @@ function getSeverity(messageId: MessageIds, options: Option | undefined): 'error
   }
 }
 
+function hasOptionalChainAncestor(node: TSESTree.Node): boolean {
+  let current: TSESTree.Node | undefined = node.parent;
+
+  while (current) {
+    if (current.type === AST_NODE_TYPES.ChainExpression) {
+      return true;
+    }
+    if (
+      (current.type === AST_NODE_TYPES.MemberExpression ||
+        current.type === AST_NODE_TYPES.CallExpression) &&
+      current.optional === true
+    ) {
+      return true;
+    }
+
+    if (
+      current.type === AST_NODE_TYPES.Program ||
+      current.type === AST_NODE_TYPES.JSXElement ||
+      current.type === AST_NODE_TYPES.JSXFragment
+    ) {
+      return false;
+    }
+
+    current = current.parent;
+  }
+
+  return false;
+}
+
 function isSignalAssignment(
   node: TSESTree.Node,
   signalNames: Array<string>,
@@ -91,16 +123,20 @@ function isSignalAssignment(
   try {
     trackOperation(perfKey, PerformanceOperations.signalCheck);
 
+    // Be conservative: bail out when optional chaining is involved
+    if (node.optional === true || hasOptionalChainAncestor(node)) {
+      return false;
+    }
+
     if (
       !node.computed &&
       node.property.type === AST_NODE_TYPES.Identifier &&
       node.property.name === 'value' &&
       node.object.type === AST_NODE_TYPES.Identifier
     ) {
-      const object = node.object;
-      const cacheKey = `${object.name}:${signalNames.join(',')}`;
+      const cacheKey = `${node.object.name}:${signalNames.join(',')}`;
 
-      if (signalVariables.has(object.name)) {
+      if (signalVariables.has(node.object.name)) {
         return true;
       }
 
@@ -108,20 +144,20 @@ function isSignalAssignment(
         const cached = signalNameCache.get(cacheKey) ?? false;
 
         if (cached) {
-          signalVariables.add(object.name);
+          signalVariables.add(node.object.name);
         }
 
         return cached;
       }
 
       const isSignal = signalNames.some((name: string): boolean => {
-        return object.name.endsWith(name);
+        return 'name' in node.object && node.object.name.endsWith(name);
       });
 
       signalNameCache.set(cacheKey, isSignal);
 
       if (isSignal) {
-        signalVariables.add(object.name);
+        signalVariables.add(node.object.name);
       }
 
       return isSignal;
@@ -604,51 +640,28 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator((name: str
                 const callback = node.arguments[0];
 
                 if (
-                  !callback ||
+                  typeof callback === 'undefined' ||
                   (callback.type !== AST_NODE_TYPES.ArrowFunctionExpression &&
                     callback.type !== AST_NODE_TYPES.FunctionExpression)
                 ) {
                   return null;
                 }
 
-                const [start] = callback.body.range;
+                const fixes: Array<TSESLint.RuleFix> = ensureNamedImportFixes(
+                  { sourceCode: context.sourceCode },
+                  fixer,
+                  '@preact/signals-react/runtime',
+                  'useSignalsLayoutEffect'
+                );
 
-                const [end] = node.arguments[1]?.range ?? node.range;
-
-                const fixes: Array<TSESLint.RuleFix> = [];
                 fixes.push(
                   fixer.replaceTextRange(
                     [node.range[0], node.range[1]],
                     `useSignalsLayoutEffect(() => ${context.sourceCode.text
-                      .slice(start, end)
+                      .slice(callback.body.range[0], node.arguments[1]?.range[0] ?? node.range[0])
                       .trim()})`
                   )
                 );
-
-                const hasImport = context.sourceCode.ast.body.some(
-                  (stmt: TSESTree.ProgramStatement): boolean => {
-                    return (
-                      stmt.type === AST_NODE_TYPES.ImportDeclaration &&
-                      stmt.source.value === '@preact/signals-react/runtime' &&
-                      stmt.specifiers.some((s: TSESTree.ImportClause): boolean => {
-                        return (
-                          s.type === AST_NODE_TYPES.ImportSpecifier &&
-                          s.imported.type === AST_NODE_TYPES.Identifier &&
-                          s.imported.name === 'useSignalsLayoutEffect'
-                        );
-                      })
-                    );
-                  }
-                );
-
-                if (!hasImport) {
-                  fixes.push(
-                    fixer.insertTextBeforeRange(
-                      [0, 0],
-                      "import { useSignalsLayoutEffect } from '@preact/signals-react/runtime';\n"
-                    )
-                  );
-                }
 
                 return fixes;
               },
@@ -662,49 +675,26 @@ export const noSignalAssignmentInEffectRule = ESLintUtils.RuleCreator((name: str
                 const callback = node.arguments[0];
 
                 if (
-                  !callback ||
+                  typeof callback === 'undefined' ||
                   (callback.type !== AST_NODE_TYPES.ArrowFunctionExpression &&
                     callback.type !== AST_NODE_TYPES.FunctionExpression)
                 ) {
                   return null;
                 }
 
-                const [start] = callback.body.range;
+                const fixes: Array<TSESLint.RuleFix> = ensureNamedImportFixes(
+                  { sourceCode: context.sourceCode },
+                  fixer,
+                  '@preact/signals-react/runtime',
+                  'useSignalsEffect'
+                );
 
-                const [end] = node.arguments[1]?.range ?? node.range;
-
-                const fixes: Array<TSESLint.RuleFix> = [];
                 fixes.push(
                   fixer.replaceTextRange(
                     [node.range[0], node.range[1]],
-                    `useSignalsEffect(() => ${context.sourceCode.text.slice(start, end).trim()})`
+                    `useSignalsEffect(() => ${context.sourceCode.text.slice(callback.body.range[0], node.arguments[1]?.range[0] ?? node.range[0]).trim()})`
                   )
                 );
-
-                const hasImport = context.sourceCode.ast.body.some(
-                  (stmt: TSESTree.ProgramStatement): boolean => {
-                    return (
-                      stmt.type === AST_NODE_TYPES.ImportDeclaration &&
-                      stmt.source.value === '@preact/signals-react/runtime' &&
-                      stmt.specifiers.some((s: TSESTree.ImportClause): boolean => {
-                        return (
-                          s.type === AST_NODE_TYPES.ImportSpecifier &&
-                          s.imported.type === AST_NODE_TYPES.Identifier &&
-                          s.imported.name === 'useSignalsEffect'
-                        );
-                      })
-                    );
-                  }
-                );
-
-                if (!hasImport) {
-                  fixes.push(
-                    fixer.insertTextBeforeRange(
-                      [0, 0],
-                      "import { useSignalsEffect } from '@preact/signals-react/runtime';\n"
-                    )
-                  );
-                }
 
                 return fixes;
               },

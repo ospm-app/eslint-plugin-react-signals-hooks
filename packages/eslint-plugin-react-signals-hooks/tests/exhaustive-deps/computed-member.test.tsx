@@ -1,7 +1,11 @@
+/* eslint-disable react-signals-hooks/prefer-signal-effect */
+/* eslint-disable react-signals-hooks/prefer-signal-methods */
 /** biome-ignore-all lint/correctness/useExhaustiveDependencies: not relevant */
+/** biome-ignore-all lint/correctness/useHookAtTopLevel: off */
 /** biome-ignore-all assist/source/organizeImports: off */
 import { signal } from '@preact/signals-react';
 import { useCallback, useEffect, useMemo, type JSX } from 'react';
+import { useSignals } from '@preact/signals-react/runtime';
 
 // Test signals
 const piecePosMapSignal = signal<Record<string, [number, number]>>({});
@@ -80,7 +84,7 @@ function AssignmentOnlyTest(): JSX.Element | null {
   }, []); // This is correct - no dependencies needed
 
   // Test 2: Multiple assignments to computed properties
-   
+
   useEffect(() => {
     // Multiple assignments, all write-only
     piecePosMapSignal.value[externalId] = [3, 4];
@@ -97,36 +101,42 @@ function AssignmentOnlyTest(): JSX.Element | null {
  * When a computed property is used for both reading and writing,
  * it should be required in the dependency array.
  */
- 
+
 function MixedTest(): JSX.Element | null {
+  const store = useSignals(1);
+
   // Test 1: Both read and write to computed property with external ID
-  useEffect(() => {
-    // Both read and write to computed property
-    const pos = piecePosMapSignal.peek()[externalId];
+  try {
+    useEffect(() => {
+      // Both read and write to computed property
+      const pos = piecePosMapSignal.value[externalId];
 
-    if (!pos) {
-      return;
-    }
+      if (!pos) {
+        return;
+      }
 
-    piecePosMapSignal.value[externalId] = [pos[0] + 1, pos[1]];
-    // Should require piecePosMapSignal.value[externalId]
-  }, []); // Missing dependency: piecePosMapSignal.value[externalId]
+      piecePosMapSignal.value[externalId] = [pos[0] + 1, pos[1]];
+      // Should require piecePosMapSignal.value[externalId]
+    }, []); // Missing dependency: piecePosMapSignal.value[externalId]
 
-  // Test 2: Read from one property, write to another
-   
-  useEffect(() => {
-    // Read from one property, write to another
-    const pos = piecePosMapSignal.value[externalId];
+    // Test 2: Read from one property, write to another
 
-    if (!pos) {
-      return;
-    }
+    useEffect(() => {
+      // Read from one property, write to another
+      const pos = piecePosMapSignal.value[externalId];
 
-    piecePosMapSignal.value.another = pos;
-    // Should require piecePosMapSignal.value[externalId]
-  }, [piecePosMapSignal.value]); // Missing dependency: piecePosMapSignal.value[externalId]
+      if (!pos) {
+        return;
+      }
 
-  return null;
+      piecePosMapSignal.value.another = pos;
+      // Should require piecePosMapSignal.value[externalId]
+    }, [piecePosMapSignal.value]); // Missing dependency: piecePosMapSignal.value[externalId]
+
+    return null;
+  } finally {
+    store.f();
+  }
 }
 
 export { InnerScopeTest, ExternalScopeTest, AssignmentOnlyTest, MixedTest };

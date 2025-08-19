@@ -43,6 +43,8 @@ type Option = {
 	suffix?: string;
 	/** When true, also fix concise arrow function components/hooks by wrapping body in a block with useSignals try/finally. */
 	wrapConciseArrows?: boolean;
+  /** Additional module specifiers that may export `signal`/`computed`. */
+  extraCreatorModules?: Array<string>;
 };
 
 type Options = [Option?];
@@ -609,6 +611,13 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator(
 						type: "string",
 						default: "Signal",
 					},
+          extraCreatorModules: {
+            description:
+              "Additional module specifiers that export signal/computed (in addition to '@preact/signals-react')",
+            type: "array",
+            items: { type: "string", minLength: 1 },
+            default: [],
+          },
 				},
 			},
 		],
@@ -671,6 +680,12 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator(
 		const signalCreatorLocals = new Set<string>(["signal"]);
 		const computedCreatorLocals = new Set<string>(["computed"]);
 		const creatorNamespaces = new Set<string>();
+		const creatorModules = new Set<string>([
+			"@preact/signals-react",
+			...(Array.isArray(option?.extraCreatorModules)
+				? option.extraCreatorModules
+				: []),
+		]);
 		const signalVariables = new Set<string>();
 
 		let nodeCount = 0;
@@ -1057,7 +1072,7 @@ export const requireUseSignalsRule = ESLintUtils.RuleCreator(
 
 					if (
 						typeof stmt.source.value === "string" &&
-						stmt.source.value === "@preact/signals-react"
+						creatorModules.has(stmt.source.value)
 					) {
 						for (const spec of stmt.specifiers) {
 							if (spec.type === AST_NODE_TYPES.ImportSpecifier) {

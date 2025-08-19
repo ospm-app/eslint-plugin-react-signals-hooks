@@ -204,17 +204,25 @@ interface Options {
   };
   performance?: PerformanceBudget;
   suffix?: string;
+  extraCreatorModules?: string[];
+  extraCreatorNames?: string[];
+  extraCreatorNamespaces?: string[];
+  suggestOnly?: boolean;
 }
 ```
 
 - `performance`: Enables performance tracking/budgeting.
 - `severity`: Per-message severity control. Defaults to `error`.
 - `suffix`: Custom suffix for detecting signal variable names.
+- `extraCreatorModules`: Additional modules exporting `signal`/`computed` creators (merged with defaults like `@preact/signals-react`).
+- `extraCreatorNames`: Additional local creator function identifiers (e.g., `['signal', 'computed', 'sig']`).
+- `extraCreatorNamespaces`: Additional namespaces that contain creator methods (e.g., `['Signals']`).
+- `suggestOnly`: When true, do not apply autofix automatically; offer suggestions instead.
 
 ## Autofix and Suggestions
 
 - Autofix: Yes (fixable: `code`).
-- Suggestions: No (`hasSuggestions: false`).
+- Suggestions: Yes (`hasSuggestions: true`). When `suggestOnly: true`, fixes are offered as suggestions rather than applied automatically.
 
 ## TypeScript Support
 

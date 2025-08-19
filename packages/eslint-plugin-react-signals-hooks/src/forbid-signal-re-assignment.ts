@@ -264,6 +264,12 @@ function rhsIsSignalLike(
   if (
     node.type === AST_NODE_TYPES.MemberExpression &&
     node.object.type === AST_NODE_TYPES.Identifier &&
+    // Ignore simple value reads like `fooSignal.value`
+    !(
+      node.property.type === AST_NODE_TYPES.Identifier &&
+      node.property.name === 'value' &&
+      !node.computed
+    ) &&
     (knownSignalContainers.has(node.object.name) ||
       knownSignalVars.has(node.object.name) ||
       (suffixHeuristicActive && hasSignalSuffix(node.object.name, suffixRegex)))
@@ -274,7 +280,7 @@ function rhsIsSignalLike(
   return { match: false, name: '' };
 }
 
-function report(
+function reportWithSuggestions(
   node: TSESTree.Node,
   name: string,
   context: TSESLint.RuleContext<MessageIds, Options>
@@ -283,7 +289,22 @@ function report(
     return;
   }
 
-  context.report({ node, messageId: 'reassignSignal', data: { name } });
+  context.report({
+    node,
+    messageId: 'reassignSignal',
+    data: { name },
+    suggest: [
+      {
+        messageId: 'reassignSignal',
+        fix(fixer) {
+          return fixer.insertTextBefore(
+            node,
+            `/* Prefer using the original signal or its .value instead of aliasing: ${name} */\n`
+          );
+        },
+      },
+    ],
+  });
 }
 
 // Known modules exporting signal creators
@@ -516,7 +537,7 @@ export const forbidSignalReAssignmentRule = ESLintUtils.RuleCreator((name: strin
               hasSignalSuffix(node.init.name, suffixRegex);
 
             if (isVar || isContainer || suffixOnly) {
-              report(node, node.init.name, context);
+              reportWithSuggestions(node, node.init.name, context);
 
               // propagate only when we know the source kind
               if (isVar) {
@@ -530,13 +551,19 @@ export const forbidSignalReAssignmentRule = ESLintUtils.RuleCreator((name: strin
             const base =
               node.init.object.type === AST_NODE_TYPES.Identifier ? node.init.object.name : null;
 
-            if (base !== null && (knownSignalContainers.has(base) || knownSignalVars.has(base))) {
-              report(node, context.sourceCode.getText(node.init), context);
+            if (
+              base !== null &&
+              !(
+                node.init.property.type === AST_NODE_TYPES.Identifier &&
+                node.init.property.name === 'value' &&
+                node.init.computed === false
+              ) &&
+              (knownSignalContainers.has(base) || knownSignalVars.has(base))
+            ) {
+              reportWithSuggestions(node, context.sourceCode.getText(node.init), context);
               // propagate alias so subsequent uses are tracked
-              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-              if (node.id.type === AST_NODE_TYPES.Identifier) {
-                knownSignalVars.add(node.id.name);
-              }
+
+              knownSignalVars.add(node.id.name);
             }
           }
         }
@@ -569,22 +596,21 @@ export const forbidSignalReAssignmentRule = ESLintUtils.RuleCreator((name: strin
           )
         ) {
           // const [s] = signal() -- unlikely but catch
-          report(node.id, context.sourceCode.getText(initUnwrapped), context);
+          reportWithSuggestions(node.id, context.sourceCode.getText(initUnwrapped), context);
           return;
         }
 
-        if (node.init.type === AST_NODE_TYPES.Identifier) {
-          if (
-            knownSignalVars.has(node.init.name) ||
+        if (
+          node.init.type === AST_NODE_TYPES.Identifier &&
+          (knownSignalVars.has(node.init.name) ||
             knownSignalContainers.has(node.init.name) ||
             (option?.enableSuffixHeuristic === true &&
               hasCreatorImport &&
-              hasSignalSuffix(node.init.name, suffixRegex))
-          ) {
-            report(node.id, node.init.name, context);
+              hasSignalSuffix(node.init.name, suffixRegex)))
+        ) {
+          reportWithSuggestions(node.id, node.init.name, context);
 
-            return;
-          }
+          return;
         }
 
         if (
@@ -599,7 +625,7 @@ export const forbidSignalReAssignmentRule = ESLintUtils.RuleCreator((name: strin
             creatorBaseNames
           )
         ) {
-          report(node.id, context.sourceCode.getText(node.init), context);
+          reportWithSuggestions(node.id, context.sourceCode.getText(node.init), context);
         }
       },
 
@@ -626,7 +652,8 @@ export const forbidSignalReAssignmentRule = ESLintUtils.RuleCreator((name: strin
           );
 
           if (match) {
-            report(node, name, context);
+            reportWithSuggestions(node, name, context);
+
             // propagate alias; if rhs is a known container identifier, track as container
             if (
               node.right.type === AST_NODE_TYPES.Identifier &&
@@ -661,7 +688,7 @@ export const forbidSignalReAssignmentRule = ESLintUtils.RuleCreator((name: strin
           );
 
           if (match) {
-            report(node.left, name, context);
+            reportWithSuggestions(node.left, name, context);
           }
         }
       },
@@ -690,7 +717,7 @@ export const forbidSignalReAssignmentRule = ESLintUtils.RuleCreator((name: strin
             );
 
             if (match) {
-              report(param, name, context);
+              reportWithSuggestions(param, name, context);
             }
           }
         }

@@ -1,22 +1,22 @@
+/* eslint-disable n/no-unpublished-import */
 import babelParser from '@babel/eslint-parser';
 import babelPresetEnv from '@babel/preset-env';
-
 import typescriptPlugin from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
 import pluginESx from 'eslint-plugin-es-x';
+import eslintPlugin from 'eslint-plugin-eslint-plugin';
 import importPlugin from 'eslint-plugin-import';
 import json from 'eslint-plugin-json';
+import jsxA11y from 'eslint-plugin-jsx-a11y';
 import nodePlugin from 'eslint-plugin-n';
 import optimizeRegexPlugin from 'eslint-plugin-optimize-regex';
 import oxlintPlugin from 'eslint-plugin-oxlint';
 import promisePlugin from 'eslint-plugin-promise';
-import globals from 'globals';
-import eslintPlugin from 'eslint-plugin-eslint-plugin';
-import jsxA11y from 'eslint-plugin-jsx-a11y';
 import securityPlugin from 'eslint-plugin-security';
+import globals from 'globals';
 
-import reactSignalsHooksPlugin from './packages/eslint-plugin-react-signals-hooks/dist/esm/index.js';
-import eslintRulePlugin from './packages/eslint-plugin-eslint-rule/dist/esm/index.js';
+import eslintRulePlugin from './packages/eslint-plugin-eslint-rule/dist/esm/index.mjs';
+import reactSignalsHooksPlugin from './packages/eslint-plugin-react-signals-hooks/dist/esm/index.mjs';
 
 const commonRules = {
   // Disabled rules
@@ -49,7 +49,7 @@ const commonRules = {
     },
   ],
   'import/no-cycle': 'error',
-  'import/no-unused-modules': ['error', { unusedExports: true }],
+  // 'import/no-unused-modules': ['error', { unusedExports: true }],
 
   // Enabled rules
   'no-console': ['error', { allow: ['warn', 'error', 'info', 'table', 'debug', 'clear'] }],
@@ -183,6 +183,7 @@ const tsConfig = {
     'react-signals-hooks/forbid-signal-destructuring': 'warn',
     'react-signals-hooks/forbid-signal-re-assignment': 'warn',
     'react-signals-hooks/warn-on-unnecessary-untracked': 'warn',
+    'react-signals-hooks/forbid-signal-update-in-computed': 'warn',
 
     'react-signals-hooks/prefer-computed': 'warn',
     'react-signals-hooks/prefer-signal-reads': 'warn',
@@ -276,6 +277,40 @@ const jsonConfig = {
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
+  // Note: We import plugin bundles from packages/*/dist for ESLint to load the plugin code.
+  // Those files are imported by this config, not linted. The ignores below prevent traversing dist.
+  {
+    ignores: [
+      './node_modules',
+      './test-packages',
+      '**/ios/**',
+      '**/android/**',
+      '**/node_modules/**',
+      '**/.cache/**',
+      '**/bundled/**',
+      '**/build/**',
+      '**/dist/**',
+      '**/tests/**',
+      '**/.wrangler/**',
+      'test-packages/**',
+      'packages/package-json-bot/**',
+      'packages/eslint-config-validation-schemas/**',
+      'packages/eslint-plugin-zod/**',
+      'packages/eslint-plugin-valibot/**',
+      'packages/eslint-plugin-arktype/**',
+      'packages/eslint-plugin-joi/**',
+      'packages/eslint-plugin-react-three-fiber/**',
+      'packages/eslint-plugin-threejs/**',
+      'packages/eslint-plugin-vibecoder-rasp/**',
+    ],
+  },
+  // Global settings to keep eslint-plugin-import from parsing external modules like react-native
+  {
+    settings: {
+      // Use RegExp to avoid invalid glob -> RegExp conversion inside eslint-plugin-import
+      'import/ignore': ['react-native', 'node_modules', /(^|\/)dist(\/|$)/],
+    },
+  },
   jsxA11y.flatConfigs.recommended,
   securityPlugin.configs.recommended,
   {
@@ -286,7 +321,7 @@ export default [
     },
   },
   {
-    files: ['**/eslint.config.js'],
+    files: ['**/eslint.config.{js,cjs,mjs}'],
     languageOptions: {
       ecmaVersion: 2024,
       parser: babelParser,
@@ -300,29 +335,13 @@ export default [
         },
       },
     },
+    rules: {
+      // Avoid eslint-plugin-import inspecting external deps from within config files
+      'import/no-cycle': 'off',
+      'import/no-unused-modules': 'off',
+    },
   },
-  {
-    ignores: [
-      './node_modules',
-      '**/ios/**',
-      '**/android/**',
-      '**/node_modules/**',
-      '**/.cache/**',
-      '**/bundled/**',
-      '**/build/**',
-      '**/dist/**',
-      '**/.wrangler/**',
-      '**/test/**',
 
-      'test-packages/**',
-      'packages/package-json-bot/**',
-      'packages/eslint-config-validation-schemas/**',
-      'packages/eslint-plugin-zod/**',
-      'packages/eslint-plugin-valibot/**',
-      'packages/eslint-plugin-arktype/**',
-      'packages/eslint-plugin-joi/**',
-    ],
-  },
   {
     files: ['**/*.{js,jsx,ts,tsx,mjs,mts}'],
     plugins: {

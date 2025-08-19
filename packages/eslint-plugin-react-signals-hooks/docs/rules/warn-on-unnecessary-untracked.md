@@ -133,6 +133,43 @@ This rule accepts an options object with the following properties:
 - `allowInEventHandlers` (default: `true`): Allow `untracked()` and `.peek()` in DOM event handlers where they might be used for performance.
 - `allowForSignalWrites` (default: `true`): Allow `.peek()` when it's used to prevent circular dependencies when writing to signals in effects.
 
+## Reactive Context Definition
+
+This rule treats a location as "reactive" when signal reads would normally be tracked by the runtime. Concretely, the rule considers the following as reactive contexts (configurable via options):
+
+- Components and hooks: functions with names that are Capitalized (components) or start with `use` (custom hooks)
+- `useSignalEffect` callbacks (allowed by default; can be tuned with `allowInEffects`)
+- JSX event handlers (e.g., `onClick`, `onChange`) may be treated specially via `allowInEventHandlers`
+
+Notes:
+
+- Outside reactive contexts (e.g., module scope utilities, plain functions), `untracked()`/`.peek()` are generally unnecessary and may be flagged.
+- Within reactive contexts, the rule still checks intent. For instance, `.peek()` is flagged when reading `X.value.peek()` where direct `X.value` is sufficient, unless prevented by `allowForSignalWrites` when doing signal writes inside effects.
+
+Examples:
+
+```tsx
+// In a component (reactive)
+function Profile() {
+  // ❌ Unnecessary: direct value access is sufficient
+  const name = untracked(() => userSignal.value.name);
+  return <div>{userSignal.value}</div>;
+}
+
+// In a plain utility (non-reactive)
+export function format(user: User) {
+  // ❌ Unnecessary: no tracking occurs here
+  return untracked(() => `${user.first} ${user.last}`);
+}
+
+// In an effect (reactive, but configurable)
+useSignalEffect(() => {
+  // `.peek()` may be allowed to avoid circular dependencies
+  const current = countSignal.value;
+  if (current > 0) countSignal.value = current - 1;
+});
+```
+
 ## When Not To Use It
 
 You might want to disable this rule if:
@@ -232,7 +269,7 @@ Note that `.peek()` is a type-safe operation that returns the same type as `.val
 
 ## Detection notes
 
-- Reactive context is detected heuristically: functions/components whose names are Capitalized or start with `use` (custom hooks). Event handlers in JSX and `useSignalEffect` callbacks can be allowed via options.
+- Reactive context is detected heuristically: functions/components whose names are Capitalized or start with `use` (custom hooks). `useSignalEffect` callbacks and JSX event handlers can be allowed via options.
 - Only creators/imports from `@preact/signals-react` are considered for tracking in this plugin.
 - Support for `.peek()` detection
 - TypeScript type checking support

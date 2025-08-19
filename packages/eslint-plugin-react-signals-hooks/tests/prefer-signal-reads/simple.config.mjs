@@ -1,8 +1,12 @@
 import tsParser from '@typescript-eslint/parser';
-import reactSignalsHooksPlugin from '../../dist/cjs/index.js';
+
+import reactSignalsHooksPlugin from '../../dist/esm/index.mjs';
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
+  {
+    ignores: ['node_modules/**', 'dist/**'],
+  },
   {
     files: ['*.tsx', '*.ts'],
     plugins: {
@@ -22,6 +26,7 @@ export default [
             // Maximum number of operations before bailing out
             // maxOperations: {},
           },
+          typeAware: true,
         },
       ],
     },

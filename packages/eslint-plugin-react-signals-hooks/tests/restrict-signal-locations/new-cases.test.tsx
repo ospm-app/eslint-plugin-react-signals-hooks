@@ -1,3 +1,6 @@
+/* eslint-disable react-signals-hooks/prefer-signal-reads */
+/* eslint-disable eslint-rule/consistent-rule-structure */
+/* eslint-disable react-signals-hooks/signal-variable-name */
 /* eslint-disable react-signals-hooks/restrict-signal-locations */
 /** biome-ignore-all lint/correctness/noUnusedVariables: test fixture code */
 /** biome-ignore-all lint/suspicious/noRedeclare: test fixture code */
@@ -45,11 +48,11 @@ export const FwdRefComp = forwardRef<HTMLDivElement, { label?: string }>(
 // ====================================
 // Default exports of signals/computed (Should Warn)
 // ====================================
-// @ts-expect-error
+// @ts-expect-error default-exported computed
 export default computed(() => 42); // Should warn: default-exported computed
 
 const defaultSig = signal('x');
 export { defaultSig as alsoExported }; // Named export should warn elsewhere
 
-// @ts-expect-error
-export default defaultSig; // Should warn: default-exported signal identifier
+// @ts-expect-error default-exported signal identifier
+export default defaultSig;

@@ -22,6 +22,7 @@ export function UseCallbackInnerScope({ options }: Props): JSX.Element {
   const onSelectionChange2 = useCallback(
     (index: number): void => {
       const option = options[index];
+
       if (typeof option === 'undefined') {
         return;
       }

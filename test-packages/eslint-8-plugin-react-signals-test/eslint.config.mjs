@@ -272,13 +272,13 @@ export default [
   {
     ignores: [
       './node_modules',
+      './dist/**',
       '**/ios/**',
       '**/android/**',
       '**/node_modules/**',
       '**/.cache/**',
       '**/bundled/**',
       '**/build/**',
-      '**/dist/**',
       '**/.wrangler/**',
       '**/test/**',
     ],
@@ -308,7 +308,6 @@ export default [
   // vitestConfig,
   jsConfig,
   tsConfig,
-  jsonConfig,
   nodePlugin.configs['flat/recommended-script'],
   {
     rules: {

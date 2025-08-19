@@ -8,11 +8,7 @@ import {
 } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
-import {
-  buildNamedImport,
-  getPreferredQuote,
-  getPreferredSemicolon,
-} from './utils/import-format.js';
+import { ensureNamedImportFixes } from './utils/imports.js';
 import { PerformanceOperations } from './utils/performance-constants.js';
 import {
   endPhase,
@@ -37,6 +33,8 @@ type Option = {
   performance?: PerformanceBudget;
   severity?: Severity;
   suffix?: string;
+  /** Additional module specifiers that may export `useSignal`. */
+  extraCreatorModules?: Array<string>;
 };
 
 type Options = [Option?];
@@ -63,107 +61,6 @@ function getSeverity(messageId: MessageIds, options: Option | undefined): 'error
       return 'error';
     }
   }
-}
-
-function ensureUseSignalImport(
-  fixer: TSESLint.RuleFixer,
-  fixes: Array<TSESLint.RuleFix>,
-  context: RuleContext<MessageIds, Options>
-): void {
-  const importText =
-    '\n' +
-    buildNamedImport(
-      '@preact/signals-react',
-      ['useSignal'],
-      getPreferredQuote(context.sourceCode),
-      getPreferredSemicolon(context.sourceCode)
-    ) +
-    '\n';
-
-  const importDeclarations = context.sourceCode.ast.body.filter(
-    (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
-      return n.type === AST_NODE_TYPES.ImportDeclaration;
-    }
-  );
-
-  const signalsImport = importDeclarations.find(
-    (d: TSESTree.ImportDeclaration): d is TSESTree.ImportDeclaration => {
-      return d.source.value === '@preact/signals-react';
-    }
-  );
-
-  if (typeof signalsImport === 'undefined') {
-    const lastImport = importDeclarations[importDeclarations.length - 1];
-    const b = context.sourceCode.ast.body[0];
-
-    if (!b) {
-      return;
-    }
-
-    fixes.push(
-      typeof lastImport === 'undefined'
-        ? fixer.insertTextBefore(b, importText.trimStart())
-        : fixer.insertTextAfter(lastImport, importText)
-    );
-    return;
-  }
-
-  if (
-    signalsImport.specifiers.some((s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
-      return (
-        s.type === AST_NODE_TYPES.ImportSpecifier &&
-        s.imported.type === AST_NODE_TYPES.Identifier &&
-        s.imported.name === 'useSignal'
-      );
-    })
-  ) {
-    return;
-  }
-
-  if (signalsImport.importKind === 'type') {
-    fixes.push(fixer.insertTextAfter(signalsImport, importText));
-
-    return;
-  }
-
-  if (
-    signalsImport.specifiers.some(
-      (s: TSESTree.ImportClause): s is TSESTree.ImportNamespaceSpecifier => {
-        return s.type === AST_NODE_TYPES.ImportNamespaceSpecifier;
-      }
-    )
-  ) {
-    fixes.push(fixer.insertTextAfter(signalsImport, importText));
-
-    return;
-  }
-
-  const lastNamed = [...signalsImport.specifiers]
-    .reverse()
-    .find((s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
-      return s.type === AST_NODE_TYPES.ImportSpecifier;
-    });
-
-  if (lastNamed) {
-    fixes.push(fixer.insertTextAfter(lastNamed, ', useSignal'));
-    return;
-  }
-
-  if (
-    signalsImport.specifiers.find(
-      (s: TSESTree.ImportClause): s is TSESTree.ImportDefaultSpecifier => {
-        return s.type === AST_NODE_TYPES.ImportDefaultSpecifier;
-      }
-    )
-  ) {
-    // Comment-safe augmentation: insert before source literal, preserving any trailing comments on the import line
-    fixes.push(fixer.insertTextBefore(signalsImport.source, ', { useSignal } '));
-
-    return;
-  }
-
-  // Fallback: insert a separate value import
-  fixes.push(fixer.insertTextAfter(signalsImport, importText));
 }
 
 const ruleName = 'prefer-use-signal-over-use-state';
@@ -233,6 +130,10 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
             additionalProperties: false,
           },
           suffix: { type: 'string', minLength: 1 },
+          extraCreatorModules: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+          },
         },
         additionalProperties: false,
       },
@@ -284,7 +185,11 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
 
     const reactNamespaces = new Set<string>();
 
-    let inComponentOrHook: boolean = false;
+    // Track whether we're inside a React component or custom hook body using a depth counter.
+    let componentOrHookDepth = 0;
+    const markedComponentOrHookFns = new WeakSet<
+      TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression
+    >();
 
     function shouldContinue(): boolean {
       nodeCount++;
@@ -303,6 +208,76 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
 
     startPhase(perfKey, 'ruleExecution');
 
+    // Support importing creators from multiple modules
+    const creatorModules = new Set<string>([
+      '@preact/signals-react',
+      ...(Array.isArray(option?.extraCreatorModules) ? option.extraCreatorModules : []),
+    ]);
+
+    function hasUseSignalImportFromAny(): boolean {
+      return context.sourceCode.ast.body.some((n: TSESTree.ProgramStatement): boolean => {
+        return (
+          n.type === AST_NODE_TYPES.ImportDeclaration &&
+          typeof n.source.value === 'string' &&
+          creatorModules.has(n.source.value) &&
+          n.specifiers.some((s: TSESTree.ImportClause): boolean => {
+            return (
+              s.type === AST_NODE_TYPES.ImportSpecifier &&
+              s.imported.type === AST_NODE_TYPES.Identifier &&
+              s.imported.name === 'useSignal'
+            );
+          })
+        );
+      });
+    }
+
+    function ensureUseSignalImportAny(
+      fixer: TSESLint.RuleFixer,
+      fixes: Array<TSESLint.RuleFix>,
+      context: RuleContext<MessageIds, Options>
+    ): void {
+      if (hasUseSignalImportFromAny()) {
+        return;
+      }
+
+      const importDeclarations = context.sourceCode.ast.body.filter(
+        (n: TSESTree.ProgramStatement): n is TSESTree.ImportDeclaration => {
+          return n.type === AST_NODE_TYPES.ImportDeclaration;
+        }
+      );
+
+      const existingCreatorImport = importDeclarations.find(
+        (d: TSESTree.ImportDeclaration): d is TSESTree.ImportDeclaration => {
+          return typeof d.source.value === 'string' && creatorModules.has(d.source.value);
+        }
+      );
+
+      if (existingCreatorImport && typeof existingCreatorImport.source.value === 'string') {
+        const helperFixes = ensureNamedImportFixes(
+          { sourceCode: context.sourceCode },
+          fixer,
+          existingCreatorImport.source.value,
+          'useSignal'
+        );
+
+        for (const f of helperFixes) {
+          fixes.push(f);
+        }
+
+        return;
+      }
+
+      const helperFixes = ensureNamedImportFixes(
+        { sourceCode: context.sourceCode },
+        fixer,
+        '@preact/signals-react',
+        'useSignal'
+      );
+      for (const f of helperFixes) {
+        fixes.push(f);
+      }
+    }
+
     return {
       '*': (node: TSESTree.Node): void => {
         if (!shouldContinue()) {
@@ -313,11 +288,11 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
 
         perf.trackNode(node);
 
-        const dynamicOp =
+        trackOperation(
+          perfKey,
           // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing;
-
-        trackOperation(perfKey, dynamicOp);
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing
+        );
       },
 
       [AST_NODE_TYPES.Program](node: TSESTree.Program): void {
@@ -342,23 +317,59 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
       },
 
       [AST_NODE_TYPES.FunctionDeclaration](node: TSESTree.FunctionDeclaration): void {
-        if (node.id && /^[A-Z]/.test(node.id.name)) {
-          inComponentOrHook = true;
+        if (node.id && (/^[A-Z]/.test(node.id.name) || /^use[A-Z]/.test(node.id.name))) {
+          markedComponentOrHookFns.add(node);
+          componentOrHookDepth++;
         }
       },
-      [`${AST_NODE_TYPES.FunctionDeclaration}:exit`]() {
-        inComponentOrHook = false;
+      [`${AST_NODE_TYPES.FunctionDeclaration}:exit`](node: TSESTree.FunctionDeclaration): void {
+        if (markedComponentOrHookFns.has(node)) {
+          componentOrHookDepth--;
+        }
+      },
+
+      // Handle components/hooks declared as: const Name = () => {} or function expressions
+      [AST_NODE_TYPES.FunctionExpression](node: TSESTree.FunctionExpression): void {
+        if (
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          node.parent !== null &&
+          typeof node.parent !== 'undefined' &&
+          node.parent.type === AST_NODE_TYPES.VariableDeclarator &&
+          node.parent.id.type === AST_NODE_TYPES.Identifier &&
+          (/^[A-Z]/.test(node.parent.id.name) || /^use[A-Z]/.test(node.parent.id.name))
+        ) {
+          markedComponentOrHookFns.add(node);
+          componentOrHookDepth++;
+        }
+      },
+      [`${AST_NODE_TYPES.FunctionExpression}:exit`](node: TSESTree.FunctionExpression): void {
+        if (markedComponentOrHookFns.has(node)) {
+          componentOrHookDepth--;
+        }
+      },
+      [AST_NODE_TYPES.ArrowFunctionExpression](node: TSESTree.ArrowFunctionExpression): void {
+        if (
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          node.parent !== null &&
+          typeof node.parent !== 'undefined' &&
+          node.parent.type === AST_NODE_TYPES.VariableDeclarator &&
+          node.parent.id.type === AST_NODE_TYPES.Identifier &&
+          (/^[A-Z]/.test(node.parent.id.name) || /^use[A-Z]/.test(node.parent.id.name))
+        ) {
+          markedComponentOrHookFns.add(node);
+          componentOrHookDepth++;
+        }
+      },
+      [`${AST_NODE_TYPES.ArrowFunctionExpression}:exit`](
+        node: TSESTree.ArrowFunctionExpression
+      ): void {
+        if (markedComponentOrHookFns.has(node)) {
+          componentOrHookDepth--;
+        }
       },
 
       [AST_NODE_TYPES.VariableDeclarator](node: TSESTree.VariableDeclarator): void {
-        if (
-          (node.init?.type === AST_NODE_TYPES.ArrowFunctionExpression ||
-            node.init?.type === AST_NODE_TYPES.FunctionExpression) &&
-          node.id.type === AST_NODE_TYPES.Identifier &&
-          /^[A-Z]/.test(node.id.name)
-        ) {
-          inComponentOrHook = true;
-        }
+        const inComponentOrHook = componentOrHookDepth > 0;
 
         if (
           !(
@@ -419,96 +430,11 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
           messageId: 'addUseSignalImport',
           fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
             const fixes: Array<TSESLint.RuleFix> = [];
-
-            const importText =
-              '\n' +
-              buildNamedImport(
-                '@preact/signals-react',
-                ['useSignal'],
-                getPreferredQuote(context.sourceCode),
-                getPreferredSemicolon(context.sourceCode)
-              ) +
-              '\n';
-
-            const importDeclarations = context.sourceCode.ast.body.filter(
-              (n): n is TSESTree.ImportDeclaration => {
-                return n.type === AST_NODE_TYPES.ImportDeclaration;
-              }
-            );
-
-            const signalsImport = importDeclarations.find(
-              (d: TSESTree.ImportDeclaration): d is TSESTree.ImportDeclaration => {
-                return d.source.value === '@preact/signals-react';
-              }
-            );
-
-            if (signalsImport) {
-              if (
-                !signalsImport.specifiers.some(
-                  (s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
-                    return (
-                      s.type === AST_NODE_TYPES.ImportSpecifier &&
-                      s.imported.type === AST_NODE_TYPES.Identifier &&
-                      s.imported.name === 'useSignal'
-                    );
-                  }
-                )
-              ) {
-                if (signalsImport.importKind === 'type') {
-                  fixes.push(fixer.insertTextAfter(signalsImport, importText));
-
-                  return fixes;
-                }
-
-                const defaultSpec = signalsImport.specifiers.find(
-                  (s: TSESTree.ImportClause): s is TSESTree.ImportDefaultSpecifier => {
-                    return s.type === AST_NODE_TYPES.ImportDefaultSpecifier;
-                  }
-                );
-
-                const lastNamed = [...signalsImport.specifiers]
-                  .reverse()
-                  .find((s: TSESTree.ImportClause): s is TSESTree.ImportSpecifier => {
-                    return s.type === AST_NODE_TYPES.ImportSpecifier;
-                  });
-
-                if (
-                  signalsImport.specifiers.some(
-                    (s: TSESTree.ImportClause): s is TSESTree.ImportNamespaceSpecifier => {
-                      return s.type === AST_NODE_TYPES.ImportNamespaceSpecifier;
-                    }
-                  )
-                ) {
-                  fixes.push(fixer.insertTextAfter(signalsImport, importText));
-                } else if (typeof lastNamed !== 'undefined') {
-                  fixes.push(fixer.insertTextAfter(lastNamed, ', useSignal'));
-                } else if (typeof defaultSpec === 'undefined') {
-                  fixes.push(fixer.insertTextAfter(signalsImport, importText));
-                } else {
-                  fixes.push(
-                    fixer.replaceText(
-                      signalsImport,
-                      `import ${defaultSpec.local.name}, { useSignal } from ${getPreferredQuote(context.sourceCode)}@preact/signals-react${getPreferredQuote(context.sourceCode)}${getPreferredSemicolon(context.sourceCode)}`
-                    )
-                  );
-                }
-              }
-            } else {
-              const lastImport = importDeclarations[importDeclarations.length - 1];
-
-              const b = context.sourceCode.ast.body[0];
-
-              if (!b) {
-                return null;
-              }
-
-              fixes.push(
-                typeof lastImport === 'undefined'
-                  ? fixer.insertTextBefore(b, importText.trimStart())
-                  : fixer.insertTextAfter(lastImport, importText)
-              );
+            if (hasUseSignalImportFromAny()) {
+              return null;
             }
 
+            ensureUseSignalImportAny(fixer, fixes, context);
             return fixes.length > 0 ? fixes : null;
           },
         });
@@ -524,8 +450,30 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
             messageId: 'convertToUseSignal',
             fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
               const fixes: Array<TSESLint.RuleFix> = [];
+              // Ensure `useSignal` import is present for this conversion across any creator module
+              ensureUseSignalImportAny(fixer, fixes, context);
+              // Track used ranges to avoid overlapping fixes within the same suggestion
+              const usedRanges: Array<readonly [number, number]> = [];
 
-              ensureUseSignalImport(fixer, fixes, context);
+              function overlaps(
+                a: readonly [number, number],
+                b: readonly [number, number]
+              ): boolean {
+                return a[0] < b[1] && a[1] > b[0];
+              }
+
+              function tryPushReplace(range: readonly [number, number], text: string): void {
+                // Skip if this range overlaps any previously added fix
+                for (const r of usedRanges) {
+                  if (overlaps(range, r)) {
+                    return;
+                  }
+                }
+
+                usedRanges.push(range);
+
+                fixes.push(fixer.replaceTextRange(range, text));
+              }
 
               const initText = initialValue
                 ? context.sourceCode.getText(initialValue)
@@ -554,10 +502,10 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
                 // Compute a collision-safe signal variable name
                 const baseSignalName = `${stateVar.name}${suffix}`;
 
-                const scope = context.sourceCode.getScope(node);
-
                 const hasName = (n: string): boolean => {
-                  return scope.variables.some((v: Variable): boolean => v.name === n);
+                  return context.sourceCode
+                    .getScope(node)
+                    .variables.some((v: Variable): boolean => v.name === n);
                 };
 
                 let signalName = baseSignalName;
@@ -577,18 +525,26 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
               } else {
                 // Compute a collision-safe signal variable name
                 const baseSignalName = `${stateVar.name}${suffix}`;
-                const scope = context.sourceCode.getScope(node);
+
                 const hasName = (n: string): boolean => {
-                  return scope.variables.some((v: Variable): boolean => v.name === n);
+                  return context.sourceCode
+                    .getScope(node)
+                    .variables.some((v: Variable): boolean => {
+                      return v.name === n;
+                    });
                 };
+
                 let signalName = baseSignalName;
+
                 let i = 1;
+
                 while (hasName(signalName)) {
                   signalName = `${baseSignalName}${++i}`;
                 }
 
-                fixes.push(
-                  fixer.replaceText(node, `${signalName} = useSignal${typeParamsText}(${initText})`)
+                tryPushReplace(
+                  [node.range[0], node.range[1]],
+                  `${signalName} = useSignal${typeParamsText}(${initText})`
                 );
               }
 
@@ -598,15 +554,15 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
                   return v.name === stateVar.name;
                 });
 
-              if (variable) {
+              if (typeof variable !== 'undefined') {
                 // Recompute collision-safe signalName for reference replacements in this scope
                 const baseSignalName = `${stateVar.name}${suffix}`;
 
-                const scope = context.sourceCode.getScope(node);
-
-                const hasName = (n: string): boolean => {
-                  return scope.variables.some((v: Variable): boolean => v.name === n);
-                };
+                function hasName(n: string): boolean {
+                  return context.sourceCode
+                    .getScope(node)
+                    .variables.some((v: Variable): boolean => v.name === n);
+                }
 
                 let signalName = baseSignalName;
 
@@ -695,86 +651,89 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
                     }
                   }
 
-                  const inJsxMathOperation =
-                    isJsx &&
-                    ancestors.some((a: TSESTree.Node): boolean => {
-                      if (a.type === AST_NODE_TYPES.BinaryExpression) {
-                        return (
-                          a.operator === '+' ||
-                          a.operator === '-' ||
-                          a.operator === '*' ||
-                          a.operator === '/' ||
-                          a.operator === '%' ||
-                          a.operator === '**'
-                        );
-                      }
-
-                      if (a.type === AST_NODE_TYPES.UnaryExpression) {
-                        return a.operator === '+' || a.operator === '-';
-                      }
-
-                      if (a.type === AST_NODE_TYPES.UpdateExpression) {
-                        return true; // ++x, --x, x++, x--
-                      }
-
-                      if (a.type === AST_NODE_TYPES.AssignmentExpression) {
-                        return ['+=', '-=', '*=', '/=', '%=', '**='].includes(a.operator);
-                      }
-                      return false;
-                    });
-
-                  const accessor =
-                    ancestors.some((a: TSESTree.Node, idx: number): boolean => {
-                      if (a.type === AST_NODE_TYPES.JSXAttribute) {
-                        return true;
-                      }
-
-                      if (
-                        a.type === AST_NODE_TYPES.JSXExpressionContainer &&
-                        idx > 0 &&
-                        ancestors[idx - 1]?.type === AST_NODE_TYPES.JSXAttribute
-                      ) {
-                        return true;
-                      }
-
-                      return false;
-                    }) ||
-                    (isJsx &&
-                      ancestors.some((a: TSESTree.Node): boolean => {
-                        if (a.type !== AST_NODE_TYPES.CallExpression) {
-                          return false;
+                  tryPushReplace(
+                    [ref.identifier.range[0], ref.identifier.range[1]],
+                    `${signalName}${
+                      ancestors.some((a: TSESTree.Node, idx: number): boolean => {
+                        if (a.type === AST_NODE_TYPES.JSXAttribute) {
+                          return true;
                         }
 
                         if (
-                          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
-                          a.callee &&
-                          ref.identifier.range[0] >= a.callee.range[0] &&
-                          ref.identifier.range[1] <= a.callee.range[1]
+                          a.type === AST_NODE_TYPES.JSXExpressionContainer &&
+                          idx > 0 &&
+                          ancestors[idx - 1]?.type === AST_NODE_TYPES.JSXAttribute
                         ) {
-                          return false;
+                          return true;
                         }
 
-                        return a.arguments.some((arg: TSESTree.CallExpressionArgument): boolean => {
-                          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
-                          if (!arg) {
+                        return false;
+                      }) ||
+                      (isJsx &&
+                        ancestors.some((a: TSESTree.Node): boolean => {
+                          if (a.type !== AST_NODE_TYPES.CallExpression) {
                             return false;
                           }
 
-                          return (
-                            ref.identifier.range[0] >= arg.range[0] &&
-                            ref.identifier.range[1] <= arg.range[1]
-                          );
-                        });
-                      })) ||
-                    inJsxMathOperation
-                      ? '.value'
-                      : isJsx
-                        ? ''
-                        : inComponentScope
-                          ? '.value'
-                          : '.peek()';
+                          if (
+                            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+                            a.callee &&
+                            ref.identifier.range[0] >= a.callee.range[0] &&
+                            ref.identifier.range[1] <= a.callee.range[1]
+                          ) {
+                            return false;
+                          }
 
-                  fixes.push(fixer.replaceText(ref.identifier, `${signalName}${accessor}`));
+                          return a.arguments.some(
+                            (arg: TSESTree.CallExpressionArgument): boolean => {
+                              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
+                              if (!arg) {
+                                return false;
+                              }
+
+                              return (
+                                ref.identifier.range[0] >= arg.range[0] &&
+                                ref.identifier.range[1] <= arg.range[1]
+                              );
+                            }
+                          );
+                        })) ||
+                      (
+                        isJsx &&
+                          ancestors.some((a: TSESTree.Node): boolean => {
+                            if (a.type === AST_NODE_TYPES.BinaryExpression) {
+                              return (
+                                a.operator === '+' ||
+                                a.operator === '-' ||
+                                a.operator === '*' ||
+                                a.operator === '/' ||
+                                a.operator === '%' ||
+                                a.operator === '**'
+                              );
+                            }
+
+                            if (a.type === AST_NODE_TYPES.UnaryExpression) {
+                              return a.operator === '+' || a.operator === '-';
+                            }
+
+                            if (a.type === AST_NODE_TYPES.UpdateExpression) {
+                              return true; // ++x, --x, x++, x--
+                            }
+
+                            if (a.type === AST_NODE_TYPES.AssignmentExpression) {
+                              return ['+=', '-=', '*=', '/=', '%=', '**='].includes(a.operator);
+                            }
+                            return false;
+                          })
+                      )
+                        ? '.value'
+                        : isJsx
+                          ? ''
+                          : inComponentScope
+                            ? '.value'
+                            : '.peek()'
+                    }`
+                  );
                 }
               }
 
@@ -796,7 +755,9 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
                   function hasName(n: string): boolean {
                     return context.sourceCode
                       .getScope(node)
-                      .variables.some((v: Variable): boolean => v.name === n);
+                      .variables.some((v: Variable): boolean => {
+                        return v.name === n;
+                      });
                   }
 
                   let signalName = baseSignalName;
@@ -836,7 +797,13 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
                         } else {
                           replacement = `${signalName}.value = ${argText}`;
                         }
-                        fixes.push(fixer.replaceText(ref.identifier.parent, replacement));
+                        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-unnecessary-condition
+                        if (ref.identifier.parent?.range) {
+                          tryPushReplace(
+                            [ref.identifier.parent.range[0], ref.identifier.parent.range[1]],
+                            replacement
+                          );
+                        }
                       }
                     }
                   }
@@ -844,6 +811,18 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
               }
 
               return fixes;
+            },
+          });
+        } else {
+          // If conversion isn't applicable, provide a safe import-only suggestion
+          suggestions.push({
+            messageId: 'addUseSignalImport',
+            fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+              const fixes: Array<TSESLint.RuleFix> = [];
+
+              ensureUseSignalImportAny(fixer, fixes, context);
+
+              return fixes.length > 0 ? fixes : null;
             },
           });
         }
@@ -867,17 +846,6 @@ export const preferUseSignalOverUseStateRule = ESLintUtils.RuleCreator((name: st
           },
           suggest: suggestions,
         });
-      },
-
-      [`${AST_NODE_TYPES.VariableDeclarator}:exit`](node: TSESTree.VariableDeclarator): void {
-        if (
-          node.init?.type === AST_NODE_TYPES.ArrowFunctionExpression ||
-          node.init?.type === AST_NODE_TYPES.FunctionExpression
-        ) {
-          if (node.id.type === AST_NODE_TYPES.Identifier && /^[A-Z]/.test(node.id.name)) {
-            inComponentOrHook = false;
-          }
-        }
       },
 
       [`${AST_NODE_TYPES.Program}:exit`](): void {

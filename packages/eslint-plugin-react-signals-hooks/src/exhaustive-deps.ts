@@ -495,6 +495,29 @@ function formatDependency(path: string, optionalChains: Map<string, boolean>): s
   return finalPath;
 }
 
+// Returns true if every computed segment in a dependency path is a numeric literal index, e.g.,
+// "arr[0]", "matrix[1].x", "a[2][3]". Dynamic indices (identifiers/expressions) return false.
+function hasOnlyNumericComputed(path: string): boolean {
+  // Quick reject
+  if (!path.includes('[')) {
+    return false;
+  }
+
+  // Match all bracketed segments
+  // eslint-disable-next-line optimize-regex/optimize-regex
+  const matches = path.match(/\[[^\]]+\]/g);
+
+  if (!matches || matches.length === 0) {
+    return false;
+  }
+
+  // All segments must be strictly digits
+  return matches.every((seg: string): boolean => {
+    // eslint-disable-next-line optimize-regex/optimize-regex
+    return /^\[(?:\d+)\]$/.test(seg);
+  });
+}
+
 function joinEnglish(arr: Array<string>): string {
   let s = '';
 
@@ -691,8 +714,13 @@ function collectRecommendations({
       return;
     }
 
-    if (key.includes('[') && key.includes(']')) {
-      return;
+    // Skip dynamic computed members only when the base is a signal.
+    // Always allow static numeric indices like arr[0]. For non-signal bases, allow dynamic too.
+    if (key.includes('[') && key.includes(']') && !hasOnlyNumericComputed(key)) {
+      const base = key.split('.')[0] ?? '';
+      if (base !== '' && isSignalDependency(base, perfKey)) {
+        return;
+      }
     }
 
     const parts = key.split('.');
@@ -719,8 +747,7 @@ function collectRecommendations({
         !declaredDependencies.some(
           ({ key: depKey }: DeclaredDependency): boolean => depKey === `${signalName}.value`
         ) &&
-        isAssignmentOnly !== true &&
-        hasInnerScopeComputedProperty !== true
+        (isAssignmentOnly === true || hasInnerScopeComputedProperty === true)
       ) {
         dependencies.delete(key);
       }
@@ -736,7 +763,12 @@ function collectRecommendations({
   });
 
   for (const { key } of declaredDependencies) {
-    getOrCreateNodeByPath(depTree, key.replace(/\?\./g, '.')).isSatisfiedRecursively = true;
+    // Do not normalize optional chaining here; tree splitting handles both '.' and '?.'
+    getOrCreateNodeByPath(depTree, key).isSatisfiedRecursively = true;
+    // Also mark all parents as satisfied to avoid reporting intermediate segments as missing
+    markAllParentsByPath(depTree, key, (parent): void => {
+      parent.isSatisfiedRecursively = true;
+    });
   }
 
   for (const key of stableDependencies) {
@@ -744,7 +776,7 @@ function collectRecommendations({
   }
 
   function getOrCreateNodeByPath(rootNode: DependencyTreeNode, path: string): DependencyTreeNode {
-    const keys = path.split('.');
+    const keys = splitPathMembers(path);
 
     let node = rootNode;
 
@@ -767,7 +799,7 @@ function collectRecommendations({
     path: string,
     fn: (node: DependencyTreeNode) => void
   ): void {
-    const keys = path.split('.');
+    const keys = splitPathMembers(path);
 
     let node = rootNode;
 
@@ -829,8 +861,7 @@ function collectRecommendations({
 
       if (
         !isBaseValueDeclared &&
-        isAssignmentOnly !== true &&
-        hasInnerScopeComputedProperty !== true
+        (isAssignmentOnly === true || hasInnerScopeComputedProperty === true)
       ) {
         dependencies.delete(valueKey);
       }
@@ -847,8 +878,13 @@ function collectRecommendations({
     if (isSignalDependency(key, perfKey)) {
       return;
     }
-    if (key.includes('[') && key.includes(']')) {
-      return;
+    // Skip dynamic computed members only when the base is a signal.
+    // Always allow static numeric indices like arr[0]. For non-signal bases, allow dynamic too.
+    if (key.includes('[') && key.includes(']') && !hasOnlyNumericComputed(key)) {
+      const base = key.split('.')[0] ?? '';
+      if (base !== '' && isSignalDependency(base, perfKey)) {
+        return;
+      }
     }
     const parts = key.split('.');
 
@@ -880,8 +916,7 @@ function collectRecommendations({
 
       if (
         !isBaseValueDeclared &&
-        isAssignmentOnly !== true &&
-        hasInnerScopeComputedProperty !== true
+        (isAssignmentOnly === true || hasInnerScopeComputedProperty === true)
       ) {
         dependencies.delete(key);
       }
@@ -965,8 +1000,7 @@ function collectRecommendations({
 
         if (
           !isBaseValueDeclared &&
-          isAssignmentOnly !== true &&
-          hasInnerScopeComputedProperty !== true
+          (isAssignmentOnly === true || hasInnerScopeComputedProperty === true)
         ) {
           dependencies.delete(key);
         }
@@ -1009,11 +1043,12 @@ function collectRecommendations({
       if (!isComputedPropertyDeclared) {
         const dependency = dependencies.get(signal);
 
-        const hasInnerScopeComputedProperty =
-          dependency && dependency.hasInnerScopeComputedProperty === true;
+        // const hasInnerScopeComputedProperty =
+        //   dependency && dependency.hasInnerScopeComputedProperty === true;
         const isAssignmentOnly = dependency && dependency.hasReads === false;
 
-        if (isAssignmentOnly !== true && hasInnerScopeComputedProperty !== true) {
+        // If it's a read, require it even if it involves inner-scope computed property
+        if (isAssignmentOnly !== true) {
           missingDependencies.add(signal);
         }
 
@@ -1049,12 +1084,13 @@ function collectRecommendations({
       if (!isValueDeclared) {
         const dependency = dependencies.get(signal);
 
-        const hasInnerScopeComputedProperty =
-          dependency && dependency.hasInnerScopeComputedProperty === true;
+        // const hasInnerScopeComputedProperty =
+        //   dependency && dependency.hasInnerScopeComputedProperty === true;
 
         const isAssignmentOnly = dependency && dependency.hasReads === false;
 
-        if (isAssignmentOnly !== true && hasInnerScopeComputedProperty !== true) {
+        // If it's a read of .value, require it regardless of inner-scope computed property
+        if (isAssignmentOnly !== true) {
           missingDependencies.add(signal);
         }
 
@@ -1081,12 +1117,13 @@ function collectRecommendations({
         // Check if this dependency is only used for assignments
         const dependency = dependencies.get(valueAccessKey);
 
-        const hasInnerScopeComputedProperty =
-          dependency && dependency.hasInnerScopeComputedProperty === true;
+        // const hasInnerScopeComputedProperty =
+        //   dependency && dependency.hasInnerScopeComputedProperty === true;
 
         const isAssignmentOnly = dependency && dependency.hasReads === false;
 
-        if (isAssignmentOnly !== true && hasInnerScopeComputedProperty !== true) {
+        // Require base .value when it's read, even if there are inner-scope computed members
+        if (isAssignmentOnly !== true) {
           missingDependencies.add(valueAccessKey);
         }
 
@@ -1222,19 +1259,40 @@ function collectRecommendations({
     perfKey
   );
 
+  // Drop false positives: if a missing path is already declared (optionals treated as equal)
+  if (missingDependencies.size > 0 && declaredDependencies.length > 0) {
+    for (const m of Array.from(missingDependencies)) {
+      if (declaredDependencies.some(({ key }): boolean => pathsEquivalent(key, m))) {
+        missingDependencies.delete(m);
+      }
+    }
+  }
+
   // Prune missing dependencies that are unsafe to suggest:
   // - dynamic/computed indexing (e.g., foo.value[bar])
   // - dependencies marked with hasInnerScopeComputedProperty
   {
     const toRemove: Array<string> = [];
     missingDependencies.forEach((m: string): void => {
-      if (m.includes('[')) {
-        toRemove.push(m);
-        return;
+      // Keep static numeric indices like arr[0]. For dynamic indices, only drop when base is a signal.
+      if (m.includes('[') && !hasOnlyNumericComputed(m)) {
+        const base = m.split('.')[0] ?? '';
+
+        if (base !== '' && isSignalDependency(base, perfKey)) {
+          toRemove.push(m);
+
+          return;
+        }
       }
+
       const dep = dependencies.get(m);
+
       if (dep && dep.hasInnerScopeComputedProperty === true) {
-        toRemove.push(m);
+        const base = m.split('.')[0];
+
+        if (typeof base === 'string' && base !== '' && isSignalDependency(base, perfKey)) {
+          toRemove.push(m);
+        }
       }
     });
     for (const m of toRemove) {
@@ -1274,7 +1332,18 @@ function collectRecommendations({
               depKey.startsWith(`${base}.`) &&
               depInfo.hasReads === true &&
               depInfo.hasInnerScopeComputedProperty !== true &&
-              !depKey.includes('[')
+              // allow static numeric indices like base[0].x; for dynamic, allow if base is not a signal
+              !(
+                depKey.includes('[') &&
+                !hasOnlyNumericComputed(depKey) &&
+                (() => {
+                  const root = depKey.split('.')[0];
+
+                  return (
+                    typeof root === 'string' && root !== '' && isSignalDependency(root, perfKey)
+                  );
+                })()
+              )
             ) {
               deepReadKeys.push(depKey);
             }
@@ -1600,7 +1669,16 @@ function collectRecommendations({
     if (
       !addedPaths.has(key) &&
       !addedRootPaths.has(key) &&
-      !key.includes('[') &&
+      // allow static numeric indices like base[0].x; for dynamic, allow if base is not a signal
+      !(
+        key.includes('[') &&
+        !hasOnlyNumericComputed(key) &&
+        (() => {
+          const root = key.split('.')[0];
+
+          return typeof root === 'string' && root !== '' && isSignalDependency(root, perfKey);
+        })()
+      ) &&
       !(keyDep && keyDep.hasInnerScopeComputedProperty === true)
     ) {
       suggestedDependencies.push(key);
@@ -1635,7 +1713,18 @@ function collectRecommendations({
               depKey.startsWith(`${s}.`) &&
               depInfo.hasReads === true &&
               depInfo.hasInnerScopeComputedProperty !== true &&
-              !depKey.includes('[')
+              // allow static numeric indices like base[0].x; for dynamic, allow if base is not a signal
+              !(
+                depKey.includes('[') &&
+                !hasOnlyNumericComputed(depKey) &&
+                (() => {
+                  const root = depKey.split('.')[0];
+
+                  return (
+                    typeof root === 'string' && root !== '' && isSignalDependency(root, perfKey)
+                  );
+                })()
+              )
             ) {
               deepReads.push(depKey);
             }
@@ -2052,6 +2141,32 @@ function areDeclaredDepsAlphabetized(declaredDependencies: Array<DeclaredDepende
   return declaredDepKeys.join(',') === sortedDeclaredDepKeys.join(',');
 }
 
+// Split a dependency path into members, treating optional access (?.) the same as dot (.)
+function splitPathMembers(path: string): Array<string> {
+  // Split by either '?.' or '.' while preserving member names
+  return path.split(/(?:\?\.)|\./g);
+}
+
+// Compare two paths for equivalence under optional chaining ('.' vs '?.')
+function pathsEquivalent(a: string, b: string): boolean {
+  const aa = splitPathMembers(a);
+
+  const bb = splitPathMembers(b);
+
+  if (aa.length !== bb.length) {
+    return false;
+  }
+
+  for (let i = 0; i < aa.length; i++) {
+    // eslint-disable-next-line security/detect-object-injection
+    if (aa[i] !== bb[i]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 const setStateCallSites = new WeakMap<
   TSESTree.Expression | TSESTree.Super | TSESTree.Identifier | TSESTree.JSXIdentifier,
   Pattern | TSESTree.DestructuringPattern | null | undefined
@@ -2162,7 +2277,7 @@ function visitFunctionWithDependencies(
     // End the function analysis phase if it's still active
     try {
       endPhase(perfKey, 'function-analysis');
-    } catch (error) {
+    } catch (error: unknown) {
       console.error(error);
       // Ignore errors when ending phase that wasn't started
     }
@@ -2556,7 +2671,7 @@ function visitFunctionWithDependencies(
             fullPath = computedPath;
 
             currentNode = currentNode.parent;
-          } catch (error) {
+          } catch (error: unknown) {
             console.error(error instanceof Error ? error.message : JSON.stringify(error));
 
             break;
@@ -3193,6 +3308,8 @@ function visitFunctionWithDependencies(
 
   const stableDependencies = new Set<string>();
 
+  const declaredDependencies: Array<DeclaredDependency> = [];
+
   dependencies.forEach(({ isStable, references }: Dependency, key: string): void => {
     if (isStable) {
       stableDependencies.add(key);
@@ -3281,9 +3398,16 @@ function visitFunctionWithDependencies(
       perfKey,
     });
 
-    const depsText = suggestedDependencies.join(', ');
+    // Final guard: filter out suggestions that are equivalent to declared deps under optional chaining
+    const filteredSuggestedForReport = suggestedDependencies.filter((dep: string): boolean => {
+      return !declaredDependencies.some(({ key }: DeclaredDependency): boolean => {
+        return pathsEquivalent(dep, key);
+      });
+    });
 
-    const hasDependencies = suggestedDependencies.length > 0;
+    const depsText = filteredSuggestedForReport.join(', ');
+
+    const hasDependencies = filteredSuggestedForReport.length > 0;
 
     if (
       typeof setStateInsideEffectWithoutDeps === 'string' &&
@@ -3304,60 +3428,10 @@ function visitFunctionWithDependencies(
           dependencies: depsText,
           missingMessage: `\n  - '${setStateInsideEffectWithoutDeps}' is updated inside the effect but not listed in the dependency array\n  - This can lead to an infinite loop of re-renders`,
         },
-        suggest: hasDependencies
-          ? [
-              {
-                messageId: 'addDependencies',
-                data: { dependencies: depsText },
-                fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-                  const insertPosition = (
-                    'arguments' in reactiveHook
-                      ? reactiveHook.arguments[reactiveHook.arguments.length - 1]
-                      : null
-                  )?.range[1];
-
-                  if (typeof insertPosition !== 'number') {
-                    return null;
-                  }
-
-                  return fixer.insertTextAfterRange(
-                    [insertPosition, insertPosition],
-                    `, [${depsText}]`
-                  );
-                },
-              },
-            ]
-          : [],
-      });
-    } else if (hasDependencies) {
-      const messageId =
-        suggestedDependencies.length > 1 ? 'missingDependencies' : 'missingDependency';
-
-      if (getSeverity(messageId, context.options[0]) === 'off') {
-        return;
-      }
-
-      context.report({
-        node: reactiveHook,
-        messageId: suggestedDependencies.length > 1 ? 'missingDependencies' : 'missingDependency',
-        data: {
-          hookName: context.sourceCode.getText(
-            'callee' in reactiveHook ? reactiveHook.callee : reactiveHook
-          ),
-          dependencies: depsText,
-          dependency: suggestedDependencies[0],
-          reason:
-            '\n  - The following values are used in the effect but not listed in the dependency array:' +
-            suggestedDependencies
-              .map((dep: string): string => {
-                return `\n    - '${dep}'`;
-              })
-              .join(''),
-        },
         suggest: [
           {
             messageId: 'addDependencies',
-            data: { dependencies: depsText },
+            data: { dependencies: depsText, count: suggestedDependencies.length },
             fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
               const insertPosition = (
                 'arguments' in reactiveHook
@@ -3379,6 +3453,102 @@ function visitFunctionWithDependencies(
           },
         ],
       });
+    } else if (hasDependencies) {
+      const messageId =
+        filteredSuggestedForReport.length > 1 ? 'missingDependencies' : 'missingDependency';
+
+      if (getSeverity(messageId, context.options[0]) === 'off') {
+        return;
+      }
+
+      context.report({
+        node: reactiveHook,
+        messageId:
+          filteredSuggestedForReport.length > 1 ? 'missingDependencies' : 'missingDependency',
+        data: {
+          hookName: context.sourceCode.getText(
+            'callee' in reactiveHook ? reactiveHook.callee : reactiveHook
+          ),
+          dependencies: depsText,
+          // Provide count for the pluralized missingDependencies message template
+          dependenciesCount: filteredSuggestedForReport.length,
+          dependency: filteredSuggestedForReport[0],
+          reason:
+            '\n  - The following values are used in the effect but not listed in the dependency array:' +
+            filteredSuggestedForReport
+              .map((dep: string): string => {
+                return `\n    - '${dep}'`;
+              })
+              .join(''),
+        },
+        suggest: [
+          {
+            messageId: 'addDependencies',
+            data: { dependencies: depsText, count: filteredSuggestedForReport.length },
+            fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+              const insertPosition = (
+                'arguments' in reactiveHook
+                  ? reactiveHook.arguments[reactiveHook.arguments.length - 1]
+                  : null
+              )?.range[1];
+
+              if (typeof insertPosition !== 'number') {
+                return null;
+              }
+
+              return fixer.insertTextAfterRange(
+                [insertPosition, insertPosition],
+                /\n/.test(context.sourceCode.text.slice(insertPosition, reactiveHook.range[1]))
+                  ? `,\n${' '.repeat(reactiveHook.loc.start.column + 2)}[${depsText}]`
+                  : `, [${depsText}]`
+              );
+            },
+          },
+        ],
+      });
+    } else {
+      // No deps array and no suggested deps: still offer inserting an empty array as a suggestion
+      if (getSeverity('missingDependency', context.options[0]) === 'off') {
+        return;
+      }
+
+      context.report({
+        node: reactiveHook,
+        messageId: 'missingDependency',
+        data: {
+          hookName: context.sourceCode.getText(
+            'callee' in reactiveHook ? reactiveHook.callee : reactiveHook
+          ),
+          dependency: '',
+          dependencies: '',
+          reason:
+            '\n  - This effect has no dependency array. Add [] to make the dependency intent explicit.',
+        },
+        suggest: [
+          {
+            messageId: 'addDependencies',
+            data: { dependencies: '', count: 0 },
+            fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+              const insertPosition = (
+                'arguments' in reactiveHook
+                  ? reactiveHook.arguments[reactiveHook.arguments.length - 1]
+                  : null
+              )?.range[1];
+
+              if (typeof insertPosition !== 'number') {
+                return null;
+              }
+
+              return fixer.insertTextAfterRange(
+                [insertPosition, insertPosition],
+                /\n/.test(context.sourceCode.text.slice(insertPosition, reactiveHook.range[1]))
+                  ? `,\n${' '.repeat(reactiveHook.loc.start.column + 2)}[]`
+                  : `, []`
+              );
+            },
+          },
+        ],
+      });
     }
 
     return;
@@ -3391,8 +3561,6 @@ function visitFunctionWithDependencies(
   ) {
     return;
   }
-
-  const declaredDependencies: Array<DeclaredDependency> = [];
 
   const isTSAsArrayExpression =
     declaredDependenciesNode.type === 'TSAsExpression' &&
@@ -3426,6 +3594,7 @@ function visitFunctionWithDependencies(
           messageId: 'addDependencies',
           data: {
             dependencies: suggestedDeps.join(', '),
+            count: suggestedDeps.length,
           },
           fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
             return fixer.insertTextAfter(node, `, [${suggestedDeps.join(', ')}]`);
@@ -3493,7 +3662,7 @@ function visitFunctionWithDependencies(
           'property' in declaredDependencyNode &&
           useEffectEventVariables.has(declaredDependencyNode)
         ) {
-          if (getSeverity('useEffectEventInDependencyArray', context.options[0]) !== 'off') {
+          if (getSeverity('useEffectEventInDependencyArray', context.options[0]) === 'off') {
             return;
           }
 
@@ -3669,7 +3838,7 @@ function visitFunctionWithDependencies(
                   ],
                 });
               } else {
-                if (getSeverity('staleAssignmentUnstable', context.options[0]) !== 'off') {
+                if (getSeverity('staleAssignmentUnstable', context.options[0]) === 'off') {
                   return;
                 }
 
@@ -3780,6 +3949,93 @@ function visitFunctionWithDependencies(
 
   let suggestedDeps = suggestedDependencies;
 
+  // Ensure computed member signal reads are considered before any early return
+  // This prevents the early-return path below from skipping legitimate missing deps
+  // like piecePosMapSignal.value[id] when base .value is not explicitly declared.
+  dependencies.forEach((dep: Dependency, key: string): void => {
+    if (key.includes('.value[') && isSignalDependency(key.split('.')[0] ?? '', perfKey)) {
+      const valueIndex = key.indexOf('.value[');
+
+      if (
+        valueIndex !== -1 &&
+        !declaredDependencies.some(
+          ({ key: depKey }: DeclaredDependency): boolean => depKey === key
+        ) &&
+        dep.hasReads !== false
+      ) {
+        if (key.includes('.') && isSignalDependency(key.split('.')[0] ?? '', perfKey)) {
+          const parts = key.split('.');
+
+          if (
+            parts.length > 2 &&
+            parts[1] === 'value' &&
+            declaredDependencies.some(({ key }) => key === `${parts[0]}.value`)
+          ) {
+            return;
+          }
+        }
+
+        if (
+          !(
+            dep.hasInnerScopeComputedProperty === true &&
+            declaredDependencies.some(({ key: depKey }: DeclaredDependency): boolean => {
+              return depKey === key.slice(0, valueIndex + 6);
+            })
+          )
+        ) {
+          if (
+            !key.includes('.') &&
+            !key.endsWith('.value') &&
+            !isSignalDependency(key, perfKey) &&
+            (declaredDependencies.some(({ key: dKey }: DeclaredDependency): boolean =>
+              dKey.startsWith(`${key}.`)
+            ) ||
+              Array.from(missingDependencies).some((d: string): boolean => d.startsWith(`${key}.`)))
+          ) {
+            return;
+          }
+
+          missingDependencies.add(key);
+        }
+      }
+    }
+  });
+
+  // Also include non-computed nested .value paths like fooSignal.value.bar when base .value is missing
+  dependencies.forEach((_dep: Dependency, key: string): void => {
+    if (!(isSignalDependency(key.split('.')[0] ?? '', perfKey) && key.includes('.'))) {
+      return;
+    }
+
+    if (key.includes('[') && key.includes(']')) {
+      return;
+    }
+
+    const parts = key.split('.');
+
+    if (parts.length > 2 && parts[1] === 'value') {
+      const dependency = dependencies.get(key);
+
+      if (
+        !declaredDependencies.some(({ key }) => key === `${parts[0]}.value`) &&
+        (dependency && dependency.hasReads === false) !== true &&
+        (dependency && dependency.hasInnerScopeComputedProperty === true) !== true
+      ) {
+        if (
+          !key.includes('.') &&
+          !key.endsWith('.value') &&
+          !isSignalDependency(key, perfKey) &&
+          (declaredDependencies.some(({ key: dKey }) => dKey.startsWith(`${key}.`)) ||
+            Array.from(missingDependencies).some((d) => d.startsWith(`${key}.`)))
+        ) {
+          return;
+        }
+
+        missingDependencies.add(key);
+      }
+    }
+  });
+
   if (duplicateDependencies.size + missingDependencies.size + unnecessaryDependencies.size === 0) {
     scanForConstructions({
       declaredDependencies,
@@ -3813,12 +4069,23 @@ function visitFunctionWithDependencies(
           return;
         }
 
+        // Filter missing dependencies by optional-chaining equivalence before reporting
+        const filteredMissing = Array.from(missingDependencies).filter((dep: string): boolean => {
+          return !declaredDependencies.some(({ key }: DeclaredDependency): boolean => {
+            return pathsEquivalent(dep, key);
+          });
+        });
+
+        if (filteredMissing.length === 0) {
+          return;
+        }
+
         context.report({
           node: construction.node,
           data: {
             hookName: reactiveHookName,
-            dependencies: Array.from(missingDependencies).join(', '),
-            dependenciesCount: missingDependencies.size,
+            dependencies: filteredMissing.join(', '),
+            dependenciesCount: filteredMissing.length,
             message,
           },
           messageId: 'missingDependencies',
@@ -3829,8 +4096,8 @@ function visitFunctionWithDependencies(
                     messageId: 'missingDependencies',
                     data: {
                       hookName: reactiveHookName,
-                      dependencies: Array.from(missingDependencies).join(', '),
-                      dependenciesCount: missingDependencies.size,
+                      dependencies: filteredMissing.join(', '),
+                      dependenciesCount: filteredMissing.length,
                       message,
                     },
                     fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
@@ -3919,6 +4186,7 @@ function visitFunctionWithDependencies(
           ),
           dependencies: unnecessaryDepsList.join(', '),
           dependency: depKey,
+          count: unnecessaryDepsList.length,
           message:
             getWarningMessage(
               unnecessaryDependencies,
@@ -4238,6 +4506,20 @@ function visitFunctionWithDependencies(
     }
   });
 
+  // Also remove missing deps that are equivalent under optional chaining to any declared dep
+  // e.g., treat obj.value?.a?.b and obj.value.a.b as the same path for reporting
+  if (missingDependencies.size > 0 && declaredDependencies.length > 0) {
+    Array.from(missingDependencies).forEach((m: string): void => {
+      const hasEquivalent = declaredDependencies.some(({ key }: DeclaredDependency): boolean => {
+        return pathsEquivalent(m, key);
+      });
+
+      if (hasEquivalent) {
+        missingDependencies.delete(m);
+      }
+    });
+  }
+
   const missingDepsList = Array.from(missingDependencies);
 
   // Report missing dependencies if any
@@ -4361,6 +4643,34 @@ function visitFunctionWithDependencies(
             optionalChains,
             dependencies
           ) ?? '',
+      },
+      // Non-suggest autofix for memo/callback when explicitly enabled
+      fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+        const opts = context.options[0];
+
+        if (isEffect || opts?.enableAutoFixForMemoAndCallback !== true) {
+          return null;
+        }
+
+        // Only autofix when we have suggestions we can confidently apply
+        if (suggestedDependencies.length === 0) {
+          return null;
+        }
+
+        const sourceText = context.sourceCode.getText(declaredDependenciesNode);
+        // eslint-disable-next-line optimize-regex/optimize-regex
+        const hasTrailingComma = /,\s*\]$/.test(sourceText.trim());
+        const innerIndent = ' '.repeat(declaredDependenciesNode.loc.start.column + 2);
+        const items = suggestedDependencies.map((d: string): string => {
+          return formatDependency(d, optionalChains);
+        });
+
+        return fixer.replaceText(
+          declaredDependenciesNode,
+          /\n/.test(sourceText)
+            ? `[\n${innerIndent}${items.join(`,\n${innerIndent}`)}${hasTrailingComma ? ',' : ''}\n${' '.repeat(declaredDependenciesNode.loc.start.column)}]`
+            : `[${items.join(', ')}${hasTrailingComma ? ',' : ''}]`
+        );
       },
       suggest: suggestions,
     });
@@ -4946,15 +5256,15 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
         '  return () => subscription.unsubscribe();\n' +
         '}, []); // No need to include onEvent here',
 
-      addDependencies: "Add '{{count}}' missing dependencies ('{{dependencies}}')",
-      addAllDependencies: "Add all '{{count}}' missing dependencies ('{{dependencies}}')",
+      addDependencies: "Add '{{count}}' missing dependencies {{dependencies}}",
+      addAllDependencies: "Add all '{{count}}' missing dependencies {{dependencies}}",
       addSingleDependency: "Add missing dependency: '{{dependency}}'",
       removeDependencyArray: 'Remove dependency array to run effect on every render',
 
       removeDependency: "Remove the '{{dependency}}' dependency from the dependency array. ",
       removeSingleDependency: "Remove the '{{dependency}}' dependency",
       removeAllUnnecessaryDependencies:
-        "Remove all '{{count}}' unnecessary dependencies ('{{dependencies}}')",
+        "Remove all '{{count}}' unnecessary dependencies {{dependencies}}",
       removeThisDuplicate: "Remove this duplicate '{{dependency}}'",
       removeAllDuplicates: "Remove all '{{count}}' duplicate dependencies",
 
@@ -5293,6 +5603,28 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
                 hookName: 'name' in nodeWithoutNamespace ? nodeWithoutNamespace.name : '',
               },
               messageId,
+              suggest: [
+                {
+                  messageId: 'addDependencies',
+                  data: { dependencies: '', count: 0 },
+                  fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+                    // Insert an empty dependency array, preserving formatting of multi-line calls
+                    const lastArg = node.arguments[node.arguments.length - 1];
+                    const insertPosition = lastArg ? lastArg.range[1] : node.range[1] - 1; // before ')'
+
+                    if (typeof insertPosition !== 'number') {
+                      return null;
+                    }
+
+                    return fixer.insertTextAfterRange(
+                      [insertPosition, insertPosition],
+                      /\n/.test(context.sourceCode.text.slice(insertPosition, node.range[1]))
+                        ? `,\n${' '.repeat(node.loc.start.column + 2)}[]`
+                        : `, []`
+                    );
+                  },
+                },
+              ],
             });
           }
         }
@@ -5475,7 +5807,10 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
                 },
                 suggest: [
                   {
-                    messageId: 'addDependencies',
+                    messageId: 'addSingleDependency',
+                    data: {
+                      dependency: 'name' in callback ? callback.name : callback.type,
+                    },
                     fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
                       if (!declaredDependenciesNode) {
                         return null;
@@ -5504,7 +5839,10 @@ export const exhaustiveDepsRule = ESLintUtils.RuleCreator((name: string): string
             },
             suggest: [
               {
-                messageId: 'addDependencies',
+                messageId: 'addSingleDependency',
+                data: {
+                  dependency: 'name' in callback ? callback.name : callback.type,
+                },
                 fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
                   if (!declaredDependenciesNode) {
                     return null;

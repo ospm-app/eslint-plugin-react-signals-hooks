@@ -4,7 +4,7 @@ This rule enforces the use of the `useSignals()` hook in components that utilize
 
 ## Plugin Scope
 
-- Signal creators are detected only from `@preact/signals-react` (direct, aliased, or namespace imports).
+- Signal creators are detected from `@preact/signals-react` (direct, aliased, or namespace imports) by default, and you can extend detection via the `extraCreatorModules` option.
 - The `useSignals` hook is imported from `@preact/signals-react/runtime` by autofixes when needed.
 
 ## Rule Details
@@ -203,11 +203,11 @@ function Counter() {
 
 This rule provides an auto-fix that can automatically add the `useSignals()` hook and the necessary import. The fix will:
 
-1. Insert `const store = useSignals();` as the first statement in the component body
+1. Insert `const store = useSignals(1)` in components or `const store = useSignals(2)` in custom hooks, as the first statement in the body
 2. Wrap the component body in a `try { ... } finally { store.f(); }` to ensure proper lifecycle cleanup
 3. Add or augment `import { useSignals } from '@preact/signals-react/runtime'`
 4. Preserve existing code formatting and any directive prologues (e.g., `'use client'`)
-5. For expression-bodied arrow components, convert to a block and insert `const store = useSignals(); try { return <expr>; } finally { store.f(); }`
+5. For expression-bodied arrow components, convert to a block and insert `const store = useSignals(1|2); try { return <expr>; } finally { store.f(); }` (argument depends on component vs custom hook)
 
 ### Auto-fix example
 
@@ -254,7 +254,15 @@ This rule accepts an options object with the following properties:
     "react-signals-hooks/require-use-signals": [
       "error",
       {
-        "ignoreComponents": ["PureComponent"]
+        "ignoreComponents": ["PureComponent"],
+        "wrapConciseArrows": false,
+        "suffix": "Signal",
+        "extraCreatorModules": ["@my/signals-lib"],
+        "severity": {
+          "missingUseSignalsInComponent": "error",
+          "missingUseSignalsInCustomHook": "error",
+          "wrongUseSignalsArg": "warn"
+        }
       }
     ]
   }
@@ -262,8 +270,10 @@ This rule accepts an options object with the following properties:
 ```
 
 - `ignoreComponents` (string[]) - An array of component names to exclude from this rule.
-- `suffix` (string) - Suffix used by the heuristic to detect signal-like identifiers (default: `"Signal"`).
-- `severity` (object) - Per-message overrides, e.g. `{ missingUseSignals: 'error' | 'warn' | 'off' }`.
+- `wrapConciseArrows` (boolean, default `false`) - Autofix concise arrow components/hooks by converting to a block and inserting try/finally.
+- `suffix` (string, default `"Signal"`) - Suffix used by the heuristic to detect signal-like identifiers.
+- `extraCreatorModules` (string[]) - Additional modules exporting `signal`/`computed` creators, merged with defaults.
+- `severity` (object) - Per-message overrides for `missingUseSignalsInComponent`, `missingUseSignalsInCustomHook`, `wrongUseSignalsArg` with values `'error' | 'warn' | 'off'`.
 - `performance` (object) - Performance budgets and metrics toggles (`maxTime`, `maxMemory`, `maxNodes`, `enableMetrics`, `logMetrics`, `maxOperations`).
 
 ## When Not To Use It

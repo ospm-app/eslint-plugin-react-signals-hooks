@@ -60,10 +60,8 @@ export function ReadAndUpdateInBatch(): JSX.Element {
   useSignals();
 
   const onClick = useCallback(() => {
-    batch(() => {
-      console.info(countSignal.value);
-      countSignal.value = 2;
-    });
+    console.info(countSignal.value);
+countSignal.value = 2;
   }, []);
 
   return (

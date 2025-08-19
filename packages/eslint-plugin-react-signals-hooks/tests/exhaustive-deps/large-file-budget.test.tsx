@@ -1,3 +1,6 @@
+/* eslint-disable react-signals-hooks/prefer-signal-effect */
+/* eslint-disable react-signals-hooks/prefer-signal-methods */
+/* eslint-disable react-signals-hooks/signal-variable-name */
 /** biome-ignore-all lint/correctness/useExhaustiveDependencies: off */
 /** biome-ignore-all lint/correctness/useHookAtTopLevel: off */
 /** biome-ignore-all assist/source/organizeImports: off */
@@ -27,17 +30,39 @@ export function BigComponent({ n }: { n: number }) {
     const cb8 = useCallback(() => console.info(text, 8), [text]);
     const cb9 = useCallback(() => console.info(text, 9), [text]);
 
-    useEffect(() => { console.info(base, text); }, [base, text]);
-    useEffect(() => { console.info(cb0()); }, [cb0]);
-    useEffect(() => { console.info(cb1()); }, [cb1]);
-    useEffect(() => { console.info(cb2()); }, [cb2]);
-    useEffect(() => { console.info(cb3()); }, [cb3]);
-    useEffect(() => { console.info(cb4()); }, [cb4]);
-    useEffect(() => { console.info(cb5()); }, [cb5]);
-    useEffect(() => { console.info(cb6()); }, [cb6]);
-    useEffect(() => { console.info(cb7()); }, [cb7]);
-    useEffect(() => { console.info(cb8()); }, [cb8]);
-    useEffect(() => { console.info(cb9()); }, [cb9]);
+    useEffect(() => {
+      console.info(base, text);
+    }, [base, text]);
+    useEffect(() => {
+      console.info(cb0());
+    }, [cb0]);
+    useEffect(() => {
+      console.info(cb1());
+    }, [cb1]);
+    useEffect(() => {
+      console.info(cb2());
+    }, [cb2]);
+    useEffect(() => {
+      console.info(cb3());
+    }, [cb3]);
+    useEffect(() => {
+      console.info(cb4());
+    }, [cb4]);
+    useEffect(() => {
+      console.info(cb5());
+    }, [cb5]);
+    useEffect(() => {
+      console.info(cb6());
+    }, [cb6]);
+    useEffect(() => {
+      console.info(cb7());
+    }, [cb7]);
+    useEffect(() => {
+      console.info(cb8());
+    }, [cb8]);
+    useEffect(() => {
+      console.info(cb9());
+    }, [cb9]);
 
     // Multi-line arrays with comments and trailing commas repeated
     useEffect(() => {

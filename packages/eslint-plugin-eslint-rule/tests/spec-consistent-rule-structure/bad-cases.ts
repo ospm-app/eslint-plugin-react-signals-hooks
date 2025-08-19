@@ -4,6 +4,7 @@
 
 import { ESLintUtils } from '@typescript-eslint/utils';
 import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
+
 import { getRuleDocUrl } from '../../src/utils/urls';
 
 const createRule = ESLintUtils.RuleCreator((name: string): string => {

@@ -19,7 +19,7 @@ A comprehensive ESLint plugin for React applications using `@preact/signals-reac
 
 ## Rules Overview
 
-This plugin provides 21 specialized ESLint rules for React signals:
+This plugin provides 22 specialized ESLint rules for React signals:
 
 | Rule | Purpose | Autofix | Severity |
 |------|---------|---------|----------|
@@ -44,6 +44,7 @@ This plugin provides 21 specialized ESLint rules for React signals:
 | `warn-on-unnecessary-untracked` | Warns about unnecessary `untracked()` usage | ✅ | Warning |
 | `forbid-signal-re-assignment` | Forbids aliasing or re-assigning variables that hold a signal | ❌ | Error |
 | `forbid-signal-destructuring` | Forbids destructuring signals into aliases (e.g., `{ value } = signal`) | ❌ | Error |
+| `forbid-signal-update-in-computed` | Forbids updating signals inside `computed(...)` callbacks to keep them pure/read-only | ❌ | Error |
 
 For detailed examples and options for each rule, see the docs in `docs/rules/`.
 
@@ -51,6 +52,7 @@ For detailed examples and options for each rule, see the docs in `docs/rules/`.
 - [`prefer-for-over-map` docs](./docs/rules/prefer-for-over-map.md)
 - [`forbid-signal-re-assignment` docs](./docs/rules/forbid-signal-re-assignment.md)
 - [`forbid-signal-destructuring` docs](./docs/rules/forbid-signal-destructuring.md)
+- [`forbid-signal-update-in-computed` docs](./docs/rules/forbid-signal-update-in-computed.md)
 
 ### `forbid-signal-destructuring` options (summary)
 

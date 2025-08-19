@@ -7,17 +7,23 @@ import { useSignals } from '@preact/signals-react/runtime';
 const objSignal = signal<{ a?: { b?: number } } | null>(null);
 
 export function OptionalChainReads(): JSX.Element | null {
-  const v = useMemo(() => {
-    return objSignal.value?.a?.b ?? 0;
-  }, [
-    objSignal.value?.a?.b, // ensure optional chain projection tracked
-  ]);
+  const store = useSignals(1);
 
-  useEffect(() => {
-    console.info(v);
-  }, [v]);
+  try {
+    const v = useMemo(() => {
+      return objSignal.value?.a?.b ?? 0;
+    }, [
+      objSignal.value?.a?.b, // ensure optional chain projection tracked
+    ]);
 
-  return null;
+    useEffect(() => {
+      console.info(v);
+    }, [v]);
+
+    return null;
+  } finally {
+    store.f();
+  }
 }
 
 export function DuplicatePathsWithAndWithoutOptional(): JSX.Element | null {

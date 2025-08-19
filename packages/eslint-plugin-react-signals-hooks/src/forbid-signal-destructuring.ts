@@ -1,3 +1,4 @@
+/* eslint-disable react-signals-hooks/no-non-signal-with-signal-suffix */
 /** biome-ignore-all assist/source/organizeImports: off */
 import {
   ESLintUtils,

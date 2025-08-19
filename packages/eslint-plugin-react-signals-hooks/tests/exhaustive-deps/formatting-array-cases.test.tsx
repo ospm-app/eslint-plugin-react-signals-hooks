@@ -1,5 +1,9 @@
+/* eslint-disable react-signals-hooks/prefer-batch-updates */
+/* eslint-disable react-signals-hooks/prefer-computed */
+/* eslint-disable react-signals-hooks/prefer-signal-methods */
+/* eslint-disable react-signals-hooks/prefer-signal-effect */
 /** biome-ignore-all lint/correctness/useExhaustiveDependencies: off */
-/** biome-ignore-all lint/correctness/useHookAtTopLevel: <explanation> */
+/** biome-ignore-all lint/correctness/useHookAtTopLevel: off */
 import { useEffect, useMemo, useCallback } from 'react';
 import { signal } from '@preact/signals-react';
 import { useSignals } from '@preact/signals-react/runtime';
@@ -10,7 +14,7 @@ import { useSignals } from '@preact/signals-react/runtime';
 const aSignal = signal(0);
 const bSignal = signal('');
 
-export function MultiLineArray_WithComments_And_TrailingComma() {
+export function MultiLineArray_WithComments_And_TrailingComma(): JSX.Element {
   const value = useMemo(() => {
     return aSignal.value + 1;
   }, [
@@ -28,7 +32,7 @@ export function MultiLineArray_WithComments_And_TrailingComma() {
   return <div>{value}</div>;
 }
 
-export function MultiLineArray_RemoveUnnecessary_BaseSignals() {
+export function MultiLineArray_RemoveUnnecessary_BaseSignals(): JSX.Element | null {
   // Unnecessary base signals should be removed; formatting must be preserved
   useEffect(() => {
     console.info(aSignal.value, bSignal.value);
@@ -40,7 +44,7 @@ export function MultiLineArray_RemoveUnnecessary_BaseSignals() {
   return null;
 }
 
-export function InsertDeps_For_MultiLine_Call() {
+export function InsertDeps_For_MultiLine_Call(): JSX.Element | null {
   // When there is no deps array and the call is multi-line, insertion should use a new line + indent
   useEffect(
     () => {
@@ -53,7 +57,20 @@ export function InsertDeps_For_MultiLine_Call() {
   return null;
 }
 
-export function MixedCommentsInsideArray() {
+export function InsertDeps_For_MultiLine_Assign(): JSX.Element | null {
+  // When there is no deps array and the call is multi-line, insertion should use a new line + indent
+  useEffect(
+    () => {
+      aSignal.value++;
+      bSignal.value = 'update';
+    }
+    // deps will be inserted here on a new line before the closing paren
+  );
+
+  return null;
+}
+
+export function MixedCommentsInsideArray(): JSX.Element {
   const store = useSignals(1);
 
   try {
