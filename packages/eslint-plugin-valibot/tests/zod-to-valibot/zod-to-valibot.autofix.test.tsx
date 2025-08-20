@@ -217,7 +217,7 @@ export const positiveEvenNumber = z
 	}, "Number must be even");
 
 // Branded Types
-export const emailSchema = v.pipe(v.string(), v.email(), v.brand("Email"));
+export const emailSchema = z.string().email().brand("Email");
 
 export type Email = z.infer<typeof emailSchema>;
 
