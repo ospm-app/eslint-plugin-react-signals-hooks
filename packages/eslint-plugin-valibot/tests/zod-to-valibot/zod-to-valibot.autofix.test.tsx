@@ -292,7 +292,6 @@ enum Fruit {
 	Banana = "banana",
 	Orange = "orange",
 }
-
 export const fruitSchema = z.nativeEnum(Fruit);
 
 // Custom Schema
@@ -415,10 +414,7 @@ export const numberComparators = z.number().gt(0).gte(1).lt(10).lte(9);
 export const nonEmptyStringArray = z.array(z.string()).nonempty();
 
 // Object modes: strict/passthrough/strip/catchall
-export const baseObject = z.object({
-	a: z.string(),
-	b: v.optional(v.pipe(v.number())),
-});
+export const baseObject = z.object({ a: z.string(), b: z.number().optional() });
 
 export const strictObject = baseObject.strict();
 

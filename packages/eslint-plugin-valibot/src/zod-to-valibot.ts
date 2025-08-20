@@ -1146,7 +1146,9 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
             }
           }
 
-          if (!baseId || (baseId.name !== 'z' && baseId.name !== 'v')) {
+          // If we can resolve the root and it's clearly not z or v, skip.
+          // Otherwise, proceed (helps when the variable init is complex or not in scope here).
+          if (baseId && baseId.name !== 'z' && baseId.name !== 'v') {
             return;
           }
 
