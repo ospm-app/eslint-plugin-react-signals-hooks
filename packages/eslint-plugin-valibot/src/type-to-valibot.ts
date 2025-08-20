@@ -1,10 +1,24 @@
-import type { Rule } from 'eslint';
+import { ESLintUtils, type TSESLint } from '@typescript-eslint/utils';
+import type { RuleContext } from '@typescript-eslint/utils/ts-eslint';
 
-export const typeToValibotRule: Rule.RuleModule = {
+import { getRuleDocUrl } from './utils/urls.js';
+
+type MessageIds = 'convertToValibot';
+type Options = [];
+
+const createRule = ESLintUtils.RuleCreator((name: string): string => {
+  return getRuleDocUrl(name);
+});
+
+const ruleName = 'type-to-valibot';
+
+export const typeToValibotRule = createRule({
+  name: ruleName,
   meta: {
     type: 'suggestion',
     docs: {
       description: 'Convert TypeScript types to Valibot schemas',
+      url: getRuleDocUrl(ruleName),
     },
     fixable: 'code',
     schema: [],
@@ -12,23 +26,22 @@ export const typeToValibotRule: Rule.RuleModule = {
       convertToValibot: 'Convert TypeScript type to Valibot schema',
     },
   },
-  create(context) {
+  defaultOptions: [],
+  create(context: Readonly<RuleContext<MessageIds, Options>>): TSESLint.RuleListener {
     return {
       // We'll detect TypeScript type aliases and interfaces
       TSTypeAliasDeclaration(node) {
         context.report({
           node,
           messageId: 'convertToValibot',
-          // We'll implement the fixer in the next step
         });
       },
       TSInterfaceDeclaration(node) {
         context.report({
           node,
           messageId: 'convertToValibot',
-          // We'll implement the fixer in the next step
         });
       },
     };
   },
-};
+});

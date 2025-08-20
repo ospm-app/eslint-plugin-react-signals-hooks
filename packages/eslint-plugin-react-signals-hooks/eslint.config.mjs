@@ -18,6 +18,18 @@ import globals from 'globals';
 
 import reactSignalsHooksPlugin from './dist/esm/index.mjs';
 
+import eslintRulePlugin from '@ospm/eslint-plugin-eslint-rule';
+
+const eslintRuleConfig = {
+  files: ['**/*.ts'],
+  plugins: {
+    'eslint-rule': eslintRulePlugin,
+  },
+  rules: {
+    'eslint-rule/consistent-rule-structure': 'error',
+  },
+};
+
 const commonRules = {
   // Disabled rules
   'n/no-missing-import': 'off',
@@ -253,6 +265,7 @@ export default [
   },
   jsxA11y.flatConfigs.recommended,
   securityPlugin.configs.recommended,
+  eslintRuleConfig,
   {
     files: ['lib/rules/*.{js,ts}'],
     ...eslintPlugin.configs['flat/recommended'],
