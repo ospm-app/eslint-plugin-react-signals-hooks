@@ -680,6 +680,15 @@ function mapChainToValibot(
 		multipleOf: (args: string[], message?: string | undefined): string => {
 			return `${ns}.multipleOf(${joinWithMessage(normalizeArgsForBase(args), message)})`;
 		},
+		// mark output type as readonly
+		readonly: (_args: string[], _message?: string | undefined): string => {
+			return `${ns}.readonly()`;
+		},
+		// brand action to annotate output type
+		brand: (args: string[], _message?: string | undefined): string => {
+			// Pass through the first argument if provided, e.g. brand("Email")
+			return `${ns}.brand(${args[0] ?? ""})`.replace("()", "()");
+		},
 	};
 
 	const pipes: string[] = [baseExpr];
@@ -687,6 +696,8 @@ function mapChainToValibot(
 	// Track wrappers that cannot be represented as pipe actions
 	let wrapOptional = false;
 	let wrapFallback: string | null = null;
+	// Track schema wrappers like nullish/nullable in the order encountered
+	const schemaWrappers: string[] = [];
 
 	for (let i = 1; i < steps.length; i++) {
 		const s = steps[i];
@@ -696,23 +707,175 @@ function mapChainToValibot(
 			return null;
 		}
 
+		// Helper to get current piped expression
+		function getCurrentExpr(): string {
+			return `${ns}.pipe(${pipes.join(", ")})`;
+		}
+
+		// Special wrappers that change the schema shape (not actions): pick, omit, partial, required
+		if (
+			["pick", "omit", "partial", "required"].includes(s.name) &&
+			(s.args.length === 0 || s.args.length === 1)
+		) {
+			let keysArgText = "";
+
+			if (s.args.length === 1) {
+				const only = s.args[0];
+
+				if (only.type === AST_NODE_TYPES.ArrayExpression) {
+					// Pass through arrays as-is
+					keysArgText = getText(only, context);
+				} else if (only.type === AST_NODE_TYPES.ObjectExpression) {
+					// Convert Zod's object-of-bools to an array of string keys
+					const keyNames: string[] = [];
+
+					for (const p of only.properties) {
+						if (p.type !== AST_NODE_TYPES.Property || p.computed) {
+							continue;
+						}
+
+						if (p.key.type === AST_NODE_TYPES.Identifier) {
+							keyNames.push(p.key.name);
+						} else if (
+							p.key.type === AST_NODE_TYPES.Literal &&
+							typeof p.key.value === "string"
+						) {
+							keyNames.push(p.key.value);
+						}
+					}
+
+					keysArgText = `[${keyNames
+						.map((k: string): string => {
+							return JSON.stringify(k);
+						})
+						.join(", ")}]`;
+				} else {
+					// Fallback: use original text
+					keysArgText = getText(only, context);
+				}
+			}
+
+			const wrapper = `${ns}.${s.name}(${getCurrentExpr()}${
+				keysArgText ? `, ${keysArgText}` : ""
+			})`;
+
+			// Reset pipes to continue piping further actions on the new schema
+			pipes.length = 0;
+
+			pipes.push(wrapper);
+
+			continue;
+		}
+
+		// Limited support: z.enum([...]).extract([...]) / .exclude([...]) -> v.picklist(filtered)
+		if (
+			(s.name === "extract" || s.name === "exclude") &&
+			base.name === "enum" &&
+			base.args.length >= 1 &&
+			base.args[0]?.type === AST_NODE_TYPES.ArrayExpression &&
+			s.args.length === 1 &&
+			s.args[0]?.type === AST_NODE_TYPES.ArrayExpression
+		) {
+			const sourceEls = base.args[0].elements;
+			const filterEls = s.args[0].elements;
+
+			const src: string[] = [];
+			const flt: string[] = [];
+
+			for (const el of sourceEls) {
+				if (
+					el !== null &&
+					el.type === AST_NODE_TYPES.Literal &&
+					typeof el.value === "string"
+				) {
+					src.push(el.value);
+				}
+			}
+
+			for (const el of filterEls) {
+				if (
+					el !== null &&
+					el.type === AST_NODE_TYPES.Literal &&
+					typeof el.value === "string"
+				) {
+					flt.push(el.value);
+				}
+			}
+
+			const set = new Set(src);
+			const res: string[] = [];
+
+			if (s.name === "extract") {
+				for (const vStr of flt) {
+					if (set.has(vStr)) {
+						res.push(vStr);
+					}
+				}
+			} else {
+				for (const vStr of src) {
+					if (!flt.includes(vStr)) {
+						res.push(vStr);
+					}
+				}
+			}
+
+			pipes.length = 0;
+
+			pipes.push(
+				`${ns}.picklist([${res.map((v) => JSON.stringify(v)).join(", ")}])`,
+			);
+
+			continue;
+		}
+
 		const map = modMap[s.name];
 
 		if (!map) {
+			// Wrappers: nullish(), nullable() -> defer and apply after building core schema
+			if (
+				(s.name === "nullish" || s.name === "nullable") &&
+				s.args.length === 0
+			) {
+				schemaWrappers.push(s.name);
+
+				continue;
+			}
+
+			// Pipe action: transform(fn)
+			if (s.name === "transform" && s.args.length === 1) {
+				pipes.push(`${ns}.transform(${getText(s.args[0], context)})`);
+
+				continue;
+			}
+
+			// Pipe action: refine(predicate, message?) -> check(predicate, message?)
+			if (s.name === "refine" && s.args.length >= 1) {
+				const { coreArgs, message } = splitArgsAndMessage(s.args, context);
+
+				pipes.push(
+					`${ns}.check(${joinWithMessage([coreArgs[0] ?? getText(s.args[0], context)], message)})`,
+				);
+
+				continue;
+			}
+
 			// Handle wrappers: optional(), default(value)
 			if (s.name === "optional" && s.args.length === 0) {
 				wrapOptional = true;
+
 				continue;
 			}
 
 			if (s.name === "default" && s.args.length === 1) {
 				wrapFallback = getText(s.args[0], context);
+
 				continue;
 			}
 
 			// Zod .catch(value) -> Valibot fallback(schema, value)
 			if (s.name === "catch" && s.args.length === 1) {
 				wrapFallback = getText(s.args[0], context);
+
 				continue;
 			}
 
@@ -720,6 +883,7 @@ function mapChainToValibot(
 		}
 
 		const { coreArgs, message } = splitArgsAndMessage(s.args, context);
+
 		const mapped = map(coreArgs, message);
 
 		if (!mapped) {
@@ -731,14 +895,28 @@ function mapChainToValibot(
 
 	const piped = `${ns}.pipe(${pipes.join(", ")})`;
 
-	if (wrapFallback !== null) {
-		return `${ns}.fallback(${piped}, ${wrapFallback})`;
-	}
-	if (wrapOptional) {
-		return `${ns}.optional(${piped})`;
+	// Build core schema: if we only have base and schema wrappers, avoid redundant pipe
+	let core = piped;
+
+	if (schemaWrappers.length > 0 && pipes.length === 1) {
+		core = pipes[0];
 	}
 
-	return piped;
+	// Apply schema wrappers in order
+	for (const w of schemaWrappers) {
+		core = `${ns}.${w}(${core})`;
+	}
+
+	// Apply fallback/optional wrappers last
+	if (wrapFallback !== null) {
+		return `${ns}.fallback(${core}, ${wrapFallback})`;
+	}
+
+	if (wrapOptional) {
+		return `${ns}.optional(${core})`;
+	}
+
+	return core;
 }
 
 function reportAndFixImport(
@@ -804,6 +982,60 @@ export const zodToValibotRule = ESLintUtils.RuleCreator(
 				}
 
 				reportAndFixImport(node, context);
+			},
+
+			// Convert z.infer<typeof X> to v.InferInput<typeof X>
+			[AST_NODE_TYPES.TSTypeReference](node: TSESTree.TSTypeReference): void {
+				if (node.typeName.type !== AST_NODE_TYPES.TSQualifiedName) {
+					return;
+				}
+
+				const left = node.typeName.left;
+				const right = node.typeName.right;
+
+				if (
+					left.type !== AST_NODE_TYPES.Identifier ||
+					left.name !== "z" ||
+					right.type !== AST_NODE_TYPES.Identifier ||
+					right.name !== "infer"
+				) {
+					return;
+				}
+
+				const existingNs = getNamespaceImportLocalFromValibot(
+					context.sourceCode.ast,
+				);
+
+				const ns = existingNs ?? "v";
+
+				context.report({
+					node: node.typeName,
+					messageId: "convertToValibot",
+					fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] {
+						const fixes: TSESLint.RuleFix[] = [];
+
+						if (!existingNs) {
+							const firstToken = context.sourceCode.getFirstToken(
+								context.sourceCode.ast,
+							);
+
+							if (firstToken) {
+								fixes.push(
+									fixer.insertTextBefore(
+										firstToken,
+										`import * as ${ns} from 'valibot';\n`,
+									),
+								);
+							}
+						}
+
+						fixes.push(fixer.replaceText(node.typeName, `${ns}.InferInput`));
+
+						return fixes;
+					},
+				});
+
+				return;
 			},
 
 			// Additionally, if a remaining reference to z (from zod) is found, offer a local fix to rename to v.
@@ -901,6 +1133,7 @@ export const zodToValibotRule = ESLintUtils.RuleCreator(
 
 					// Walk to the root of the chain and only transform if it's `z`
 					let root: TSESTree.Expression | null = node.callee.object;
+
 					while (root) {
 						if (root.type === AST_NODE_TYPES.MemberExpression) {
 							root = root.object;
@@ -946,8 +1179,9 @@ export const zodToValibotRule = ESLintUtils.RuleCreator(
 							return; // avoid double-reporting when Stage 4/5/6 also match
 						}
 					}
-				} // Stage 4: .parse/.safeParse -> v.parse(schema, arg)
+				}
 
+				// Stage 4: .parse/.safeParse -> v.parse(schema, arg)
 				if (
 					node.callee.type === AST_NODE_TYPES.MemberExpression &&
 					node.callee.property.type === AST_NODE_TYPES.Identifier &&
@@ -1073,6 +1307,205 @@ export const zodToValibotRule = ESLintUtils.RuleCreator(
 					});
 				}
 
+				// Stage 7b: <id>.extract([...]) / <id>.exclude([...]) where <id> = z.enum([...])
+				if (
+					node.callee.type === AST_NODE_TYPES.MemberExpression &&
+					node.callee.property.type === AST_NODE_TYPES.Identifier &&
+					(node.callee.property.name === "extract" ||
+						node.callee.property.name === "exclude") &&
+					node.arguments.length === 1 &&
+					node.arguments[0]?.type === AST_NODE_TYPES.ArrayExpression &&
+					node.callee.object.type === AST_NODE_TYPES.Identifier
+				) {
+					const variable = context.sourceCode
+						.getScope(node)
+						.set.get(node.callee.object.name);
+
+					if (typeof variable === "undefined") {
+						return;
+					}
+
+					const varDef = variable.defs.find((d) => {
+						return d.type === "Variable";
+					});
+
+					if (!varDef || !("node" in varDef)) {
+						return;
+					}
+
+					const init =
+						varDef.node && "init" in varDef.node ? varDef.node.init : null;
+
+					if (init === null || init.type !== AST_NODE_TYPES.CallExpression) {
+						return;
+					}
+
+					// Helper to compute the set of string values represented by an initializer
+					function resolveValueSetFromInit(
+						expr: TSESTree.CallExpression,
+					): string[] | null {
+						if (expr.callee.type !== AST_NODE_TYPES.MemberExpression) {
+							return null;
+						}
+
+						if (expr.callee.property.type !== AST_NODE_TYPES.Identifier) {
+							return null;
+						}
+
+						// Base: z.enum([..]) or v.picklist([..])
+						if (
+							(expr.callee.property.name === "enum" ||
+								expr.callee.property.name === "picklist") &&
+							expr.arguments.length >= 1 &&
+							expr.arguments[0]?.type === AST_NODE_TYPES.ArrayExpression
+						) {
+							const arr: string[] = [];
+
+							for (const el of expr.arguments[0].elements) {
+								if (
+									el !== null &&
+									el.type === AST_NODE_TYPES.Literal &&
+									typeof el.value === "string"
+								) {
+									arr.push(el.value);
+								}
+							}
+
+							return arr;
+						}
+
+						// Derived: <id>.extract([..]) / <id>.exclude([..])
+						if (
+							(expr.callee.property.name === "extract" ||
+								expr.callee.property.name === "exclude") &&
+							expr.arguments.length === 1 &&
+							expr.arguments[0]?.type === AST_NODE_TYPES.ArrayExpression &&
+							expr.callee.object.type === AST_NODE_TYPES.Identifier
+						) {
+							const baseVar = context.sourceCode
+								.getScope(expr)
+								.set.get(expr.callee.object.name);
+
+							if (!baseVar) {
+								return null;
+							}
+
+							const baseDef = baseVar.defs.find((d) => d.type === "Variable");
+
+							if (!baseDef || !("node" in baseDef)) {
+								return null;
+							}
+
+							const baseInit =
+								baseDef.node && "init" in baseDef.node
+									? baseDef.node.init
+									: null;
+
+							if (
+								!baseInit ||
+								baseInit.type !== AST_NODE_TYPES.CallExpression
+							) {
+								return null;
+							}
+
+							const parentSet = resolveValueSetFromInit(baseInit);
+
+							if (!parentSet) {
+								return null;
+							}
+
+							const filterValues: string[] = [];
+
+							for (const el of expr.arguments[0].elements) {
+								if (
+									el !== null &&
+									el.type === AST_NODE_TYPES.Literal &&
+									typeof el.value === "string"
+								) {
+									filterValues.push(el.value);
+								}
+							}
+
+							if (expr.callee.property.name === "extract") {
+								return parentSet.filter((v) => filterValues.includes(v));
+							}
+
+							return parentSet.filter((v) => !filterValues.includes(v));
+						}
+
+						return null;
+					}
+
+					const src = resolveValueSetFromInit(init);
+
+					if (!src) {
+						return;
+					}
+
+					const flt: string[] = [];
+
+					for (const el of node.arguments[0].elements) {
+						if (
+							el !== null &&
+							el.type === AST_NODE_TYPES.Literal &&
+							typeof el.value === "string"
+						) {
+							flt.push(el.value);
+						}
+					}
+
+					const res: string[] = [];
+
+					if (node.callee.property.name === "extract") {
+						for (const vStr of flt) {
+							if (src.includes(vStr)) {
+								res.push(vStr);
+							}
+						}
+					} else {
+						for (const vStr of src) {
+							if (!flt.includes(vStr)) {
+								res.push(vStr);
+							}
+						}
+					}
+
+					const programNs =
+						getNamespaceImportLocalFromValibot(context.sourceCode.ast) ?? "v";
+
+					context.report({
+						node,
+						messageId: "convertToValibot",
+						fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] {
+							const fixes: TSESLint.RuleFix[] = [];
+
+							if (!getNamespaceImportLocalFromValibot(context.sourceCode.ast)) {
+								const firstToken = context.sourceCode.getFirstToken(
+									context.sourceCode.ast,
+								);
+
+								if (firstToken !== null) {
+									fixes.push(
+										fixer.insertTextBefore(
+											firstToken,
+											`import * as ${programNs} from 'valibot';\n`,
+										),
+									);
+								}
+							}
+
+							fixes.push(
+								fixer.replaceText(
+									node,
+									`${programNs}.picklist(${`[${res.map((v) => JSON.stringify(v)).join(", ")}]`})`,
+								),
+							);
+
+							return fixes;
+						},
+					});
+				}
+
 				// Pattern: z.object(shape).strict() -> v.strictObject(shape)
 				if (
 					node.callee.type === AST_NODE_TYPES.MemberExpression &&
@@ -1142,6 +1575,174 @@ export const zodToValibotRule = ESLintUtils.RuleCreator(
 							return fixes;
 						},
 					});
+				}
+
+				// Pattern: <schema>.pick({ a: true, b: true }) / .omit({ a: true }) -> v.pick(schema, ["a", "b"]) / v.omit(schema, ["a"]) when rooted at z or v
+				if (
+					node.callee.type === AST_NODE_TYPES.MemberExpression &&
+					node.callee.property.type === AST_NODE_TYPES.Identifier &&
+					(node.callee.property.name === "pick" ||
+						node.callee.property.name === "omit") &&
+					node.arguments.length === 1 &&
+					node.arguments[0]?.type === AST_NODE_TYPES.ObjectExpression
+				) {
+					// Ensure the chain is ultimately rooted at z or v to avoid false positives
+					let root: TSESTree.Expression | null = node.callee.object;
+
+					while (root && root.type === AST_NODE_TYPES.MemberExpression) {
+						root = root.object;
+					}
+
+					if (
+						!root ||
+						root.type !== AST_NODE_TYPES.Identifier ||
+						(root.name !== "z" && root.name !== "v")
+					) {
+						// Not a Zod/Valibot-rooted chain
+						return;
+					}
+
+					const keys: string[] = [];
+
+					for (const prop of node.arguments[0].properties) {
+						if (
+							prop.type === AST_NODE_TYPES.Property &&
+							((prop.value.type === AST_NODE_TYPES.Literal &&
+								prop.value.value === true) ||
+								(prop.value.type === AST_NODE_TYPES.Identifier &&
+									prop.value.name === "true"))
+						) {
+							const keyName =
+								prop.key.type === AST_NODE_TYPES.Identifier
+									? prop.key.name
+									: "value" in prop.key && typeof prop.key.value === "string"
+										? String(prop.key.value)
+										: null;
+
+							if (keyName) {
+								keys.push(keyName);
+							}
+						}
+					}
+
+					if (keys.length > 0) {
+						const ns =
+							getNamespaceImportLocalFromValibot(context.sourceCode.ast) ?? "v";
+
+						context.report({
+							node,
+							messageId: "convertToValibot",
+							fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] {
+								const fixes: TSESLint.RuleFix[] = [];
+
+								if (
+									!getNamespaceImportLocalFromValibot(context.sourceCode.ast)
+								) {
+									const firstToken = context.sourceCode.getFirstToken(
+										context.sourceCode.ast,
+									);
+
+									if (firstToken) {
+										fixes.push(
+											fixer.insertTextBefore(
+												firstToken,
+												`import * as ${ns} from 'valibot';\n`,
+											),
+										);
+									}
+								}
+
+								if (
+									"property" in node.callee &&
+									"object" in node.callee &&
+									"name" in node.callee.property
+								) {
+									fixes.push(
+										fixer.replaceText(
+											node,
+											`${ns}.${node.callee.property.name}(${context.sourceCode.getText(
+												node.callee.object,
+											)}, [${keys
+												.map((k: string): string => {
+													return JSON.stringify(k);
+												})
+												.join(", ")}])`,
+										),
+									);
+								}
+
+								return fixes;
+							},
+						});
+
+						return;
+					}
+				}
+
+				// Pattern: <schema>.partial() / .required() -> v.partial(schema) / v.required(schema) when rooted at z or v
+				if (
+					node.callee.type === AST_NODE_TYPES.MemberExpression &&
+					node.callee.property.type === AST_NODE_TYPES.Identifier &&
+					(node.callee.property.name === "partial" ||
+						node.callee.property.name === "required") &&
+					node.arguments.length === 0
+				) {
+					let root: TSESTree.Expression | null = node.callee.object;
+
+					while (root && root.type === AST_NODE_TYPES.MemberExpression) {
+						root = root.object;
+					}
+
+					if (
+						!root ||
+						root.type !== AST_NODE_TYPES.Identifier ||
+						(root.name !== "z" && root.name !== "v")
+					) {
+						return;
+					}
+
+					const ns =
+						getNamespaceImportLocalFromValibot(context.sourceCode.ast) ?? "v";
+
+					context.report({
+						node,
+						messageId: "convertToValibot",
+						fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] {
+							const fixes: TSESLint.RuleFix[] = [];
+
+							if (!getNamespaceImportLocalFromValibot(context.sourceCode.ast)) {
+								const firstToken = context.sourceCode.getFirstToken(
+									context.sourceCode.ast,
+								);
+
+								if (firstToken) {
+									fixes.push(
+										fixer.insertTextBefore(
+											firstToken,
+											`import * as ${ns} from 'valibot';\n`,
+										),
+									);
+								}
+							}
+
+							if (
+								"property" in node.callee &&
+								"object" in node.callee &&
+								"name" in node.callee.property
+							) {
+								fixes.push(
+									fixer.replaceText(
+										node,
+										`${ns}.${node.callee.property.name}(${context.sourceCode.getText(node.callee.object)})`,
+									),
+								);
+							}
+
+							return fixes;
+						},
+					});
+
+					return;
 				}
 
 				// Pattern: z.object(shape).catchall(rest) -> v.objectWithRest(shape, rest)

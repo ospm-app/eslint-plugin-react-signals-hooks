@@ -217,7 +217,7 @@ export const positiveEvenNumber = z
 	}, "Number must be even");
 
 // Branded Types
-export const emailSchema = z.string().email().brand("Email");
+export const emailSchema = v.pipe(v.string(), v.email(), v.brand("Email"));
 
 export type Email = z.infer<typeof emailSchema>;
 
@@ -254,15 +254,17 @@ export const requiredUserSchema = userSchema.required();
 
 // Extract and Exclude
 export const userRole = z.enum(["admin", "user", "guest"]);
-export type AdminRole = z.infer<typeof userRole>;
 export const adminRole = userRole.extract(["admin"]);
 export const nonAdminRole = userRole.exclude(["admin"]);
+export type UserRole = z.infer<typeof userRole>;
+export type AdminRole = z.infer<typeof adminRole>;
+export type NonAdminRole = z.infer<typeof nonAdminRole>;
 
 // Custom Validation
 export const customValidation = z.string().superRefine((val, ctx): void => {
 	if (val.length < 5) {
 		ctx.addIssue({
-			code: z.ZodIssueCode.custom,
+			code: "custom",
 			message: "String must be at least 5 characters",
 		});
 	}
@@ -446,4 +448,4 @@ export const coerceDate = z.coerce.date();
 // Additional message normalization examples
 export const stringWithMessage = z.string().max(5, { message: "Too long" });
 
-export const stringInvalidTypeMsg = z.string({ message: "Expected string" });
+export const stringInvalidTypeMsg = v.string("Expected string");
