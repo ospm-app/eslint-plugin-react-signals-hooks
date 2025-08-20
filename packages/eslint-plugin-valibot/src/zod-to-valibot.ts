@@ -950,6 +950,18 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
           return;
         }
 
+        // Skip z.coerce.*() so Stage 7 CallExpression fixer can handle full replacement
+        if (
+          node.property.type === AST_NODE_TYPES.Identifier &&
+          node.property.name === 'coerce' &&
+          node.parent &&
+          node.parent.type === AST_NODE_TYPES.MemberExpression &&
+          node.parent.parent &&
+          node.parent.parent.type === AST_NODE_TYPES.CallExpression
+        ) {
+          return;
+        }
+
         const variable = context.sourceCode.getScope(node).set.get('z');
 
         if (!variable) {
@@ -1175,15 +1187,16 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
         }
 
         // Stage 7: z.coerce.*() -> v.pipe(v.unknown(), v.transform(Constructor))
+        // Matches CallExpression with callee: MemberExpression (.. .<type>)
+        // where callee.object is MemberExpression (z.coerce)
         if (
           node.callee.type === AST_NODE_TYPES.MemberExpression &&
           node.callee.object.type === AST_NODE_TYPES.MemberExpression &&
-          node.callee.object.object.type === AST_NODE_TYPES.MemberExpression &&
-          node.callee.object.object.object.type === AST_NODE_TYPES.Identifier &&
-          node.callee.object.object.object.name === 'z' &&
-          node.callee.object.object.property.type === AST_NODE_TYPES.Identifier &&
-          node.callee.object.object.property.name === 'coerce' &&
-          node.callee.object.property.type === AST_NODE_TYPES.Identifier
+          node.callee.object.object.type === AST_NODE_TYPES.Identifier &&
+          node.callee.object.object.name === 'z' &&
+          node.callee.object.property.type === AST_NODE_TYPES.Identifier &&
+          node.callee.object.property.name === 'coerce' &&
+          node.callee.property.type === AST_NODE_TYPES.Identifier
         ) {
           const ctorMap: Record<string, string> = {
             number: 'Number',
@@ -1192,7 +1205,7 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
             date: 'Date',
           };
 
-          const ctor = ctorMap[node.callee.object.property.name];
+          const ctor = ctorMap[node.callee.property.name];
 
           if (!ctor) {
             return;

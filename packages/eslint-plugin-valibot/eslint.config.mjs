@@ -1,6 +1,5 @@
 import babelParser from '@babel/eslint-parser';
 import babelPresetEnv from '@babel/preset-env';
-import eslintRulePlugin from '@ospm/eslint-plugin-eslint-rule';
 import typescript from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
 import pluginESx from 'eslint-plugin-es-x';
@@ -14,6 +13,8 @@ import oxlintPlugin from 'eslint-plugin-oxlint';
 import promisePlugin from 'eslint-plugin-promise';
 import securityPlugin from 'eslint-plugin-security';
 import globals from 'globals';
+
+import eslintRulePlugin from '../eslint-plugin-eslint-rule/dist/index.mjs';
 
 const eslintRuleConfig = {
   files: ['**/*.ts'],
