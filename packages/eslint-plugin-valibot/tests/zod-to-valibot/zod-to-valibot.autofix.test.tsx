@@ -292,6 +292,7 @@ enum Fruit {
 	Banana = "banana",
 	Orange = "orange",
 }
+
 export const fruitSchema = z.nativeEnum(Fruit);
 
 // Custom Schema
@@ -418,7 +419,7 @@ export const baseObject = z.object({ a: z.string(), b: z.number().optional() });
 
 export const strictObject = baseObject.strict();
 
-export const passthroughObject = baseObject.passthrough();
+export const passthroughObject = z.looseObject(baseObject);
 
 export const stripObject = baseObject.strip();
 
@@ -448,4 +449,4 @@ export const coerceDate = z.coerce.date();
 // Additional message normalization examples
 export const stringWithMessage = z.string().max(5, { message: "Too long" });
 
-export const stringInvalidTypeMsg = v.string("Expected string");
+export const stringInvalidTypeMsg = z.string({ message: "Expected string" });
