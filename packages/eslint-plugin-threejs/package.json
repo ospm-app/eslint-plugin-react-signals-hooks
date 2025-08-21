@@ -71,6 +71,7 @@
     "@types/estree": "^1.0.8",
     "@types/node": "^24.2.1",
     "@types/three": "^0.179.0",
+    "@ospm/eslint-plugin-eslint-rule": "workspace:*",
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "eslint-plugin-security": "^3.0.1",
     "@typescript-eslint/eslint-plugin": "^8.39.1",

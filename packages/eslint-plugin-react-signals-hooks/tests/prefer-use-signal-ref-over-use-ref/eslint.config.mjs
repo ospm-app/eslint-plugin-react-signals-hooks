@@ -76,6 +76,8 @@ export default [
       'react-signals-hooks/prefer-batch-updates': 'warn',
       'react-signals-hooks/prefer-signal-effect': 'warn',
       'react-signals-hooks/prefer-show-over-ternary': 'warn',
+      'react-signals-hooks/prefer-use-computed-in-react-component': 'warn',
+      'react-signals-hooks/prefer-use-signal-effect-in-react-component': 'warn',
 
       'react-signals-hooks/no-mutation-in-render': 'warn',
       'react-signals-hooks/prefer-signal-methods': 'warn',

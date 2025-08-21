@@ -1,11 +1,16 @@
-import React from 'react';
+/* eslint-disable react-signals-hooks/signal-variable-name */
+// oxlint-disable no-unused-vars
+/** biome-ignore-all lint/correctness/noUnusedVariables: off */
 import { signal } from '@preact/signals-react';
 import type { Signal } from '@preact/signals-react';
+import { useSignals } from '@preact/signals-react/runtime';
+import type { JSX } from 'react';
 
 // File exercises: multiple existing useSignals declarations per file; ensure per-function reuse.
 
-function A() {
+export function A(): JSX.Element {
   const store = useSignals(1);
+
   const s: Signal<number> = signal(0);
   // signal usage
   s.value++;
@@ -18,9 +23,10 @@ function A() {
   return <div>{s}</div>;
 }
 
-function B() {
+export function B(): JSX.Element {
   // different existing store name
   const localStore = useSignals(1);
+
   const s: Signal<number> = signal(1);
   s.value++;
   // has a finally but calls a different var; ensure we still add localStore.f() if missing

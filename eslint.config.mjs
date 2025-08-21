@@ -195,6 +195,8 @@ const tsConfig = {
     'react-signals-hooks/prefer-show-over-ternary': 'warn',
     'react-signals-hooks/prefer-use-signal-over-use-state': 'warn',
     'react-signals-hooks/prefer-use-signal-ref-over-use-ref': 'warn',
+    'react-signals-hooks/prefer-use-computed-in-react-component': 'warn',
+    'react-signals-hooks/prefer-use-signal-effect-in-react-component': 'warn',
 
     'react-signals-hooks/no-mutation-in-render': 'warn',
     'react-signals-hooks/no-signal-assignment-in-effect': 'warn',

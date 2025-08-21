@@ -255,7 +255,10 @@ export const preferSignalMethodsRule = ESLintUtils.RuleCreator((name: string): s
 
       const sym = type.aliasSymbol ?? type.symbol;
 
-      if (sym.escapedName === 'Signal' || sym.escapedName === 'ReadableSignal') {
+      if (
+        typeof sym !== 'undefined' &&
+        (sym.escapedName === 'Signal' || sym.escapedName === 'ReadableSignal')
+      ) {
         return true;
       }
 
