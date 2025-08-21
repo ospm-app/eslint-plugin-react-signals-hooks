@@ -14,8 +14,6 @@ import eslintPlugin from 'eslint-plugin-eslint-plugin';
 import jsxA11y from 'eslint-plugin-jsx-a11y';
 import securityPlugin from 'eslint-plugin-security';
 
-import reactSignalsHooksPlugin from './dist/esm/index.mjs';
-
 const commonRules = {
   // Disabled rules
   'n/no-missing-import': 'off',
@@ -129,7 +127,6 @@ const tsConfig = {
     'es-x': pluginESx,
     '@typescript-eslint': typescript,
     import: importPlugin,
-    'react-signals-hooks': reactSignalsHooksPlugin,
   },
   languageOptions: {
     ecmaVersion: 2024,
@@ -146,23 +143,6 @@ const tsConfig = {
   rules: {
     ...commonRules,
     ...typescript.configs['recommended'].rules,
-
-    'react-signals-hooks/exhaustive-deps': [
-      'error',
-      {
-        enableAutoFixForMemoAndCallback: true,
-      },
-    ],
-    'react-signals-hooks/require-use-signals': 'error',
-
-    'react-signals-hooks/no-mutation-in-render': 'error',
-    'react-signals-hooks/prefer-signal-in-jsx': 'warn',
-    'react-signals-hooks/prefer-show-over-ternary': 'warn',
-    'react-signals-hooks/warn-on-unnecessary-untracked': 'warn',
-    'react-signals-hooks/no-signal-creation-in-component': 'warn',
-    'react-signals-hooks/prefer-for-over-map': 'warn',
-    'react-signals-hooks/prefer-signal-effect': 'warn',
-    'react-signals-hooks/prefer-computed': 'warn',
 
     // TypeScript specific
     '@typescript-eslint/await-thenable': 'error',

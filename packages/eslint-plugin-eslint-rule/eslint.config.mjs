@@ -1,5 +1,6 @@
 import babelParser from '@babel/eslint-parser';
 import babelPresetEnv from '@babel/preset-env';
+import eslintRulePlugin from '@ospm/eslint-plugin-eslint-rule';
 import typescript from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
 import esxPlugin from 'eslint-plugin-es-x';
@@ -15,6 +16,16 @@ import securityPlugin from 'eslint-plugin-security';
 import globals from 'globals';
 
 import reactSignalsHooksPlugin from './dist/esm/index.mjs';
+
+const eslintRuleConfig = {
+  files: ['**/*.ts'],
+  plugins: {
+    'eslint-rule': eslintRulePlugin,
+  },
+  rules: {
+    'eslint-rule/consistent-rule-structure': 'error',
+  },
+};
 
 const commonRules = {
   // Disabled rules
@@ -238,8 +249,12 @@ const jsonConfig = {
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
+  {
+    ignores: ['**/node_modules/**', '**/dist/**'],
+  },
   jsxA11y.flatConfigs.recommended,
   securityPlugin.configs.recommended,
+  eslintRuleConfig,
   {
     files: ['lib/rules/*.{js,ts}'],
     ...eslintPlugin.configs['flat/recommended'],

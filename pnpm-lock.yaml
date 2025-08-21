@@ -115,6 +115,12 @@ importers:
 
   packages/eslint-config-validation-schemas:
     devDependencies:
+      '@babel/eslint-parser':
+        specifier: ^7.28.0
+        version: 7.28.0(@babel/core@7.28.0)(eslint@9.33.0(jiti@2.4.2))
+      '@babel/preset-env':
+        specifier: ^7.28.3
+        version: 7.28.3(@babel/core@7.28.0)
       '@biomejs/biome':
         specifier: 2.1.4
         version: 2.1.4
@@ -133,6 +139,42 @@ importers:
       '@typescript-eslint/utils':
         specifier: ^8.39.1
         version: 8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
+      eslint:
+        specifier: ^9.33.0
+        version: 9.33.0(jiti@2.4.2)
+      eslint-plugin-es-x:
+        specifier: ^9.0.0
+        version: 9.0.0(eslint@9.33.0(jiti@2.4.2))
+      eslint-plugin-eslint-plugin:
+        specifier: ^7.0.0
+        version: 7.0.0(eslint@9.33.0(jiti@2.4.2))
+      eslint-plugin-import:
+        specifier: ^2.32.0
+        version: 2.32.0(@typescript-eslint/parser@8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2))(eslint@9.33.0(jiti@2.4.2))
+      eslint-plugin-json:
+        specifier: ^4.0.1
+        version: 4.0.1
+      eslint-plugin-jsx-a11y:
+        specifier: ^6.10.2
+        version: 6.10.2(eslint@9.33.0(jiti@2.4.2))
+      eslint-plugin-n:
+        specifier: ^17.21.3
+        version: 17.21.3(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
+      eslint-plugin-optimize-regex:
+        specifier: ^1.2.1
+        version: 1.2.1
+      eslint-plugin-oxlint:
+        specifier: ^1.12.0
+        version: 1.12.0
+      eslint-plugin-promise:
+        specifier: ^7.2.1
+        version: 7.2.1(eslint@9.33.0(jiti@2.4.2))
+      eslint-plugin-security:
+        specifier: ^3.0.1
+        version: 3.0.1
+      globals:
+        specifier: ^16.3.0
+        version: 16.3.0
       typescript:
         specifier: ^5.9.2
         version: 5.9.2
@@ -375,9 +417,6 @@ importers:
       react-dom:
         specifier: ^18.2.0 || ^19.0.0
         version: 19.1.0(react@19.1.0)
-      valibot:
-        specifier: ^1.1.0
-        version: 1.1.0(typescript@5.9.2)
     devDependencies:
       '@babel/eslint-parser':
         specifier: ^7.28.0
@@ -561,31 +600,112 @@ importers:
 
   packages/eslint-plugin-valibot:
     dependencies:
+      arktype:
+        specifier: ^2.1.20
+        version: 2.1.20
+      joi:
+        specifier: ^18.0.0
+        version: 18.0.0
       valibot:
         specifier: ^1.0.0
         version: 1.1.0(typescript@5.9.2)
+      zod:
+        specifier: ^4.0.17
+        version: 4.0.17
     devDependencies:
+      '@babel/eslint-parser':
+        specifier: ^7.28.0
+        version: 7.28.0(@babel/core@7.28.0)(eslint@9.33.0(jiti@2.4.2))
+      '@babel/plugin-syntax-import-assertions':
+        specifier: ^7.27.1
+        version: 7.27.1(@babel/core@7.28.0)
+      '@babel/preset-env':
+        specifier: 7.28.0
+        version: 7.28.0(@babel/core@7.28.0)
       '@biomejs/biome':
         specifier: 2.1.4
         version: 2.1.4
+      '@total-typescript/ts-reset':
+        specifier: ^0.6.1
+        version: 0.6.1
       '@types/eslint':
         specifier: ^9.6.1
         version: 9.6.1
+      '@types/estree':
+        specifier: ^1.0.8
+        version: 1.0.8
       '@types/node':
         specifier: ^24.2.1
         version: 24.2.1
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.1.8
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.1.6(@types/react@19.1.8)
       '@typescript-eslint/eslint-plugin':
         specifier: ^8.39.1
         version: 8.39.1(@typescript-eslint/parser@8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2))(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
       '@typescript-eslint/parser':
         specifier: ^8.39.1
         version: 8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
+      '@typescript-eslint/scope-manager':
+        specifier: ^8.39.1
+        version: 8.39.1
+      '@typescript-eslint/types':
+        specifier: ^8.39.1
+        version: 8.39.1
       '@typescript-eslint/utils':
         specifier: ^8.39.1
         version: 8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
       eslint:
         specifier: ^9.33.0
         version: 9.33.0(jiti@2.4.2)
+      eslint-config-typescript:
+        specifier: ^3.0.0
+        version: 3.0.0(@typescript-eslint/eslint-plugin@8.39.1(@typescript-eslint/parser@8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2))(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2))(@typescript-eslint/parser@8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2))(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
+      eslint-plugin-es:
+        specifier: ^4.1.0
+        version: 4.1.0(eslint@9.33.0(jiti@2.4.2))
+      eslint-plugin-es-x:
+        specifier: ^9.0.0
+        version: 9.0.0(eslint@9.33.0(jiti@2.4.2))
+      eslint-plugin-eslint-plugin:
+        specifier: ^7.0.0
+        version: 7.0.0(eslint@9.33.0(jiti@2.4.2))
+      eslint-plugin-import:
+        specifier: ^2.32.0
+        version: 2.32.0(@typescript-eslint/parser@8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2))(eslint@9.33.0(jiti@2.4.2))
+      eslint-plugin-json:
+        specifier: ^4.0.1
+        version: 4.0.1
+      eslint-plugin-jsx-a11y:
+        specifier: ^6.10.2
+        version: 6.10.2(eslint@9.33.0(jiti@2.4.2))
+      eslint-plugin-n:
+        specifier: ^17.21.3
+        version: 17.21.3(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
+      eslint-plugin-optimize-regex:
+        specifier: ^1.2.1
+        version: 1.2.1
+      eslint-plugin-oxlint:
+        specifier: ^1.11.2
+        version: 1.12.0
+      eslint-plugin-promise:
+        specifier: ^7.2.1
+        version: 7.2.1(eslint@9.33.0(jiti@2.4.2))
+      eslint-plugin-security:
+        specifier: ^3.0.1
+        version: 3.0.1
+      globals:
+        specifier: ^16.3.0
+        version: 16.3.0
+      knip:
+        specifier: ^5.62.0
+        version: 5.62.0(@types/node@24.2.1)(typescript@5.9.2)
+      oxlint:
+        specifier: ^1.11.2
+        version: 1.11.2
       typescript:
         specifier: ^5.9.2
         version: 5.9.2
@@ -850,6 +970,12 @@ packages:
   '@ampproject/remapping@2.3.0':
     resolution: {integrity: sha512-30iZtAPgz+LTIYoeivqYo853f02jBYSd5uGnGpkFV0M3xOt9aN73erkgYAmZU43x4VfqcnLxW9Kpg3R5LC4YYw==}
     engines: {node: '>=6.0.0'}
+
+  '@ark/schema@0.46.0':
+    resolution: {integrity: sha512-c2UQdKgP2eqqDArfBqQIJppxJHvNNXuQPeuSPlDML4rjw+f1cu0qAlzOG4b8ujgm9ctIDWwhpyw6gjG5ledIVQ==}
+
+  '@ark/util@0.46.0':
+    resolution: {integrity: sha512-JPy/NGWn/lvf1WmGCPw2VGpBg5utZraE84I7wli18EDF3p3zc/e9WolT35tINeZO3l7C77SjqRJeAUoT0CvMRg==}
 
   '@babel/code-frame@7.27.1':
     resolution: {integrity: sha512-cjQ7ZlQ0Mv3b47hABuTevyTuYN4i+loJKGeV9flcCgIK37cCXRh+L1bd3iBHlynerhQ7BhCkn2BPbQUL+rGqFg==}
@@ -1877,6 +2003,26 @@ packages:
   '@ethersproject/wordlists@5.8.0':
     resolution: {integrity: sha512-2df9bbXicZws2Sb5S6ET493uJ0Z84Fjr3pC4tu/qlnZERibZCeUVuqdtt+7Tv9xxhUxHoIekIA7avrKUWHrezg==}
 
+  '@hapi/address@5.1.1':
+    resolution: {integrity: sha512-A+po2d/dVoY7cYajycYI43ZbYMXukuopIsqCjh5QzsBCipDtdofHntljDlpccMjIfTy6UOkg+5KPriwYch2bXA==}
+    engines: {node: '>=14.0.0'}
+
+  '@hapi/formula@3.0.2':
+    resolution: {integrity: sha512-hY5YPNXzw1He7s0iqkRQi+uMGh383CGdyyIGYtB+W5N3KHPXoqychklvHhKCC9M3Xtv0OCs/IHw+r4dcHtBYWw==}
+
+  '@hapi/hoek@11.0.7':
+    resolution: {integrity: sha512-HV5undWkKzcB4RZUusqOpcgxOaq6VOAH7zhhIr2g3G8NF/MlFO75SjOr2NfuSx0Mh40+1FqCkagKLJRykUWoFQ==}
+
+  '@hapi/pinpoint@2.0.1':
+    resolution: {integrity: sha512-EKQmr16tM8s16vTT3cA5L0kZZcTMU5DUOZTuvpnY738m+jyP3JIUj+Mm1xc1rsLkGBQ/gVnfKYPwOmPg1tUR4Q==}
+
+  '@hapi/tlds@1.1.2':
+    resolution: {integrity: sha512-1jkwm1WY9VIb6WhdANRmWDkXQUcIRpxqZpSdS+HD9vhoVL3zwoFvP8doQNEgT6k3VST0Ewu50wZnXIceRYp5tw==}
+    engines: {node: '>=14.0.0'}
+
+  '@hapi/topo@6.0.2':
+    resolution: {integrity: sha512-KR3rD5inZbGMrHmgPxsJ9dbi6zEK+C3ZwUwTa+eMwWLz7oijWUTWD2pMSNNYJAU6Qq+65NkxXjqHr/7LM2Xkqg==}
+
   '@humanfs/core@0.19.1':
     resolution: {integrity: sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA==}
     engines: {node: '>=18.18.0'}
@@ -2374,6 +2520,9 @@ packages:
   '@speed-highlight/core@1.2.7':
     resolution: {integrity: sha512-0dxmVj4gxg3Jg879kvFS/msl4s9F3T9UXC1InxgOf7t5NvcPD97u/WTA5vL/IxWHMn7qSxBozqrnnE2wvl1m8g==}
 
+  '@standard-schema/spec@1.0.0':
+    resolution: {integrity: sha512-m2bOd0f2RT9k8QJx1JN85cZYyH1RqFBdlwtkSlf4tBDYLCiiZnv1fIIwacK6cqwXavOydf0NPToMQgpKq+dVlA==}
+
   '@swc/helpers@0.5.17':
     resolution: {integrity: sha512-5IKx/Y13RsYd+sauPb2x+U/xZikHjolzfuDgTAl/Tdf3Q8rslRvC19NKDLgAJQ6wsqADk10ntlv08nPFw/gO/A==}
 
@@ -2632,6 +2781,9 @@ packages:
   aria-query@5.3.2:
     resolution: {integrity: sha512-COROpnaoap1E2F000S62r6A60uHZnmlvomhfyT2DlTcrY1OrBKn2UhH7qn5wTC9zMvD0AY7csdPSNwKP+7WiQw==}
     engines: {node: '>= 0.4'}
+
+  arktype@2.1.20:
+    resolution: {integrity: sha512-IZCEEXaJ8g+Ijd59WtSYwtjnqXiwM8sWQ5EjGamcto7+HVN9eK0C4p0zDlCuAwWhpqr6fIBkxPuYDl4/Mcj/+Q==}
 
   array-buffer-byte-length@1.0.2:
     resolution: {integrity: sha512-LHE+8BuR7RYGDKvnrmcuSq3tDcKv9OFEXQt/HpbZhY7V6h0zlUXutnAD82GiFx9rdieCMjkvtcsPqBwgUl1Iiw==}
@@ -3886,6 +4038,10 @@ packages:
   jiti@2.4.2:
     resolution: {integrity: sha512-rg9zJN+G4n2nfJl5MW3BMygZX56zKPNVEYYqq7adpmMh4Jn2QNEwhvQlFy6jPVdcod7txZtKHWnyZiA3a0zP7A==}
     hasBin: true
+
+  joi@18.0.0:
+    resolution: {integrity: sha512-fpbpXN/TD04Xz1/cCXzUR3ghDkhyiHjbzTILx3wNyKXIzQJ55uYAkUGWwhX72uHge/6MdFA/kp1ZUh35DlYmaA==}
+    engines: {node: '>= 20'}
 
   js-sha3@0.8.0:
     resolution: {integrity: sha512-gF1cRrHhIzNfToc802P800N8PpXS+evLLXfsVpowqmAFR9uwbi89WvXg2QspOmXL8QL86J4T1EpFu+yUkwJY3Q==}
@@ -5185,6 +5341,12 @@ snapshots:
     dependencies:
       '@jridgewell/gen-mapping': 0.3.12
       '@jridgewell/trace-mapping': 0.3.29
+
+  '@ark/schema@0.46.0':
+    dependencies:
+      '@ark/util': 0.46.0
+
+  '@ark/util@0.46.0': {}
 
   '@babel/code-frame@7.27.1':
     dependencies:
@@ -6561,6 +6723,22 @@ snapshots:
       '@ethersproject/properties': 5.8.0
       '@ethersproject/strings': 5.8.0
 
+  '@hapi/address@5.1.1':
+    dependencies:
+      '@hapi/hoek': 11.0.7
+
+  '@hapi/formula@3.0.2': {}
+
+  '@hapi/hoek@11.0.7': {}
+
+  '@hapi/pinpoint@2.0.1': {}
+
+  '@hapi/tlds@1.1.2': {}
+
+  '@hapi/topo@6.0.2':
+    dependencies:
+      '@hapi/hoek': 11.0.7
+
   '@humanfs/core@0.19.1': {}
 
   '@humanfs/node@0.16.6':
@@ -7057,6 +7235,8 @@ snapshots:
 
   '@speed-highlight/core@1.2.7': {}
 
+  '@standard-schema/spec@1.0.0': {}
+
   '@swc/helpers@0.5.17':
     dependencies:
       tslib: 2.8.1
@@ -7441,6 +7621,11 @@ snapshots:
   argparse@2.0.1: {}
 
   aria-query@5.3.2: {}
+
+  arktype@2.1.20:
+    dependencies:
+      '@ark/schema': 0.46.0
+      '@ark/util': 0.46.0
 
   array-buffer-byte-length@1.0.2:
     dependencies:
@@ -9216,6 +9401,16 @@ snapshots:
 
   jiti@2.4.2: {}
 
+  joi@18.0.0:
+    dependencies:
+      '@hapi/address': 5.1.1
+      '@hapi/formula': 3.0.2
+      '@hapi/hoek': 11.0.7
+      '@hapi/pinpoint': 2.0.1
+      '@hapi/tlds': 1.1.2
+      '@hapi/topo': 6.0.2
+      '@standard-schema/spec': 1.0.0
+
   js-sha3@0.8.0: {}
 
   js-tokens@4.0.0: {}
@@ -9448,7 +9643,7 @@ snapshots:
   metro-source-map@0.82.5:
     dependencies:
       '@babel/traverse': 7.28.0
-      '@babel/traverse--for-generate-function-map': '@babel/traverse@7.28.0'
+      '@babel/traverse--for-generate-function-map': '@babel/traverse@7.28.3'
       '@babel/types': 7.28.1
       flow-enums-runtime: 0.0.6
       invariant: 2.2.4

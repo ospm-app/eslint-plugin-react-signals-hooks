@@ -2,39 +2,62 @@
 
 ESLint plugin providing rules for working with Valibot schemas, including automatic conversion from other validation libraries.
 
+At this moment only one rule is ready. Please send me your use cases not covered by this plugin in github issues.
+
 ## Installation
 
 ```bash
-npm install --save-dev eslint-plugin-valibot @eslint-config-validation-schemas
+npm install --save-dev @ospm/eslint-plugin-valibot
 ```
 
 ## Usage
 
-In your `.eslintrc.js`:
+in your `eslint.config.mjs`
 
-```javascript
-module.exports = {
-  plugins: ['valibot'],
-  extends: ['@eslint-config-validation-schemas/valibot'],
-  rules: {
-    'valibot/zod-to-valibot': 'error',
-    'valibot/joi-to-valibot': 'error',
-    'valibot/arktype-to-valibot': 'error',
-    'valibot/type-to-valibot': 'error',
+```mjs
+import parser from "@typescript-eslint/parser";
+
+import valibotPlugin from "@ospm/eslint-plugin-valibot";
+
+/** @type {import('eslint').Linter.Config[]} */
+export default [
+ {
+  files: ["**/*.tsx", "**/*.ts"],
+  plugins: {
+   valibot: valibotPlugin,
   },
-};
+  rules: {
+   "valibot/zod-to-valibot": "warn",
+  },
+  languageOptions: {
+   parser,
+   parserOptions: {
+    ecmaVersion: 2022,
+    sourceType: "module",
+    ecmaFeatures: {
+     jsx: true,
+    },
+   },
+  },
+ },
+];
 ```
 
 ## Rules
 
-- `zod-to-valibot`: Convert Zod schemas to Valibot
-- `joi-to-valibot`: Convert Joi schemas to Valibot
-- `arktype-to-valibot`: Convert Arktype schemas to Valibot
-- `type-to-valibot`: Convert TypeScript types to Valibot schemas
+- `zod-to-valibot`: Done. Convert Zod schemas to Valibot
+- `joi-to-valibot`: TODO: Convert Joi schemas to Valibot
+- `arktype-to-valibot`: TODO: Convert Arktype schemas to Valibot
+- `type-to-valibot`: TODO: Convert TypeScript types to Valibot schemas
 
 ## Autofix
 
-All rules support autofix. Run ESLint with `--fix` to automatically convert schemas.
+Currently, only `zod-to-valibot` supports autofix. Run ESLint with `--fix` to automatically convert Zod schemas to Valibot.
+Other rules will gain autofix support when implemented.
+
+## Other eslint plugins you want to check
+
+@ospm/eslint-plugin-react-signals-hooks <https://www.npmjs.com/package/@ospm/eslint-plugin-react-signals-hooks>
 
 ## License
 
