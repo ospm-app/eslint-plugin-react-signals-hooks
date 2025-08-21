@@ -34,7 +34,7 @@ type Options = [Option?];
 function isReactComponent(node: TSESTree.Node): boolean {
   // Check if this is a function declaration with PascalCase name
   if (node.type === AST_NODE_TYPES.FunctionDeclaration) {
-    return node.id?.name ? /^[A-Z]/.test(node.id.name) : false;
+    return typeof node.id?.name === 'undefined' ? false : /^[A-Z]/.test(node.id.name);
   }
 
   // Check if this is a variable declarator with PascalCase name assigned to a function
@@ -60,8 +60,12 @@ function isInsideReactComponent(
   const ancestors = context.sourceCode.getAncestors(node);
 
   for (let i = ancestors.length - 1; i >= 0; i--) {
+    // eslint-disable-next-line security/detect-object-injection
     const ancestor = ancestors[i];
-    if (!ancestor) continue;
+
+    if (!ancestor) {
+      continue;
+    }
 
     if (isReactComponent(ancestor)) {
       return true;
@@ -101,100 +105,6 @@ function hasUseSignalEffectImport(context: RuleContext<MessageIds, Options>): bo
       })
     );
   });
-}
-
-function removeUnusedEffectImport(
-  context: RuleContext<MessageIds, Options>,
-  fixer: TSESLint.RuleFixer,
-  fixes: TSESLint.RuleFix[]
-): void {
-  // Find all effect calls in the file
-  const effectCalls: TSESTree.CallExpression[] = [];
-
-  function isESTreeNode(value: unknown): value is TSESTree.Node {
-    return (
-      !!value &&
-      typeof value === 'object' &&
-      'type' in (value as Record<string, unknown>) &&
-      typeof (value as { type?: unknown }).type === 'string'
-    );
-  }
-
-  function findEffectCalls(node: TSESTree.Node): void {
-    if (node.type === AST_NODE_TYPES.CallExpression && isEffectCall(node)) {
-      effectCalls.push(node);
-    }
-
-    for (const key of Object.keys(node) as Array<keyof typeof node>) {
-      if (key === 'parent') continue;
-      const value = node[key];
-
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          if (isESTreeNode(item)) {
-            findEffectCalls(item);
-          }
-        }
-      } else if (isESTreeNode(value)) {
-        findEffectCalls(value);
-      }
-    }
-  }
-
-  findEffectCalls(context.sourceCode.ast);
-
-  // Check if all effect calls are in React components
-  const allEffectInComponents = effectCalls.every((call) => isInsideReactComponent(call, context));
-
-  if (allEffectInComponents && effectCalls.length > 0) {
-    // Remove effect import
-    const importDecl = context.sourceCode.ast.body.find(
-      (stmt): stmt is TSESTree.ImportDeclaration => {
-        return (
-          stmt.type === AST_NODE_TYPES.ImportDeclaration &&
-          stmt.source.value === '@preact/signals-react'
-        );
-      }
-    );
-
-    if (importDecl) {
-      const effectSpec = importDecl.specifiers.find((spec): spec is TSESTree.ImportSpecifier => {
-        return (
-          spec.type === AST_NODE_TYPES.ImportSpecifier &&
-          spec.imported.type === AST_NODE_TYPES.Identifier &&
-          spec.imported.name === 'effect'
-        );
-      });
-
-      if (effectSpec && importDecl.specifiers.length > 1) {
-        // Remove just the effect specifier
-        const isLast =
-          importDecl.specifiers.indexOf(effectSpec) === importDecl.specifiers.length - 1;
-        const isPrevComma = context.sourceCode.getTokenBefore(effectSpec)?.value === ',';
-        const isNextComma = context.sourceCode.getTokenAfter(effectSpec)?.value === ',';
-
-        if (isLast && isPrevComma) {
-          // Remove ", effect"
-          const prevToken = context.sourceCode.getTokenBefore(effectSpec);
-          if (prevToken) {
-            fixes.push(fixer.removeRange([prevToken.range[0], effectSpec.range[1]]));
-          }
-        } else if (isNextComma) {
-          // Remove "effect, "
-          const nextToken = context.sourceCode.getTokenAfter(effectSpec);
-          if (nextToken) {
-            fixes.push(fixer.removeRange([effectSpec.range[0], nextToken.range[1]]));
-          }
-        } else {
-          // Remove just "effect"
-          fixes.push(fixer.remove(effectSpec));
-        }
-      } else if (effectSpec && importDecl.specifiers.length === 1) {
-        // Remove entire import
-        fixes.push(fixer.remove(importDecl));
-      }
-    }
-  }
 }
 
 const ruleName = 'prefer-use-signal-effect-in-react-component';
@@ -292,10 +202,11 @@ export const preferUseSignalEffectInReactComponentRule = ESLintUtils.RuleCreator
 
         perf.trackNode(node);
 
-        const op =
-          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing;
-
-        trackOperation(perfKey, op);
+        trackOperation(
+          perfKey,
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing
+        );
       },
 
       [AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
@@ -314,8 +225,8 @@ export const preferUseSignalEffectInReactComponentRule = ESLintUtils.RuleCreator
         context.report({
           node,
           messageId: 'preferUseSignalEffectInComponent',
-          fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] | null {
-            const fixes: TSESLint.RuleFix[] = [];
+          fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+            const fixes: Array<TSESLint.RuleFix> = [];
 
             // Replace effect with useSignalEffect
             if (node.callee.type === AST_NODE_TYPES.Identifier) {
@@ -338,16 +249,13 @@ export const preferUseSignalEffectInReactComponentRule = ESLintUtils.RuleCreator
               fixes.push(...importFixes);
             }
 
-            // Remove unused effect import
-            removeUnusedEffectImport(context, fixer, fixes);
-
             return fixes;
           },
           suggest: [
             {
               messageId: 'suggestUseSignalEffect',
-              fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] | null {
-                const fixes: TSESLint.RuleFix[] = [];
+              fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+                const fixes: Array<TSESLint.RuleFix> = [];
 
                 // Replace effect with useSignalEffect
                 if (node.callee.type === AST_NODE_TYPES.Identifier) {
