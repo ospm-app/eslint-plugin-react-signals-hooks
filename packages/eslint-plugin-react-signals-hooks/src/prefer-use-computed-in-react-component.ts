@@ -31,7 +31,7 @@ type Options = [Option?];
 function isReactComponent(node: TSESTree.Node): boolean {
   // Check if this is a function declaration with PascalCase name
   if (node.type === AST_NODE_TYPES.FunctionDeclaration) {
-    return node.id?.name ? /^[A-Z]/.test(node.id.name) : false;
+    return typeof node.id?.name === 'undefined' ? false : /^[A-Z]/.test(node.id.name);
   }
 
   // Check if this is a variable declarator with PascalCase name assigned to a function
@@ -57,6 +57,7 @@ function isInsideReactComponent(
   const ancestors = context.sourceCode.getAncestors(node);
 
   for (let i = ancestors.length - 1; i >= 0; i--) {
+    // eslint-disable-next-line security/detect-object-injection
     const ancestor = ancestors[i];
 
     if (!ancestor) {
@@ -101,106 +102,6 @@ function hasUseComputedImport(context: RuleContext<MessageIds, Options>): boolea
       })
     );
   });
-}
-
-function removeUnusedComputedImport(
-  context: RuleContext<MessageIds, Options>,
-  fixer: TSESLint.RuleFixer,
-  fixes: TSESLint.RuleFix[]
-): void {
-  // Find all computed calls in the file
-  const computedCalls: TSESTree.CallExpression[] = [];
-
-  function isESTreeNode(value: unknown): value is TSESTree.Node {
-    return (
-      !!value &&
-      typeof value === 'object' &&
-      'type' in (value as Record<string, unknown>) &&
-      typeof (value as { type?: unknown }).type === 'string'
-    );
-  }
-
-  function findComputedCalls(node: TSESTree.Node): void {
-    if (node.type === AST_NODE_TYPES.CallExpression && isComputedCall(node)) {
-      computedCalls.push(node);
-    }
-
-    for (const key of Object.keys(node) as Array<keyof typeof node>) {
-      if (key === 'parent') {
-        continue;
-      }
-
-      const value = node[key];
-
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          if (isESTreeNode(item)) {
-            findComputedCalls(item);
-          }
-        }
-      } else if (isESTreeNode(value)) {
-        findComputedCalls(value);
-      }
-    }
-  }
-
-  findComputedCalls(context.sourceCode.ast);
-
-  // Check if all computed calls are in React components
-  const allComputedInComponents = computedCalls.every((call: TSESTree.CallExpression): boolean => {
-    return isInsideReactComponent(call, context);
-  });
-
-  if (allComputedInComponents && computedCalls.length > 0) {
-    // Remove computed import
-    const importDecl = context.sourceCode.ast.body.find(
-      (stmt): stmt is TSESTree.ImportDeclaration => {
-        return (
-          stmt.type === AST_NODE_TYPES.ImportDeclaration &&
-          stmt.source.value === '@preact/signals-react'
-        );
-      }
-    );
-
-    if (importDecl) {
-      const computedSpec = importDecl.specifiers.find(
-        (spec: TSESTree.ImportClause): spec is TSESTree.ImportSpecifier => {
-          return (
-            spec.type === AST_NODE_TYPES.ImportSpecifier &&
-            spec.imported.type === AST_NODE_TYPES.Identifier &&
-            spec.imported.name === 'computed'
-          );
-        }
-      );
-
-      if (computedSpec && importDecl.specifiers.length > 1) {
-        if (
-          importDecl.specifiers.indexOf(computedSpec) === importDecl.specifiers.length - 1 &&
-          context.sourceCode.getTokenBefore(computedSpec)?.value === ','
-        ) {
-          // Remove ", computed"
-          const prevToken = context.sourceCode.getTokenBefore(computedSpec);
-
-          if (prevToken) {
-            fixes.push(fixer.removeRange([prevToken.range[0], computedSpec.range[1]]));
-          }
-        } else if (context.sourceCode.getTokenAfter(computedSpec)?.value === ',') {
-          // Remove "computed, "
-          const nextToken = context.sourceCode.getTokenAfter(computedSpec);
-
-          if (nextToken) {
-            fixes.push(fixer.removeRange([computedSpec.range[0], nextToken.range[1]]));
-          }
-        } else {
-          // Remove just "computed"
-          fixes.push(fixer.remove(computedSpec));
-        }
-      } else if (computedSpec && importDecl.specifiers.length === 1) {
-        // Remove entire import
-        fixes.push(fixer.remove(importDecl));
-      }
-    }
-  }
 }
 
 const ruleName = 'prefer-use-computed-in-react-component';
@@ -298,10 +199,11 @@ export const preferUseComputedInReactComponentRule = ESLintUtils.RuleCreator((na
 
         perf.trackNode(node);
 
-        const op =
-          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing;
-
-        trackOperation(perfKey, op);
+        trackOperation(
+          perfKey,
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations[`${node.type}Processing`] ?? PerformanceOperations.nodeProcessing
+        );
       },
 
       [AST_NODE_TYPES.CallExpression](node: TSESTree.CallExpression): void {
@@ -320,8 +222,8 @@ export const preferUseComputedInReactComponentRule = ESLintUtils.RuleCreator((na
         context.report({
           node,
           messageId: 'preferUseComputedInComponent',
-          fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] | null {
-            const fixes: TSESLint.RuleFix[] = [];
+          fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+            const fixes: Array<TSESLint.RuleFix> = [];
 
             // Replace computed with useComputed
             if (node.callee.type === AST_NODE_TYPES.Identifier) {
@@ -344,16 +246,13 @@ export const preferUseComputedInReactComponentRule = ESLintUtils.RuleCreator((na
               fixes.push(...importFixes);
             }
 
-            // Remove unused computed import
-            removeUnusedComputedImport(context, fixer, fixes);
-
             return fixes;
           },
           suggest: [
             {
               messageId: 'suggestUseComputed',
-              fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] | null {
-                const fixes: TSESLint.RuleFix[] = [];
+              fix(fixer: TSESLint.RuleFixer): Array<TSESLint.RuleFix> | null {
+                const fixes: Array<TSESLint.RuleFix> = [];
 
                 // Replace computed with useComputed
                 if (node.callee.type === AST_NODE_TYPES.Identifier) {
