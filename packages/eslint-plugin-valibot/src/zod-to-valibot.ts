@@ -628,6 +628,14 @@ function mapChainToValibot(
       // Pass through the first argument if provided, e.g. brand("Email")
       return `${ns}.brand(${args[0] ?? ''})`.replace('()', '()');
     },
+    // describe action to add description metadata
+    describe: (args: string[], _message?: string | undefined): string => {
+      return `${ns}.description(${args[0] ?? ''})`;
+    },
+    // meta action to add metadata
+    meta: (args: string[], _message?: string | undefined): string => {
+      return `${ns}.metadata(${args[0] ?? ''})`;
+    },
   };
 
   const pipes: string[] = [baseExpr];
@@ -1622,6 +1630,45 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
                     })
                     .join(', ')})`
                 )
+              );
+
+              return fixes;
+            },
+          });
+
+          return;
+        }
+
+        // Stage 7d: z.looseObject(schema) -> v.looseObject(schema.entries)
+        if (
+          node.callee.type === AST_NODE_TYPES.MemberExpression &&
+          node.callee.object.type === AST_NODE_TYPES.Identifier &&
+          node.callee.object.name === 'z' &&
+          node.callee.property.type === AST_NODE_TYPES.Identifier &&
+          node.callee.property.name === 'looseObject' &&
+          node.arguments.length === 1
+        ) {
+          const ns = getNamespaceImportLocalFromValibot(context.sourceCode.ast) ?? 'v';
+
+          context.report({
+            node,
+            messageId: 'convertToValibot',
+            fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] {
+              const fixes: TSESLint.RuleFix[] = [];
+
+              if (!getNamespaceImportLocalFromValibot(context.sourceCode.ast)) {
+                const firstToken = context.sourceCode.getFirstToken(context.sourceCode.ast);
+
+                if (firstToken) {
+                  fixes.push(
+                    fixer.insertTextBefore(firstToken, `import * as ${ns} from 'valibot';\n`)
+                  );
+                }
+              }
+
+              const schemaArg = context.sourceCode.getText(node.arguments[0]);
+              fixes.push(
+                fixer.replaceText(node, `${ns}.looseObject(${schemaArg}.entries)`)
               );
 
               return fixes;
