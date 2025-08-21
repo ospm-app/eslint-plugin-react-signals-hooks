@@ -261,14 +261,34 @@ export type AdminRole = z.infer<typeof adminRole>;
 export type NonAdminRole = z.infer<typeof nonAdminRole>;
 
 // Custom Validation
-export const customValidation = z.string().superRefine((val, ctx): void => {
-	if (val.length < 5) {
-		ctx.addIssue({
-			code: "custom",
-			message: "String must be at least 5 characters",
-		});
-	}
-});
+export const customValidation = z
+	.string()
+	.superRefine((val: string, ctx): void => {
+		if (val.length < 5) {
+			ctx.addIssue({
+				code: "custom",
+				message: "String must be at least 5 characters",
+			});
+		}
+	});
+
+export const customValidation2 = z
+	.string()
+	.superRefine((val: string, ctx): void => {
+		if (val.length < 5) {
+			ctx.addIssue({
+				code: "custom",
+				message: "String must be at least 5 characters",
+			});
+		}
+
+		if (val.length > 10) {
+			ctx.addIssue({
+				code: "custom",
+				message: "String must be at least 5 characters",
+			});
+		}
+	});
 
 // Async Validation
 export const asyncValidation = z.string().refine(

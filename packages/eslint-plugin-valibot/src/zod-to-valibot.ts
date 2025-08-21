@@ -631,6 +631,8 @@ function mapChainToValibot(
   };
 
   const pipes: string[] = [baseExpr];
+  // If any async action is added (e.g., checkAsync), we must switch to pipeAsync
+  let hasAsyncAction = false;
 
   // Track wrappers that cannot be represented as pipe actions
   let wrapOptional = false;
@@ -648,7 +650,7 @@ function mapChainToValibot(
 
     // Helper to get current piped expression
     function getCurrentExpr(): string {
-      return `${ns}.pipe(${pipes.join(', ')})`;
+      return `${ns}.${hasAsyncAction ? 'pipeAsync' : 'pipe'}(${pipes.join(', ')})`;
     }
 
     // Special wrappers that change the schema shape (not actions): pick, omit, partial, required
@@ -771,12 +773,180 @@ function mapChainToValibot(
         continue;
       }
 
-      // Pipe action: refine(predicate, message?) -> check(predicate, message?)
+      // Pipe action: refine(handler, message?) -> check/checkAsync(handler, message?)
       if (s.name === 'refine' && s.args.length >= 1) {
         const { coreArgs, message } = splitArgsAndMessage(s.args, context);
 
+        // Detect async handler to select checkAsync
+        const handler = s.args[0];
+
+        const isAsyncHandler =
+          (handler.type === AST_NODE_TYPES.ArrowFunctionExpression && handler.async === true) ||
+          (handler.type === AST_NODE_TYPES.FunctionExpression && handler.async === true);
+
+        if (isAsyncHandler) {
+          hasAsyncAction = true;
+        }
+
+        // If handler has more than 1 declared parameter, wrap to unary to satisfy typing
+        const handlerText = coreArgs[0] ?? getText(s.args[0], context);
+
         pipes.push(
-          `${ns}.check(${joinWithMessage([coreArgs[0] ?? getText(s.args[0], context)], message)})`
+          `${ns}.${isAsyncHandler ? 'checkAsync' : 'check'}(${
+            (
+              handler.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+                handler.type === AST_NODE_TYPES.FunctionExpression
+            ) && (handler.params?.length ?? 0) > 1
+              ? `(value) => { ${handlerText}(value); }`
+              : handlerText
+          }${message ? `, ${message}` : ''})`
+        );
+
+        continue;
+      }
+
+      // Pipe action: superRefine(handler) -> single/multiple check/checkAsync depending on how many issues created in zod
+      if (s.name === 'superRefine' && s.args.length >= 1) {
+        const handler = s.args[0];
+
+        const isAsyncHandler =
+          (handler.type === AST_NODE_TYPES.ArrowFunctionExpression && handler.async === true) ||
+          (handler.type === AST_NODE_TYPES.FunctionExpression && handler.async === true);
+
+        // If async, we currently do NOT convert superRefine to avoid incorrect behavior without ctx.
+        if (isAsyncHandler) {
+          return null;
+        }
+
+        const hasCtxParam =
+          (handler.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+            handler.type === AST_NODE_TYPES.FunctionExpression) &&
+          (handler.params?.length ?? 0) > 1;
+
+        // If there's no ctx, this superRefine behaves like refine; map to a simple check.
+        if (!hasCtxParam) {
+          pipes.push(`${ns}.check(${getText(s.args[0], context)})`);
+
+          continue;
+        }
+
+        // Try to extract simple pattern: a block of one or more if statements that each call ctx.addIssue({... message: "..." })
+        if (
+          (handler.type === AST_NODE_TYPES.ArrowFunctionExpression ||
+            handler.type === AST_NODE_TYPES.FunctionExpression) &&
+          handler.body &&
+          handler.body.type === AST_NODE_TYPES.BlockStatement
+        ) {
+          const stmts: TSESTree.Statement[] = handler.body.body ?? [];
+
+          if (
+            stmts.length > 0 &&
+            stmts.every((st: TSESTree.Statement): boolean => {
+              return st.type === AST_NODE_TYPES.IfStatement && !st.alternate;
+            })
+          ) {
+            const paramRegex = new RegExp(
+              `\\b${
+                handler.params?.[0] && handler.params[0].type === AST_NODE_TYPES.Identifier
+                  ? handler.params[0].name
+                  : 'value'
+              }\\b`,
+              'g'
+            );
+
+            let allConvertible = true;
+
+            const checks: { predicate: string; message?: string | undefined }[] = [];
+
+            for (const ifs of stmts) {
+              // Must have consequent that calls ctx.addIssue({...})
+              let callExpr: TSESTree.CallExpression | null = null;
+
+              if (!('consequent' in ifs)) {
+                continue;
+              }
+
+              if (
+                ifs.consequent !== null &&
+                ifs.consequent.type === AST_NODE_TYPES.BlockStatement &&
+                ifs.consequent.body.length === 1 &&
+                ifs.consequent.body[0].type === AST_NODE_TYPES.ExpressionStatement
+              ) {
+                const expr = ifs.consequent.body[0].expression;
+                if (
+                  expr.type === AST_NODE_TYPES.CallExpression &&
+                  expr.callee.type === AST_NODE_TYPES.MemberExpression &&
+                  expr.callee.property.type === AST_NODE_TYPES.Identifier &&
+                  expr.callee.property.name === 'addIssue'
+                ) {
+                  callExpr = expr;
+                }
+              } else if (
+                ifs.consequent.type === AST_NODE_TYPES.ExpressionStatement &&
+                ifs.consequent.expression.type === AST_NODE_TYPES.CallExpression &&
+                ifs.consequent.expression.callee.type === AST_NODE_TYPES.MemberExpression &&
+                ifs.consequent.expression.callee.property.type === AST_NODE_TYPES.Identifier &&
+                ifs.consequent.expression.callee.property.name === 'addIssue'
+              ) {
+                callExpr = ifs.consequent.expression;
+              }
+
+              if (
+                !callExpr ||
+                callExpr.arguments.length < 1 ||
+                callExpr.arguments[0].type !== AST_NODE_TYPES.ObjectExpression
+              ) {
+                allConvertible = false;
+
+                break;
+              }
+
+              const msgProp = callExpr.arguments[0].properties.find(
+                (p: TSESTree.ObjectLiteralElement): boolean => {
+                  return (
+                    p.type === AST_NODE_TYPES.Property &&
+                    p.key.type === AST_NODE_TYPES.Identifier &&
+                    p.key.name === 'message'
+                  );
+                }
+              );
+
+              if (typeof msgProp !== 'undefined' && 'value' in msgProp) {
+                checks.push({
+                  predicate: getText(ifs.test, context).replace(paramRegex, 'value'),
+                  message:
+                    msgProp.value.type === AST_NODE_TYPES.Literal &&
+                    typeof msgProp.value.value === 'string'
+                      ? JSON.stringify(msgProp.value.value)
+                      : undefined,
+                });
+              }
+            }
+
+            if (allConvertible) {
+              for (const c of checks) {
+                pipes.push(
+                  `${ns}.check((value) => { return ${c.predicate} }${c.message ? `, ${c.message}` : ''})`
+                );
+              }
+
+              continue;
+            }
+          }
+        }
+
+        // Complex patterns are not safely convertible without ctx; skip transformation
+        return null;
+      }
+
+      // Pipe action: pipe(schema) -> continue piping with the new schema
+      if (s.name === 'pipe' && s.args.length >= 1) {
+        const pipeArg = s.args[0];
+
+        pipes.push(
+          pipeArg.type === AST_NODE_TYPES.SpreadElement
+            ? getText(pipeArg, context)
+            : (mapExpressionToValibot(pipeArg, context) ?? getText(pipeArg, context))
         );
 
         continue;
@@ -816,7 +986,7 @@ function mapChainToValibot(
     pipes.push(mapped);
   }
 
-  const piped = `${ns}.pipe(${pipes.join(', ')})`;
+  const piped = `${ns}.${hasAsyncAction ? 'pipeAsync' : 'pipe'}(${pipes.join(', ')})`;
 
   // Build core schema: if we only have base and schema wrappers, avoid redundant pipe
   let core = piped;
@@ -1417,6 +1587,50 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
           });
         }
 
+        // Stage 7c: z.custom<...>(...) -> v.custom<...>(...)
+        if (
+          node.callee.type === AST_NODE_TYPES.MemberExpression &&
+          node.callee.object.type === AST_NODE_TYPES.Identifier &&
+          node.callee.object.name === 'z' &&
+          node.callee.property.type === AST_NODE_TYPES.Identifier &&
+          node.callee.property.name === 'custom'
+        ) {
+          const ns = getNamespaceImportLocalFromValibot(context.sourceCode.ast) ?? 'v';
+
+          context.report({
+            node,
+            messageId: 'convertToValibot',
+            fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] {
+              const fixes: TSESLint.RuleFix[] = [];
+
+              if (!getNamespaceImportLocalFromValibot(context.sourceCode.ast)) {
+                // Insert at the start of the Program to avoid token type issues
+                fixes.push(
+                  fixer.insertTextBefore(
+                    context.sourceCode.ast,
+                    `import * as ${ns} from 'valibot';\n`
+                  )
+                );
+              }
+
+              fixes.push(
+                fixer.replaceText(
+                  node,
+                  `${ns}.custom${node.typeArguments ? context.sourceCode.getText(node.typeArguments) : ''}(${node.arguments
+                    .map((a: TSESTree.CallExpressionArgument): string => {
+                      return context.sourceCode.getText(a);
+                    })
+                    .join(', ')})`
+                )
+              );
+
+              return fixes;
+            },
+          });
+
+          return;
+        }
+
         // Pattern: z.object(shape).strict() -> v.strictObject(shape)
         if (
           node.callee.type === AST_NODE_TYPES.MemberExpression &&
@@ -1913,70 +2127,71 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
           }
         }
 
-        // Pattern: <schema>.superRefine((val, ctx) => { ctx.addIssue(...) }) -> highlight for manual conversion (complex to auto-fix)
+        // Pattern: <schema>.refine(async ...) -> highlight for manual conversion (Valibot check is sync-only)
         if (
           node.callee.type === AST_NODE_TYPES.MemberExpression &&
           node.callee.property.type === AST_NODE_TYPES.Identifier &&
-          node.callee.property.name === 'superRefine'
+          node.callee.property.name === 'refine' &&
+          node.arguments.length >= 1
         ) {
-          function getRootIdentifier(expr: TSESTree.Expression | null): TSESTree.Identifier | null {
-            let cur: TSESTree.Node | null = expr;
+          const firstArg = node.arguments[0];
 
-            while (cur) {
-              if (cur.type === AST_NODE_TYPES.Identifier) {
-                return cur;
-              }
+          const isAsyncPredicate =
+            (firstArg?.type === AST_NODE_TYPES.ArrowFunctionExpression && firstArg.async) ||
+            (firstArg?.type === AST_NODE_TYPES.FunctionExpression && firstArg.async);
 
-              if (cur.type === AST_NODE_TYPES.MemberExpression) {
-                cur = cur.object;
+          if (isAsyncPredicate) {
+            // Be lenient about root resolution: highlight unless we can prove it's not z/v
+            let rootExpr: TSESTree.Expression | null = node.callee.object;
 
-                continue;
-              }
-
-              if (cur.type === AST_NODE_TYPES.CallExpression) {
-                if (cur.callee.type === AST_NODE_TYPES.MemberExpression) {
-                  cur = cur.callee.object;
-
-                  continue;
-                }
-
-                // If callee is Identifier or other expression, stop
-                return null;
-              }
-
-              // Unsupported node kind in the chain
-              return null;
+            while (rootExpr && rootExpr.type === AST_NODE_TYPES.MemberExpression) {
+              rootExpr = rootExpr.object;
             }
 
-            return null;
-          }
+            let skip = false;
 
-          const rootId = getRootIdentifier(node.callee.object);
+            if (rootExpr && rootExpr.type === AST_NODE_TYPES.Identifier) {
+              if (rootExpr.name !== 'z' && rootExpr.name !== 'v') {
+                const variable = context.sourceCode.getScope(node).set.get(rootExpr.name);
+                const varDef = variable?.defs.find((d) => d.type === 'Variable');
+                const init = varDef && 'node' in varDef ? varDef.node.init : null;
 
-          let ok = false;
+                let cur: TSESTree.Node | null = init;
+                let base: TSESTree.Identifier | null = null;
 
-          if (rootId && (rootId.name === 'z' || rootId.name === 'v')) {
-            ok = true;
-          } else if (rootId && rootId.type === AST_NODE_TYPES.Identifier) {
-            const varDef = context.sourceCode
-              .getScope(node)
-              .set.get(rootId.name)
-              ?.defs.find((d) => {
-                return d.type === 'Variable';
+                while (cur) {
+                  if (cur.type === AST_NODE_TYPES.Identifier) {
+                    base = cur;
+                    break;
+                  }
+                  if (cur.type === AST_NODE_TYPES.MemberExpression) {
+                    cur = cur.object;
+                    continue;
+                  }
+                  if (
+                    cur.type === AST_NODE_TYPES.CallExpression &&
+                    cur.callee.type === AST_NODE_TYPES.MemberExpression
+                  ) {
+                    cur = cur.callee.object;
+                    continue;
+                  }
+                  break;
+                }
+
+                if (base && base.name !== 'z' && base.name !== 'v') {
+                  skip = true;
+                }
+              }
+            }
+
+            if (!skip) {
+              context.report({
+                node,
+                messageId: 'convertToValibot',
               });
 
-            const base = getRootIdentifier(varDef && 'node' in varDef ? varDef.node.init : null);
-
-            ok = !!(base && (base.name === 'z' || base.name === 'v'));
-          }
-
-          if (ok) {
-            context.report({
-              node,
-              messageId: 'convertToValibot',
-            });
-
-            return;
+              return;
+            }
           }
         }
       },
