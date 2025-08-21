@@ -1133,34 +1133,18 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
           return;
         }
 
-        const variable = context.sourceCode.getScope(node).set.get('z');
-
-        if (!variable) {
-          return;
-        }
-
-        if (
-          typeof variable.defs.find((d): boolean => {
-            return (
-              d.type === 'ImportBinding' &&
-              d.parent?.type === AST_NODE_TYPES.ImportDeclaration &&
-              d.parent.source.value === 'zod'
-            );
-          }) === 'undefined'
-        ) {
-          return;
-        }
-
         if (
           node.parent &&
           node.parent.type === AST_NODE_TYPES.CallExpression &&
           node.parent.callee === node
         ) {
-          // Skip early namespace replacement for looseObject so the CallExpression
-          // special-case can handle adding .entries to the argument.
+          // Skip early namespace replacement for specific callees so the CallExpression
+          // special-cases can handle them with better highlighting and fixes.
           if (
             node.property.type === AST_NODE_TYPES.Identifier &&
-            node.property.name === 'looseObject'
+            (node.property.name === 'looseObject' ||
+              node.property.name === 'custom' ||
+              node.property.name === 'lazy')
           ) {
             return;
           }
@@ -1218,7 +1202,7 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
           const programNs = getNamespaceImportLocalFromValibot(context.sourceCode.ast) ?? 'v';
 
           context.report({
-            node,
+            node: node.callee,
             messageId: 'convertToValibot',
             fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] {
               const fixes: TSESLint.RuleFix[] = [];
@@ -1243,6 +1227,51 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
                       ? ''
                       : '.entries'
                   })`
+                )
+              );
+
+              return fixes;
+            },
+          });
+
+          return;
+        }
+
+        // z.lazy(...) -> v.lazy(...)
+        if (
+          node.callee.type === AST_NODE_TYPES.MemberExpression &&
+          node.callee.object.type === AST_NODE_TYPES.Identifier &&
+          node.callee.object.name === 'z' &&
+          node.callee.property.type === AST_NODE_TYPES.Identifier &&
+          node.callee.property.name === 'lazy'
+        ) {
+          const ns = getNamespaceImportLocalFromValibot(context.sourceCode.ast) ?? 'v';
+
+          context.report({
+            // Highlight the full callee 'z.lazy'
+            node: node.callee,
+            messageId: 'convertToValibot',
+            fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] {
+              const fixes: TSESLint.RuleFix[] = [];
+
+              if (!getNamespaceImportLocalFromValibot(context.sourceCode.ast)) {
+                // Insert import at top
+                fixes.push(
+                  fixer.insertTextBefore(
+                    context.sourceCode.ast,
+                    `import * as ${ns} from 'valibot';\n`
+                  )
+                );
+              }
+
+              fixes.push(
+                fixer.replaceText(
+                  node,
+                  `${ns}.lazy(${node.arguments
+                    .map((a: TSESTree.CallExpressionArgument): string =>
+                      context.sourceCode.getText(a)
+                    )
+                    .join(', ')})`
                 )
               );
 
@@ -1296,15 +1325,15 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
 
               if (mapped !== null && mapped !== context.sourceCode.getText(node)) {
                 context.report({
-                  node,
+                  node: node.callee,
                   messageId: 'convertToValibot',
                   fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix {
                     return fixer.replaceText(node, mapped);
                   },
                 });
-              }
 
-              return;
+                return;
+              }
             }
           }
         }
@@ -1322,7 +1351,7 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
           const ns = getNamespaceImportLocalFromValibot(context.sourceCode.ast) ?? 'v';
 
           context.report({
-            node,
+            node: node.callee,
             messageId: 'convertToValibot',
             fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] {
               const fixes: TSESLint.RuleFix[] = [];
@@ -1436,7 +1465,7 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
           const programNs = getNamespaceImportLocalFromValibot(context.sourceCode.ast) ?? 'v';
 
           context.report({
-            node,
+            node: node.callee,
             messageId: 'convertToValibot',
             fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] {
               const fixes: TSESLint.RuleFix[] = [];
@@ -1709,7 +1738,7 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
           const ns = getNamespaceImportLocalFromValibot(context.sourceCode.ast) ?? 'v';
 
           context.report({
-            node,
+            node: node.callee,
             messageId: 'convertToValibot',
             fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] {
               const fixes: TSESLint.RuleFix[] = [];
@@ -1835,7 +1864,7 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
             const ns = getNamespaceImportLocalFromValibot(context.sourceCode.ast) ?? 'v';
 
             context.report({
-              node,
+              node: node.callee,
               messageId: 'convertToValibot',
               fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix[] {
                 const fixes: TSESLint.RuleFix[] = [];
@@ -1895,21 +1924,28 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
           ): TSESTree.Identifier | null {
             let cur: TSESTree.Node | null = expr;
             while (cur) {
-              if (cur.type === AST_NODE_TYPES.Identifier) return cur;
+              if (cur.type === AST_NODE_TYPES.Identifier) {
+                return cur;
+              }
+
               if (cur.type === AST_NODE_TYPES.MemberExpression) {
                 cur = cur.object;
+
                 continue;
               }
+
               if (
                 cur.type === AST_NODE_TYPES.CallExpression &&
                 cur.callee.type === AST_NODE_TYPES.MemberExpression
               ) {
                 cur = cur.callee.object;
+
                 continue;
               }
 
               return null;
             }
+
             return null;
           }
 
@@ -1919,10 +1955,14 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
             if (root.name === 'z' || root.name === 'v') {
               baseId = root;
             } else {
-              const variable = context.sourceCode.getScope(node).set.get(root.name);
-              const varDef = variable?.defs.find((d) => d.type === 'Variable');
-              const init = varDef && 'node' in varDef ? varDef.node.init : null;
-              baseId = resolveBaseIdentifierFromInit(init);
+              const varDef = context.sourceCode
+                .getScope(node)
+                .set.get(root.name)
+                ?.defs.find((d) => d.type === 'Variable');
+
+              baseId = resolveBaseIdentifierFromInit(
+                varDef && 'node' in varDef ? varDef.node.init : null
+              );
             }
           }
 

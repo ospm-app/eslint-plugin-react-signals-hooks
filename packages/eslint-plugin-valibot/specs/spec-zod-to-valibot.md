@@ -26,6 +26,9 @@ Encourages migration from Zod to Valibot. Detects `import 'zod'` and offers an a
   - `.parse(x)` → `v.parse(schema, x)`
   - `.safeParse(x)` → `v.safeParse(schema, x)`
 
+- __Top-level validators__ (Implemented)
+  - `z.email()` / `z.url()` / `z.uuid()` / `z.cuid()` / `z.cuid2()` → `v.pipe(v.string(), v.email()|v.url()|v.uuid()|v.cuid2())`
+
 - __Name changes (per official guide)__ (Partially implemented)
   - `and`/`intersection` → `intersect`
   - `catch` → `fallback`
@@ -47,6 +50,17 @@ Encourages migration from Zod to Valibot. Detects `import 'zod'` and offers an a
   - `passthrough` → `looseObject`, `strict` → `strictObject`, `strip` → `object`
   - `refine` → `check`, `superRefine` → `rawCheck` / `rawTransform`
   - `rest` (tuple) → `tuple`
+
+- __Object and tuple modes__ (Implemented; safe patterns)
+  - `.strict()` on `z.object(shape)` → `v.strictObject(shape)`
+  - `.passthrough()` → `v.looseObject(shape)`
+  - `.strip()` → `v.object(shape)`
+  - `.catchall(schema)` → `v.objectWithRest(shape, schema)`
+  - `z.tuple(items).rest(rest)` → `v.tupleWithRest(items, rest)`
+
+- __Lazy and Custom__ (Implemented)
+  - `z.lazy(fn)` → `v.lazy(fn)` (full callee highlight/fix)
+  - `z.custom<T>(predicate)` → `v.custom<T>(predicate)` (full callee highlight/fix)
 
 - __Object and tuple modes__ (Implemented; safe patterns)
   - `.strict()` → `v.strictObject({...})`
@@ -90,7 +104,7 @@ Encourages migration from Zod to Valibot. Detects `import 'zod'` and offers an a
     - Comparators: `gt, gte, lt, lte` → `gtValue|minValue|ltValue|maxValue`.
   - Fix: build `v.pipe(v.<base>(...), ...mappedActions)` preserving arguments.
   - Safety: only transform when every step in the chain has a known mapping; otherwise, skip.
-  - Note: top-level calls like `z.email()` are currently not transformed (no base).
+  - Top-level validators like `z.email()` are transformed into a string base with an action.
 
 - __Stage 4: `.parse` / `.safeParse` → function calls__
   - Pattern A (simple): `z.<base>(...).parse(arg)` → `v.parse(v.<base>(...), arg)`.
@@ -102,7 +116,11 @@ Encourages migration from Zod to Valibot. Detects `import 'zod'` and offers an a
   - `.passthrough()` → `v.looseObject(shape)`.
   - `.strip()` → `v.object(shape)`.
   - `.catchall(rest)` → `v.objectWithRest(shape, rest)`.
-  - `z.tuple(items).rest(rest)` → `v.tuple(items)` (no rest). Only apply when safe (exact AST pattern).
+  - `z.tuple(items).rest(rest)` → `v.tupleWithRest(items, rest)`. Only apply when safe (exact AST pattern).
+
+- __Stage 6.1: Lazy and Custom__ (Implemented)
+  - `z.lazy(fn)` → `v.lazy(fn)`
+  - `z.custom<T>(predicate)` → `v.custom<T>(predicate)`
 
 - __Stage 6: Name changes (direct replacements)__ (Implemented subset)
   - `and|intersection` → `intersect`.

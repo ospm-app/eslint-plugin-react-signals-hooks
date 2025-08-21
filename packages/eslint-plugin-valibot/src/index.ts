@@ -21,22 +21,22 @@ declare module 'eslint' {
 
 // Import rules
 import { zodToValibotRule } from './zod-to-valibot.js';
-import { joiToValibotRule } from './joi-to-valibot.js';
-import { arktypeToValibotRule } from './arktype-to-valibot.js';
-import { typeToValibotRule } from './type-to-valibot.js';
+// import { joiToValibotRule } from './joi-to-valibot.js';
+// import { arktypeToValibotRule } from './arktype-to-valibot.js';
+// import { typeToValibotRule } from './type-to-valibot.js';
 
 const rules = {
   'zod-to-valibot': zodToValibotRule,
-  'joi-to-valibot': joiToValibotRule,
-  'arktype-to-valibot': arktypeToValibotRule,
-  'type-to-valibot': typeToValibotRule,
+  // 'joi-to-valibot': joiToValibotRule,
+  // 'arktype-to-valibot': arktypeToValibotRule,
+  // 'type-to-valibot': typeToValibotRule,
 } as const;
 
 const configRules = {
-  'zod-to-valibot': 'error',
-  'joi-to-valibot': 'error',
-  'arktype-to-valibot': 'error',
-  'type-to-valibot': 'error',
+  'zod-to-valibot': 'warn',
+  // 'joi-to-valibot': 'error',
+  // 'arktype-to-valibot': 'error',
+  // 'type-to-valibot': 'error',
 } satisfies Linter.RulesRecord;
 
 const recommendedConfig = {
