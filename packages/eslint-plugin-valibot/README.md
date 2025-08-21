@@ -7,7 +7,7 @@ At this moment only one rule is ready. Please send me your use cases not covered
 ## Installation
 
 ```bash
-npm install --save-dev eslint-plugin-valibot @eslint-config-validation-schemas
+npm install --save-dev @ospm/eslint-plugin-valibot
 ```
 
 ## Usage
@@ -17,7 +17,7 @@ in your `eslint.config.mjs`
 ```mjs
 import parser from "@typescript-eslint/parser";
 
-import valibotPlugin from "../../dist/esm/index.mjs";
+import valibotPlugin from "@ospm/eslint-plugin-valibot";
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [

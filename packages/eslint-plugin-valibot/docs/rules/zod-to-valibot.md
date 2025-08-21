@@ -111,15 +111,35 @@ npm install --save-dev @ospm/eslint-plugin-valibot
 
 ## Usage
 
-In your `.eslintrc.js`:
+in your `eslint.config.mjs`
 
-```javascript
-module.exports = {
-  plugins: ['@ospm/valibot'],
-  rules: {
-    '@ospm/valibot/zod-to-valibot': 'error',
+```mjs
+import parser from "@typescript-eslint/parser";
+
+import valibotPlugin from "@ospm/eslint-plugin-valibot";
+
+/** @type {import('eslint').Linter.Config[]} */
+export default [
+ {
+  files: ["**/*.tsx", "**/*.ts"],
+  plugins: {
+   valibot: valibotPlugin,
   },
-};
+  rules: {
+   "valibot/zod-to-valibot": "warn",
+  },
+  languageOptions: {
+   parser,
+   parserOptions: {
+    ecmaVersion: 2022,
+    sourceType: "module",
+    ecmaFeatures: {
+     jsx: true,
+    },
+   },
+  },
+ },
+];
 ```
 
 ## Auto-fixable
