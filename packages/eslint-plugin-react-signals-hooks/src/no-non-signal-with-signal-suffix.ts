@@ -99,7 +99,6 @@ function isSignalCreation(
     | TSESTree.AssignmentPattern
     | TSESTree.TSEmptyBodyFunctionExpression
     | TSESTree.Expression,
-  hasSignalsImport: boolean,
   perfKey: string,
   creatorNames: ReadonlySet<string>,
   signalImports: ReadonlySet<string>,
@@ -144,28 +143,22 @@ function isSignalCreation(
     }
   }
 
-  if (hasSignalsImport) {
-    if (
-      'name' in node.callee &&
-      ['useSignal', 'useComputed', 'useSignalEffect', 'useSignalState', 'useSignalRef'].includes(
-        node.callee.name
-      )
-    ) {
-      const op =
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        PerformanceOperations[
-          `signalHookFound:${node.callee.name as 'useSignal' | 'useComputed' | 'useSignalEffect' | 'useSignalState' | 'useSignalRef'}`
-        ] ?? PerformanceOperations.nodeProcessing;
+  // Detect known signal hooks regardless of where they are imported from (supports re-exports)
+  if (
+    'name' in node.callee &&
+    ['useSignal', 'useComputed', 'useSignalEffect', 'useSignalState', 'useSignalRef'].includes(
+      node.callee.name
+    )
+  ) {
+    const op =
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      PerformanceOperations[
+        `signalHookFound:${node.callee.name as 'useSignal' | 'useComputed' | 'useSignalEffect' | 'useSignalState' | 'useSignalRef'}`
+      ] ?? PerformanceOperations.nodeProcessing;
 
-      trackOperation(perfKey, op);
-    }
+    trackOperation(perfKey, op);
 
-    return (
-      'name' in node.callee &&
-      ['useSignal', 'useComputed', 'useSignalEffect', 'useSignalState', 'useSignalRef'].includes(
-        node.callee.name
-      )
-    );
+    return true;
   }
 
   return false;
@@ -195,7 +188,6 @@ function isSignalExpression(
   if (
     isSignalCreation(
       node,
-      hasSignalsImport,
       perfKey,
       creatorNames,
       signalImports,
