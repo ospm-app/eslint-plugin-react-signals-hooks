@@ -45,6 +45,8 @@ import { preferSignalMethodsRule } from './prefer-signal-methods.js';
 import { preferSignalReadsRule } from './prefer-signal-reads.js';
 import { preferUseSignalOverUseStateRule } from './prefer-use-signal-over-use-state.js';
 import { preferUseSignalRefOverUseRefRule } from './prefer-use-signal-ref-over-use-ref.js';
+import { preferUseComputedInReactComponentRule } from './prefer-use-computed-in-react-component.js';
+import { preferUseSignalEffectInReactComponentRule } from './prefer-use-signal-effect-in-react-component.js';
 // Code style rules
 import { requireUseSignalsRule } from './require-use-signals.js';
 import { restrictSignalLocations } from './restrict-signal-locations.js';
@@ -74,6 +76,8 @@ const rules = {
   'prefer-signal-reads': preferSignalReadsRule,
   'prefer-use-signal-over-use-state': preferUseSignalOverUseStateRule,
   'prefer-use-signal-ref-over-use-ref': preferUseSignalRefOverUseRefRule,
+  'prefer-use-computed-in-react-component': preferUseComputedInReactComponentRule,
+  'prefer-use-signal-effect-in-react-component': preferUseSignalEffectInReactComponentRule,
 
   // Code style rules
   'prefer-show-over-ternary': preferShowOverTernaryRule,
@@ -105,6 +109,8 @@ const configRules = {
   'prefer-signal-reads': 'error',
   'prefer-use-signal-over-use-state': 'error',
   'prefer-use-signal-ref-over-use-ref': 'error',
+  'prefer-use-computed-in-react-component': 'error',
+  'prefer-use-signal-effect-in-react-component': 'error',
 
   // Code style rules
   'prefer-show-over-ternary': 'error',

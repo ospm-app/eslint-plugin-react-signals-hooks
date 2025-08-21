@@ -6,7 +6,7 @@ A comprehensive ESLint plugin for React applications using `@preact/signals-reac
 
 ### 🎯 **Signal Validation**
 
-- 21 specialized rules for React signals
+- 24 specialized rules for React signals
 - Complete replacement for `eslint-plugin-react-hooks/exhaustive-deps` rule
 - Enhanced `exhaustive-deps` with signal awareness
 
@@ -19,7 +19,7 @@ A comprehensive ESLint plugin for React applications using `@preact/signals-reac
 
 ## Rules Overview
 
-This plugin provides 22 specialized ESLint rules for React signals:
+This plugin provides 24 specialized ESLint rules for React signals:
 
 | Rule | Purpose | Autofix | Severity |
 |------|---------|---------|----------|
@@ -42,6 +42,8 @@ This plugin provides 22 specialized ESLint rules for React signals:
 | `restrict-signal-locations` | Controls where signals can be created | ✅ | Error |
 | `signal-variable-name` | Enforces signal naming conventions | ✅ | Error |
 | `warn-on-unnecessary-untracked` | Warns about unnecessary `untracked()` usage | ✅ | Warning |
+| `prefer-use-computed-in-react-component` | Encourages using `useComputed(...)` inside React components | ✅ | Warning |
+| `prefer-use-signal-effect-in-react-component` | Encourages using `useSignalEffect(...)` inside React components | ✅ | Warning |
 | `forbid-signal-re-assignment` | Forbids aliasing or re-assigning variables that hold a signal | ❌ | Error |
 | `forbid-signal-destructuring` | Forbids destructuring signals into aliases (e.g., `{ value } = signal`) | ❌ | Error |
 | `forbid-signal-update-in-computed` | Forbids updating signals inside `computed(...)` callbacks to keep them pure/read-only | ❌ | Error |
@@ -53,6 +55,8 @@ For detailed examples and options for each rule, see the docs in `docs/rules/`.
 - [`forbid-signal-re-assignment` docs](./docs/rules/forbid-signal-re-assignment.md)
 - [`forbid-signal-destructuring` docs](./docs/rules/forbid-signal-destructuring.md)
 - [`forbid-signal-update-in-computed` docs](./docs/rules/forbid-signal-update-in-computed.md)
+- [`prefer-use-computed-in-react-component` docs](./docs/rules/prefer-use-computed-in-react-component.md)
+- [`prefer-use-signal-effect-in-react-component` docs](./docs/rules/prefer-use-signal-effect-in-react-component.md)
 
 ### `forbid-signal-destructuring` options (summary)
 
@@ -381,6 +385,13 @@ const doubled = useMemo(() => countSignal.value * 2, [countSignal.value]);
 const doubled = computed(() => countSignal.value * 2);
 ```
 
+Note: inside React components, prefer `useComputed()` to avoid creating a new signal on each render:
+
+```tsx
+// ✅ In components, use the hook variant
+const doubled = useComputed(() => countSignal.value * 2);
+```
+
 ### 9. `prefer-for-over-map` - For Component
 
 Suggests using For component over `.map()` for better performance with signal arrays.
@@ -423,6 +434,15 @@ useEffect(() => {
 
 // ✅ Using effect() (autofixed)
 effect(() => {
+  console.log(countSignal.value);
+});
+```
+
+Note: inside React components, prefer `useSignalEffect()` to integrate with React lifecycle:
+
+```tsx
+// ✅ In components, use the hook variant
+useSignalEffect(() => {
   console.log(countSignal.value);
 });
 ```

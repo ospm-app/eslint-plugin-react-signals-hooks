@@ -70,6 +70,8 @@ export default [
       'react-signals-hooks/prefer-signal-methods': 'warn',
       'react-signals-hooks/prefer-use-signal-over-use-state': 'warn',
       'react-signals-hooks/prefer-use-signal-ref-over-use-ref': 'warn',
+      'react-signals-hooks/prefer-use-computed-in-react-component': 'warn',
+      'react-signals-hooks/prefer-use-signal-effect-in-react-component': 'warn',
 
       // Error prevention rules
       'react-signals-hooks/no-mutation-in-render': 'warn',

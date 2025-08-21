@@ -38,6 +38,8 @@ export default [
       'react-signals-hooks/forbid-signal-destructuring': 'warn',
       'react-signals-hooks/forbid-signal-re-assignment': 'warn',
       'react-signals-hooks/forbid-signal-update-in-computed': 'warn',
+      'react-signals-hooks/prefer-use-computed-in-react-component': 'warn',
+      'react-signals-hooks/prefer-use-signal-effect-in-react-component': 'warn',
     },
     languageOptions: {
       parser: tsParser,
