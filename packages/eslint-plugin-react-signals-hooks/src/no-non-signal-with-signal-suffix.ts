@@ -149,14 +149,38 @@ function isSignalCreation(
       node.callee.name
     )
   ) {
-    const op =
+    trackOperation(
+      perfKey,
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       PerformanceOperations[
         `signalHookFound:${node.callee.name as 'useSignal' | 'useComputed' | 'useSignalEffect' | 'useSignalState' | 'useSignalRef'}`
-      ] ?? PerformanceOperations.nodeProcessing;
+      ] ?? PerformanceOperations.nodeProcessing
+    );
 
-    trackOperation(perfKey, op);
+    return true;
+  }
 
+  // Member calls like SomeNamespace.useComputed(), accommodate re-exports and aliasing
+  if (
+    node.callee.type === AST_NODE_TYPES.MemberExpression &&
+    !node.callee.computed &&
+    node.callee.property.type === AST_NODE_TYPES.Identifier &&
+    ['useSignal', 'useComputed', 'useSignalEffect', 'useSignalState', 'useSignalRef'].includes(
+      node.callee.property.name
+    )
+  ) {
+    const hookName = node.callee.property.name as
+      | 'useSignal'
+      | 'useComputed'
+      | 'useSignalEffect'
+      | 'useSignalState'
+      | 'useSignalRef';
+
+    trackOperation(
+      perfKey,
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      PerformanceOperations[`signalHookFound:${hookName}`] ?? PerformanceOperations.nodeProcessing
+    );
     return true;
   }
 
