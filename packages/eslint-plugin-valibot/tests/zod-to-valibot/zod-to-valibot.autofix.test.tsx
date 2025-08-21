@@ -327,6 +327,9 @@ export type Category = {
 	subcategories: Category[];
 };
 
+// export const categorySchema: v.LazySchema<any> = v.lazy(() => {
+// 	return v.object({ name: v.string(), subcategories: v.array(categorySchema) });
+// });
 export const categorySchema: z.ZodType<Category> = z.lazy(() => {
 	return z.object({
 		name: z.string(),
