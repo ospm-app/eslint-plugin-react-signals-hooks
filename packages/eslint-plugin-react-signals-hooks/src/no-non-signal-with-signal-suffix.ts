@@ -1,4 +1,3 @@
-/* eslint-disable react-signals-hooks/no-non-signal-with-signal-suffix */
 /** biome-ignore-all assist/source/organizeImports: off */
 import type { Definition, ScopeVariable } from '@typescript-eslint/scope-manager';
 import {
@@ -174,7 +173,6 @@ function isSignalExpression(
     | TSESTree.TSEmptyBodyFunctionExpression
     | null,
   context: RuleContext<MessageIds, Options>,
-  hasSignalsImport: boolean,
   perfKey: string,
   creatorNames: ReadonlySet<string>,
   signalImports: ReadonlySet<string>,
@@ -209,7 +207,6 @@ function isSignalExpression(
           return isSignalExpression(
             def.node.init,
             context,
-            hasSignalsImport,
             perfKey,
             creatorNames,
             signalImports,
@@ -392,7 +389,6 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
     startPhase(perfKey, 'ruleExecution');
 
     // Per-file mutable state
-    let hasSignalsImport = false;
     const signalImports = new Set<string>();
     const signalLocalNames = new Set<string>();
     const signalsNamespaceImports = new Set<string>();
@@ -438,8 +434,6 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
 
         if (node.source.value === '@preact/signals-react') {
           trackOperation(perfKey, PerformanceOperations.signalsImportFound);
-
-          hasSignalsImport = true;
 
           node.specifiers.forEach(
             (
@@ -508,7 +502,6 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
             isSignalExpression(
               node.init,
               context,
-              hasSignalsImport,
               perfKey,
               creatorNames,
               signalImports,
@@ -781,7 +774,6 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
               isSignalExpression(
                 node.value,
                 context,
-                hasSignalsImport,
                 perfKey,
                 creatorNames,
                 signalImports,
@@ -814,7 +806,6 @@ export const noNonSignalWithSignalSuffixRule = ESLintUtils.RuleCreator((name: st
               isSignalExpression(
                 node.value,
                 context,
-                hasSignalsImport,
                 perfKey,
                 creatorNames,
                 signalImports,
