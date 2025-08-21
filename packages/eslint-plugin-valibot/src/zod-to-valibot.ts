@@ -2005,12 +2005,35 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
                 }
               }
 
+              // Map the catchall argument if it's a z.* chain
+              const restArg = node.arguments[0];
+
+              let mappedRest = restArg
+                ? context.sourceCode.getText(restArg)
+                : context.sourceCode.getText(node);
+
+              if (
+                restArg &&
+                restArg.type === AST_NODE_TYPES.CallExpression &&
+                restArg.callee.type === AST_NODE_TYPES.MemberExpression
+              ) {
+                const steps = collectChain(restArg);
+
+                if (steps) {
+                  const converted = mapChainToValibot(steps, context);
+
+                  if (converted !== null) {
+                    mappedRest = converted;
+                  }
+                }
+              }
+
               fixes.push(
                 fixer.replaceText(
                   node,
                   `${ns}.objectWithRest(${context.sourceCode.getText(
                     node.callee.object.arguments[0]
-                  )}, ${context.sourceCode.getText(node.arguments[0] ?? node)})`
+                  )}, ${mappedRest})`
                 )
               );
 
@@ -2142,43 +2165,41 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
             root = root.object;
           }
 
-          if (!root || root.type !== 'Identifier') {
-            return;
-          }
+          if (
+            !!root &&
+            root.type === AST_NODE_TYPES.Identifier &&
+            (root.name === 'z' || root.name === 'v')
+          ) {
+            const map: Record<string, string> = {
+              intersection: 'intersect',
+              and: 'intersect',
+              catch: 'fallback',
+              discriminatedUnion: 'variant',
+              int: 'integer',
+              nativeEnum: 'enum',
+              or: 'union',
+              instanceof: 'instance',
+              safe: 'safeInteger',
+              element: 'item',
+            };
 
-          if (root.name !== 'z' && root.name !== 'v') {
-            return;
-          }
+            const next = map[node.callee.property.name];
 
-          const map: Record<string, string> = {
-            intersection: 'intersect',
-            and: 'intersect',
-            catch: 'fallback',
-            discriminatedUnion: 'variant',
-            int: 'integer',
-            nativeEnum: 'enum',
-            or: 'union',
-            instanceof: 'instance',
-            safe: 'safeInteger',
-            element: 'item',
-          };
+            if (next) {
+              context.report({
+                node: node.callee.property,
+                messageId: 'convertToValibot',
+                fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
+                  if (!('property' in node.callee)) {
+                    return null;
+                  }
 
-          const next = map[node.callee.property.name];
+                  return fixer.replaceText(node.callee.property, next);
+                },
+              });
 
-          if (next) {
-            context.report({
-              node: node.callee.property,
-              messageId: 'convertToValibot',
-              fix(fixer: TSESLint.RuleFixer): TSESLint.RuleFix | null {
-                if (!('property' in node.callee)) {
-                  return null;
-                }
-
-                return fixer.replaceText(node.callee.property, next);
-              },
-            });
-
-            return;
+              return;
+            }
           }
         }
 
@@ -2191,11 +2212,10 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
         ) {
           const firstArg = node.arguments[0];
 
-          const isAsyncPredicate =
+          if (
             (firstArg?.type === AST_NODE_TYPES.ArrowFunctionExpression && firstArg.async) ||
-            (firstArg?.type === AST_NODE_TYPES.FunctionExpression && firstArg.async);
-
-          if (isAsyncPredicate) {
+            (firstArg?.type === AST_NODE_TYPES.FunctionExpression && firstArg.async)
+          ) {
             // Be lenient about root resolution: highlight unless we can prove it's not z/v
             let rootExpr: TSESTree.Expression | null = node.callee.object;
 
@@ -2205,37 +2225,42 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
 
             let skip = false;
 
-            if (rootExpr && rootExpr.type === AST_NODE_TYPES.Identifier) {
-              if (rootExpr.name !== 'z' && rootExpr.name !== 'v') {
-                const variable = context.sourceCode.getScope(node).set.get(rootExpr.name);
-                const varDef = variable?.defs.find((d) => d.type === 'Variable');
-                const init = varDef && 'node' in varDef ? varDef.node.init : null;
+            if (
+              rootExpr &&
+              rootExpr.type === AST_NODE_TYPES.Identifier &&
+              rootExpr.name !== 'z' &&
+              rootExpr.name !== 'v'
+            ) {
+              const varDef = context.sourceCode
+                .getScope(node)
+                .set.get(rootExpr.name)
+                ?.defs.find((d) => d.type === 'Variable');
 
-                let cur: TSESTree.Node | null = init;
-                let base: TSESTree.Identifier | null = null;
+              let cur: TSESTree.Node | null = varDef && 'node' in varDef ? varDef.node.init : null;
 
-                while (cur) {
-                  if (cur.type === AST_NODE_TYPES.Identifier) {
-                    base = cur;
-                    break;
-                  }
-                  if (cur.type === AST_NODE_TYPES.MemberExpression) {
-                    cur = cur.object;
-                    continue;
-                  }
-                  if (
-                    cur.type === AST_NODE_TYPES.CallExpression &&
-                    cur.callee.type === AST_NODE_TYPES.MemberExpression
-                  ) {
-                    cur = cur.callee.object;
-                    continue;
-                  }
+              let base: TSESTree.Identifier | null = null;
+
+              while (cur) {
+                if (cur.type === AST_NODE_TYPES.Identifier) {
+                  base = cur;
                   break;
                 }
-
-                if (base && base.name !== 'z' && base.name !== 'v') {
-                  skip = true;
+                if (cur.type === AST_NODE_TYPES.MemberExpression) {
+                  cur = cur.object;
+                  continue;
                 }
+                if (
+                  cur.type === AST_NODE_TYPES.CallExpression &&
+                  cur.callee.type === AST_NODE_TYPES.MemberExpression
+                ) {
+                  cur = cur.callee.object;
+                  continue;
+                }
+                break;
+              }
+
+              if (base && base.name !== 'z' && base.name !== 'v') {
+                skip = true;
               }
             }
 
@@ -2255,7 +2280,6 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
           node.callee.type === AST_NODE_TYPES.MemberExpression &&
           node.callee.property.type === AST_NODE_TYPES.Identifier &&
           node.callee.property.name === 'catchall' &&
-          node.callee.object.type === AST_NODE_TYPES.Identifier &&
           node.arguments.length === 1
         ) {
           const ns = getNamespaceImportLocalFromValibot(context.sourceCode.ast) ?? 'v';
@@ -2277,18 +2301,40 @@ export const zodToValibotRule = ESLintUtils.RuleCreator((name: string): string =
               }
 
               if ('object' in node.callee) {
-                const objText = context.sourceCode.getText(node.callee.object);
-                const restText = context.sourceCode.getText(node.arguments[0] ?? node);
-                const replacement = `${ns}.objectWithRest(${objText}.entries, ${restText})`;
+                // Map the catchall argument if it's a z.* chain
+                const restArg = node.arguments[0];
 
-                console.log('[zod-to-valibot] mapping id.catchall(rest):', {
-                  object: objText,
-                  rest: restText,
-                  replacement,
-                  input: context.sourceCode.getText(node),
-                });
+                let mappedRest = restArg
+                  ? context.sourceCode.getText(restArg)
+                  : context.sourceCode.getText(node);
 
-                fixes.push(fixer.replaceText(node, replacement));
+                if (
+                  restArg &&
+                  restArg.type === AST_NODE_TYPES.CallExpression &&
+                  restArg.callee.type === AST_NODE_TYPES.MemberExpression
+                ) {
+                  const steps = collectChain(restArg);
+
+                  if (steps) {
+                    const converted = mapChainToValibot(steps, context);
+                    if (converted !== null) {
+                      mappedRest = converted;
+                    }
+                  }
+                }
+
+                fixes.push(
+                  fixer.replaceText(
+                    node,
+                    `${ns}.objectWithRest(${context.sourceCode.getText(node.callee.object)}${
+                      node.callee.object.type === AST_NODE_TYPES.MemberExpression &&
+                      node.callee.object.property.type === AST_NODE_TYPES.Identifier &&
+                      node.callee.object.property.name === 'entries'
+                        ? ''
+                        : '.entries'
+                    }, ${mappedRest})`
+                  )
+                );
               }
 
               return fixes;
