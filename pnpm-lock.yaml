@@ -113,72 +113,6 @@ importers:
         specifier: ^0.79.5
         version: 0.79.5(@babel/core@7.28.0)(@types/react@19.1.8)(bufferutil@4.0.9)(react@19.1.0)(utf-8-validate@5.0.10)
 
-  packages/eslint-config-validation-schemas:
-    devDependencies:
-      '@babel/eslint-parser':
-        specifier: ^7.28.0
-        version: 7.28.0(@babel/core@7.28.0)(eslint@9.33.0(jiti@2.4.2))
-      '@babel/preset-env':
-        specifier: ^7.28.3
-        version: 7.28.3(@babel/core@7.28.0)
-      '@biomejs/biome':
-        specifier: 2.1.4
-        version: 2.1.4
-      '@types/eslint':
-        specifier: ^9.6.1
-        version: 9.6.1
-      '@types/node':
-        specifier: ^24.2.1
-        version: 24.2.1
-      '@typescript-eslint/eslint-plugin':
-        specifier: ^8.39.1
-        version: 8.39.1(@typescript-eslint/parser@8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2))(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
-      '@typescript-eslint/parser':
-        specifier: ^8.39.1
-        version: 8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
-      '@typescript-eslint/utils':
-        specifier: ^8.39.1
-        version: 8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
-      eslint:
-        specifier: ^9.33.0
-        version: 9.33.0(jiti@2.4.2)
-      eslint-plugin-es-x:
-        specifier: ^9.0.0
-        version: 9.0.0(eslint@9.33.0(jiti@2.4.2))
-      eslint-plugin-eslint-plugin:
-        specifier: ^7.0.0
-        version: 7.0.0(eslint@9.33.0(jiti@2.4.2))
-      eslint-plugin-import:
-        specifier: ^2.32.0
-        version: 2.32.0(@typescript-eslint/parser@8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2))(eslint@9.33.0(jiti@2.4.2))
-      eslint-plugin-json:
-        specifier: ^4.0.1
-        version: 4.0.1
-      eslint-plugin-jsx-a11y:
-        specifier: ^6.10.2
-        version: 6.10.2(eslint@9.33.0(jiti@2.4.2))
-      eslint-plugin-n:
-        specifier: ^17.21.3
-        version: 17.21.3(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
-      eslint-plugin-optimize-regex:
-        specifier: ^1.2.1
-        version: 1.2.1
-      eslint-plugin-oxlint:
-        specifier: ^1.12.0
-        version: 1.12.0
-      eslint-plugin-promise:
-        specifier: ^7.2.1
-        version: 7.2.1(eslint@9.33.0(jiti@2.4.2))
-      eslint-plugin-security:
-        specifier: ^3.0.1
-        version: 3.0.1
-      globals:
-        specifier: ^16.3.0
-        version: 16.3.0
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.2
-
   packages/eslint-llm:
     devDependencies:
       '@babel/eslint-parser':
@@ -238,30 +172,6 @@ importers:
       globals:
         specifier: ^16.3.0
         version: 16.3.0
-
-  packages/eslint-plugin-arktype:
-    devDependencies:
-      '@biomejs/biome':
-        specifier: 2.1.4
-        version: 2.1.4
-      '@types/eslint':
-        specifier: ^9.6.1
-        version: 9.6.1
-      '@types/node':
-        specifier: ^24.2.1
-        version: 24.2.1
-      '@typescript-eslint/eslint-plugin':
-        specifier: ^8.39.1
-        version: 8.39.1(@typescript-eslint/parser@8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2))(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
-      '@typescript-eslint/parser':
-        specifier: ^8.39.1
-        version: 8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
-      '@typescript-eslint/utils':
-        specifier: ^8.39.1
-        version: 8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.2
 
   packages/eslint-plugin-eslint-rule:
     dependencies:
@@ -382,30 +292,6 @@ importers:
         specifier: ^0.79.5
         version: 0.79.5(@babel/core@7.28.0)(@types/react@19.1.8)(bufferutil@4.0.9)(react@19.1.0)(utf-8-validate@5.0.10)
 
-  packages/eslint-plugin-joi:
-    devDependencies:
-      '@biomejs/biome':
-        specifier: 2.1.4
-        version: 2.1.4
-      '@types/eslint':
-        specifier: ^9.6.1
-        version: 9.6.1
-      '@types/node':
-        specifier: ^24.2.1
-        version: 24.2.1
-      '@typescript-eslint/eslint-plugin':
-        specifier: ^8.39.1
-        version: 8.39.1(@typescript-eslint/parser@8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2))(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
-      '@typescript-eslint/parser':
-        specifier: ^8.39.1
-        version: 8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
-      '@typescript-eslint/utils':
-        specifier: ^8.39.1
-        version: 8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.2
-
   packages/eslint-plugin-react-signals-hooks:
     dependencies:
       '@preact/signals-core':
@@ -430,6 +316,9 @@ importers:
       '@biomejs/biome':
         specifier: 2.1.4
         version: 2.1.4
+      '@ospm/eslint-plugin-eslint-rule':
+        specifier: workspace:*
+        version: link:../eslint-plugin-eslint-rule
       '@total-typescript/ts-reset':
         specifier: ^0.6.1
         version: 0.6.1
@@ -534,6 +423,9 @@ importers:
       '@biomejs/biome':
         specifier: ^2.1.4
         version: 2.1.4
+      '@ospm/eslint-plugin-eslint-rule':
+        specifier: workspace:*
+        version: link:../eslint-plugin-eslint-rule
       '@types/node':
         specifier: ^24.2.1
         version: 24.2.1
@@ -555,9 +447,21 @@ importers:
       '@babel/core':
         specifier: ^7.28.0
         version: 7.28.0
+      '@babel/eslint-parser':
+        specifier: ^7.28.0
+        version: 7.28.0(@babel/core@7.28.0)(eslint@9.33.0(jiti@2.4.2))
       '@babel/preset-env':
         specifier: ^7.28.0
         version: 7.28.0(@babel/core@7.28.0)
+      '@ospm/eslint-plugin-eslint-rule':
+        specifier: workspace:*
+        version: link:../eslint-plugin-eslint-rule
+      '@types/eslint-plugin-jsx-a11y':
+        specifier: ^6.10.0
+        version: 6.10.0
+      '@types/eslint-plugin-security':
+        specifier: ^3.0.0
+        version: 3.0.0
       '@types/estree':
         specifier: ^1.0.8
         version: 1.0.8
@@ -579,15 +483,39 @@ importers:
       eslint:
         specifier: ^9.33.0
         version: 9.33.0(jiti@2.4.2)
+      eslint-plugin-es-x:
+        specifier: ^9.0.0
+        version: 9.0.0(eslint@9.33.0(jiti@2.4.2))
       eslint-plugin-eslint-plugin:
         specifier: ^7.0.0
         version: 7.0.0(eslint@9.33.0(jiti@2.4.2))
       eslint-plugin-import:
         specifier: ^2.32.0
         version: 2.32.0(@typescript-eslint/parser@8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2))(eslint@9.33.0(jiti@2.4.2))
+      eslint-plugin-json:
+        specifier: ^4.0.1
+        version: 4.0.1
+      eslint-plugin-jsx-a11y:
+        specifier: ^6.10.2
+        version: 6.10.2(eslint@9.33.0(jiti@2.4.2))
       eslint-plugin-n:
         specifier: ^17.21.3
         version: 17.21.3(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
+      eslint-plugin-optimize-regex:
+        specifier: ^1.2.1
+        version: 1.2.1
+      eslint-plugin-oxlint:
+        specifier: ^1.12.0
+        version: 1.12.0
+      eslint-plugin-promise:
+        specifier: ^7.2.1
+        version: 7.2.1(eslint@9.33.0(jiti@2.4.2))
+      eslint-plugin-security:
+        specifier: ^3.0.1
+        version: 3.0.1
+      globals:
+        specifier: ^16.3.0
+        version: 16.3.0
       npm-run-all:
         specifier: ^4.1.5
         version: 4.1.5
@@ -625,6 +553,9 @@ importers:
       '@biomejs/biome':
         specifier: 2.1.4
         version: 2.1.4
+      '@ospm/eslint-plugin-eslint-rule':
+        specifier: workspace:*
+        version: link:../eslint-plugin-eslint-rule
       '@total-typescript/ts-reset':
         specifier: ^0.6.1
         version: 0.6.1
@@ -715,43 +646,15 @@ importers:
       '@biomejs/biome':
         specifier: 2.1.4
         version: 2.1.4
+      '@ospm/eslint-plugin-eslint-rule':
+        specifier: workspace:*
+        version: link:../eslint-plugin-eslint-rule
       '@types/eslint':
         specifier: ^9.6.1
         version: 9.6.1
       '@types/estree-jsx':
         specifier: 1.0.5
         version: 1.0.5
-      '@types/node':
-        specifier: ^24.2.1
-        version: 24.2.1
-      '@typescript-eslint/eslint-plugin':
-        specifier: ^8.39.1
-        version: 8.39.1(@typescript-eslint/parser@8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2))(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
-      '@typescript-eslint/parser':
-        specifier: ^8.39.1
-        version: 8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
-      '@typescript-eslint/utils':
-        specifier: ^8.39.1
-        version: 8.39.1(eslint@9.33.0(jiti@2.4.2))(typescript@5.9.2)
-      eslint:
-        specifier: ^9.33.0
-        version: 9.33.0(jiti@2.4.2)
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.2
-
-  packages/eslint-plugin-zod:
-    dependencies:
-      '@types/estree':
-        specifier: ^1.0.5
-        version: 1.0.8
-      zod:
-        specifier: ^4.0.17
-        version: 4.0.17
-    devDependencies:
-      '@biomejs/biome':
-        specifier: ^2.1.4
-        version: 2.1.4
       '@types/node':
         specifier: ^24.2.1
         version: 24.2.1
@@ -2549,6 +2452,12 @@ packages:
 
   '@types/connect@3.4.38':
     resolution: {integrity: sha512-K6uROf1LD88uDQqJCktA4yzL1YYAK6NgfsI0v/mTgyPKWsX1CnJ0XPSDhViejru1GcRkLWb8RlzFYJRqGUbaug==}
+
+  '@types/eslint-plugin-jsx-a11y@6.10.0':
+    resolution: {integrity: sha512-TGKmk2gO6DrvTVADNOGQMqn3SzqcFcJILFnXNllQA34us9uClS3/AsL/cERPz6jS9ePI3bx+1q8/d2GZsxPVYw==}
+
+  '@types/eslint-plugin-security@3.0.0':
+    resolution: {integrity: sha512-CpJ7dhqhfURdYHAlaQM4vfl75lDYnGl5+EZKoO/fW0hEREZa9+EBn1g10XLDM6n5yJSuTAPn5afkM4vNzhlyFQ==}
 
   '@types/eslint@9.6.1':
     resolution: {integrity: sha512-FXx2pKgId/WyYo2jXw63kk7/+TY7u7AziEJxJAnSFzHlqTAS3Ync6SvgYAN/k4/PQpnnVuzoMuVnByKK2qp0ag==}
@@ -7278,6 +7187,14 @@ snapshots:
   '@types/connect@3.4.38':
     dependencies:
       '@types/node': 24.2.1
+
+  '@types/eslint-plugin-jsx-a11y@6.10.0':
+    dependencies:
+      '@types/eslint': 9.6.1
+
+  '@types/eslint-plugin-security@3.0.0':
+    dependencies:
+      '@types/eslint': 9.6.1
 
   '@types/eslint@9.6.1':
     dependencies:

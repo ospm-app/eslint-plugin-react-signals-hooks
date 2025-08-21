@@ -158,7 +158,7 @@ type Options = {
 The rule should provide an auto-fix that:
 
 1. Replaces `effect(` with `useSignalEffect(`
- 2. Adds `useSignalEffect` import if not present
+2. Adds `useSignalEffect` import if not present
 3. Removes `effect` import if no longer used
 
 ### Error Messages

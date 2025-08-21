@@ -1,5 +1,5 @@
 import parser from '@typescript-eslint/parser';
-
+import ts from '@typescript-eslint/eslint-plugin';
 import reactSignalsHooksPlugin from '../../dist/esm/index.mjs';
 
 /** @type {import('eslint').Linter.Config[]} */
@@ -10,6 +10,7 @@ export default [
   {
     files: ['*.tsx', '*.ts'],
     plugins: {
+      '@typescript-eslint': ts,
       'react-signals-hooks': reactSignalsHooksPlugin,
     },
     rules: {

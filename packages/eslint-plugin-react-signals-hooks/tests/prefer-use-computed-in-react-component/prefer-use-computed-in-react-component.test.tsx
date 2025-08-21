@@ -1,6 +1,8 @@
+/* eslint-disable react-signals-hooks/signal-variable-name */
 /* eslint-disable react-signals-hooks/restrict-signal-locations */
 /** biome-ignore-all lint/correctness/useHookAtTopLevel: off */
 /* eslint-disable react-signals-hooks/prefer-use-signal-over-use-state */
+/* eslint-disable react-signals-hooks/prefer-signal-reads */
 import { signal, computed, useComputed } from '@preact/signals-react';
 import { useSignals } from '@preact/signals-react/runtime';
 import { useMemo, useState, type JSX } from 'react';

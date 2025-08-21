@@ -441,9 +441,14 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
         return undefined;
       }
 
-      const type = checker.getTypeAtLocation(
-        context.sourceCode.parserServices.esTreeNodeToTSNodeMap.get(node)
-      );
+      const tsNode = context.sourceCode.parserServices.esTreeNodeToTSNodeMap.get(node);
+
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions
+      if (!tsNode) {
+        return undefined;
+      }
+
+      const type = checker.getTypeAtLocation(tsNode);
 
       if (
         typeof type.getProperty('value') !== 'undefined' &&
@@ -463,7 +468,10 @@ export const preferSignalReadsRule = ESLintUtils.RuleCreator((name: string): str
 
       const sym = type.aliasSymbol ?? type.symbol;
 
-      if (sym.escapedName === 'Signal' || sym.escapedName === 'ReadableSignal') {
+      if (
+        typeof sym !== 'undefined' &&
+        (sym.escapedName === 'Signal' || sym.escapedName === 'ReadableSignal')
+      ) {
         return true;
       }
 

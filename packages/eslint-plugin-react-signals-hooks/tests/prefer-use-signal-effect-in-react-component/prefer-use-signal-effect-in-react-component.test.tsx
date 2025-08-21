@@ -1,3 +1,4 @@
+/* eslint-disable react-signals-hooks/signal-variable-name */
 /* eslint-disable react-signals-hooks/prefer-signal-methods */
 /* eslint-disable @typescript-eslint/strict-boolean-expressions */
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
