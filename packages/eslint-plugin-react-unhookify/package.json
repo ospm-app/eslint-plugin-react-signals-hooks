@@ -26,8 +26,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "deploy": "bun run build && bun publish --access public",
-    "deploy:dry": "bun pack --dry-run",
+    "deploy": "bun run build && npm publish --access public",
+    "deploy:dry": "npm pack --dry-run",
     "build": "bun run clean && bun run build:cjs && bun run build:esm && bun run postbuild:esm && bun run build:types",
     "build:cjs": "bun x tsc --project tsconfig.cjs.json",
     "build:esm": "bun x tsc --project tsconfig.esm.json",

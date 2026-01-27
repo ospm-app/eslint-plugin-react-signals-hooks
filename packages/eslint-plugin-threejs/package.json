@@ -19,6 +19,8 @@
     "docs"
   ],
   "scripts": {
+    "deploy": "bun run build && npm publish --access public",
+    "deploy:dry": "npm pack --dry-run",
     "build": "run-s clean build:types build:esm build:cjs",
     "build:cjs": "bun x tsc -p tsconfig.cjs.json",
     "build:esm": "bun x tsc -p tsconfig.esm.json",
