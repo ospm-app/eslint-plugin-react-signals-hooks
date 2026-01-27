@@ -1,6 +1,6 @@
 {
   "name": "@ospm/eslint-plugin-react-unhookify",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "ESLint plugin to remove React hooks (useMemo, useCallback) and memo HOC for cleaner React code",
   "main": "dist/cjs/index.js",
