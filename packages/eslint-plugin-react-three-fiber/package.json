@@ -24,18 +24,18 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "npm run clean && npm run build:cjs && npm run build:esm && npm run build:types",
-    "build:cjs": "tsc --project tsconfig.cjs.json",
-    "build:esm": "tsc --project tsconfig.esm.json",
-    "build:types": "tsc --project tsconfig.types.json",
-    "build:watch": "npm run build:cjs -- --watch & npm run build:esm -- --watch & npm run build:types -- --watch",
+    "build": "bun run clean && bun run build:cjs && bun run build:esm && bun run build:types",
+    "build:cjs": "bun x tsc --project tsconfig.cjs.json",
+    "build:esm": "bun x tsc --project tsconfig.esm.json",
+    "build:types": "bun x tsc --project tsconfig.types.json",
+    "build:watch": "bun run build:cjs -- --watch & bun run build:esm -- --watch & bun run build:types -- --watch",
     "clean": "rm -rf dist/",
-    "prebuild": "npm run clean",
-    "test": "npm run build && npm run test:all-rules",
+    "prebuild": "bun run clean",
+    "test": "bun run build && bun run test:all-rules",
     "test:all-rules": "echo \"No tests configured yet\"",
-    "lint": "npx eslint src/ --ext .ts",
-    "lint:fix": "npx eslint src/ --ext .ts --fix",
-    "prepublishOnly": "npm run build"
+    "lint": "bun x eslint src/ --ext .ts",
+    "lint:fix": "bun x eslint src/ --ext .ts --fix",
+    "prepublishOnly": "bun run build"
   },
   "keywords": [
     "eslint",

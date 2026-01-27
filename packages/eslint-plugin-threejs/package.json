@@ -20,16 +20,16 @@
   ],
   "scripts": {
     "build": "run-s clean build:types build:esm build:cjs",
-    "build:cjs": "tsc -p tsconfig.cjs.json",
-    "build:esm": "tsc -p tsconfig.esm.json",
-    "build:types": "tsc -p tsconfig.types.json",
+    "build:cjs": "bun x tsc -p tsconfig.cjs.json",
+    "build:esm": "bun x tsc -p tsconfig.esm.json",
+    "build:types": "bun x tsc -p tsconfig.types.json",
     "clean": "rimraf dist",
-    "dev": "tsc -w -p tsconfig.esm.json",
-    "lint": "eslint . --ext .ts",
-    "lint:fix": "eslint . --ext .ts --fix",
-    "pretest": "npm run build",
-    "type-check": "tsc --noEmit",
-    "type-check:watch": "npm run type-check -- --watch"
+    "dev": "bun x tsc -w -p tsconfig.esm.json",
+    "lint": "bun x eslint . --ext .ts",
+    "lint:fix": "bun x eslint . --ext .ts --fix",
+    "pretest": "bun run build",
+    "type-check": "bun x tsc --noEmit",
+    "type-check:watch": "bun run type-check -- --watch"
   },
   "keywords": [
     "eslint",

@@ -99,6 +99,7 @@ function isSignalCreation(
     | TSESTree.TSEmptyBodyFunctionExpression
     | TSESTree.Expression,
   perfKey: string,
+  context: RuleContext<MessageIds, Options>,
   creatorNames: ReadonlySet<string>,
   signalImports: ReadonlySet<string>,
   signalLocalNames: ReadonlySet<string>,
@@ -113,15 +114,49 @@ function isSignalCreation(
   // Identifier callee: direct or locally aliased creator
   if (node.callee.type === AST_NODE_TYPES.Identifier) {
     const name = node.callee.name;
+    const hookNames = new Set([
+      'useSignal',
+      'useComputed',
+      'useSignalEffect',
+      'useSignalState',
+      'useSignalRef',
+    ]);
     if (
       name === 'signal' ||
       signalImports.has(name) ||
       signalLocalNames.has(name) ||
-      creatorNames.has(name)
+      creatorNames.has(name) ||
+      hookNames.has(name)
     ) {
       trackOperation(perfKey, PerformanceOperations.signalCreationFound);
 
       return true;
+    }
+
+    // If identifier is an alias of a hook via import, detect it via scope definitions
+    const scope = context.sourceCode.getScope(node);
+    const variable = scope.variables.find((v): boolean => v.name === name);
+    if (variable) {
+      const isAliasedHook = variable.defs.some((def: Definition): boolean => {
+        // Import specifier: import { useComputed as computed } from '...'
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const defNode: any = (def as unknown as { node: unknown }).node;
+        if (defNode && defNode.type === AST_NODE_TYPES.ImportSpecifier && 'imported' in defNode) {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          const imported = defNode.imported as { name?: string };
+          return typeof imported?.name === 'string' && hookNames.has(imported.name);
+        }
+        return false;
+      });
+
+      if (isAliasedHook) {
+        trackOperation(
+          perfKey,
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          PerformanceOperations['signalHookFound:aliased'] ?? PerformanceOperations.nodeProcessing
+        );
+        return true;
+      }
     }
   }
 
@@ -211,6 +246,7 @@ function isSignalExpression(
     isSignalCreation(
       node,
       perfKey,
+      context,
       creatorNames,
       signalImports,
       signalLocalNames,

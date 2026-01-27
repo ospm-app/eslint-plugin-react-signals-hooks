@@ -1,0 +1,6 @@
+# Bun configuration file
+# For more options, see https://bun.sh/docs/runtime/bunfig
+
+[install]
+# Registry configuration
+registry = "https://registry.npmjs.org/"
