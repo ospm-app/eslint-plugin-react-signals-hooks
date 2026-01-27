@@ -4,7 +4,7 @@ ESLint plugin to remove React hooks (useMemo, useCallback) and memo HOC for clea
 
 > **Note**: With React Compiler 1.0 now stable, automatic memoization is handled at build time. This plugin is most useful for:
 >
-> - Projects not yet using React Compiler
+> - Projects using React Compiler
 > - Codebases where manual memoization was over-used
 > - Migrating legacy code before adopting React Compiler
 
@@ -60,7 +60,7 @@ const memoizedResult = useMemo(() => a + b, [a, b]);
 
 ```tsx
 const expensiveValue = computeExpensiveValue(a, b);
-const memoizedResult = a + b;
+const result = a + b;
 ```
 
 **Edge Cases (will NOT be flagged):**
@@ -118,10 +118,6 @@ const MemoizedComponent = memo(({ name }) => {
 ```tsx
 const MyComponent = () => {
   return <div>Hello</div>;
-};
-
-const MemoizedComponent = ({ name }) => {
-  return <div>Hello {name}</div>;
 };
 ```
 
