@@ -73,7 +73,7 @@ const Item = memo(({ item, onClick }: { item: any; onClick: (id: string) => void
 });
 
 // Example 4: Complex component that benefits from memoization
-const ComplexForm = memo(({ onSubmit, initialValues }: { 
+const ComplexForm = memo(({ onSubmit, initialValues }: {
   onSubmit: (values: any) => void;
   initialValues: any;
 }) => {
@@ -102,7 +102,12 @@ const ComplexForm = memo(({ onSubmit, initialValues }: {
     <form onSubmit={(e) => {
       e.preventDefault();
       const formData = new FormData(e.currentTarget);
-      const values = Object.fromEntries(formData.entries());
+      const values: Record<string, FormDataEntryValue> = {};
+
+      formData.forEach((value, key) => {
+        values[key] = value;
+      });
+
       const errors = validateForm(values);
       if (errors.length === 0) {
         onSubmit(values);
